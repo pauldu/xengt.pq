@@ -429,3 +429,6 @@ vgt-adjust-default-parameters.patch
 
 add-configuration-files.patch
 blacklist_i915.patch
+
+# Fix for Xen 4.7
+xen-4.7-compat.patch

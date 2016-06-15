@@ -1,0 +1,38 @@
+diff --git a/drivers/xen/xengt.c b/drivers/xen/xengt.c
+index d2f0c5d..a476fa6 100644
+--- a/drivers/xen/xengt.c
++++ b/drivers/xen/xengt.c
+@@ -187,7 +187,7 @@ static int xen_hvm_memory_mapping(int vm_id, uint64_t first_gfn, uint64_t first_
+ 				  uint32_t nr_mfns, uint32_t add_mapping)
+ {
+ 	struct xen_domctl arg;
+-	int rc = 0, err = 0;
++	int rc = 0, ret = 0;
+ 	unsigned long done = 0, mapping_sz = 1024;
+ 
+ 	if (add_mapping) {
+@@ -210,16 +210,20 @@ retry:
+ 			arg.u.memory_mapping.nr_mfns = mapping_sz;
+ 			arg.u.memory_mapping.first_gfn = first_gfn + done;
+ 			arg.u.memory_mapping.first_mfn = first_mfn + done;
+-			err = HYPERVISOR_domctl(&arg);
+-			if (err == -E2BIG) {
++			ret = HYPERVISOR_domctl(&arg);
++			if (ret == -E2BIG) {
+ 				mapping_sz /= 2;
+ 				goto retry;
+ 			}
++			if (ret > 0) {
++				done += ret;
++				continue;
++			}
+ 			//Save first error status.
+ 			if (!rc)
+-				rc = err;
++				rc = ret;
+ 
+-			if (err && add_mapping != DPCI_REMOVE_MAPPING)
++			if (ret && add_mapping != DPCI_REMOVE_MAPPING)
+ 				break;
+ 			done += mapping_sz;
+ 		}
