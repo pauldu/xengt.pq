@@ -1,0 +1,40 @@
+From 1a65c1e16afd318c2d2f849b75a4536d9b84bc9e Mon Sep 17 00:00:00 2001
+From: Jike Song <jike.song@intel.com>
+Date: Thu, 15 Oct 2015 10:36:20 +0800
+Subject: [PATCH 191/403] vgt: remove the bogus printk message about virq
+
+Signed-off-by: Jike Song <jike.song@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/interrupt.c |    4 ----
+ 1 file changed, 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/interrupt.c b/drivers/gpu/drm/i915/vgt/interrupt.c
+index f3f8e05..db39792 100644
+--- a/drivers/gpu/drm/i915/vgt/interrupt.c
++++ b/drivers/gpu/drm/i915/vgt/interrupt.c
+@@ -2098,7 +2098,6 @@ void *vgt_init_irq(struct pci_dev *pdev, struct drm_device *dev)
+ 	struct pgt_device *node, *pgt = NULL;
+ 	int irq;
+ 	struct vgt_irq_host_state *hstate;
+-	int ret = 0;
+ 
+ 	if (!hypervisor_check_host() || !vgt_enabled)
+ 		return NULL;
+@@ -2129,14 +2128,11 @@ void *vgt_init_irq(struct pci_dev *pdev, struct drm_device *dev)
+ 	}
+ 
+ 	irq = -1;
+-	vgt_dbg(VGT_DBG_IRQ, "not requesting irq here!\n");
+ 	hstate->pirq = pdev->irq;
+ 	hstate->i915_irq = irq;
+ 
+ 	hstate->installed = true;
+ 
+-	printk("vGT: allocate virq (%d) for i915, while keep original irq (%d) for vgt\n",
+-		hstate->i915_irq, hstate->pirq);
+ 	printk("vGT: track_nest: %s\n", vgt_track_nest ? "enabled" : "disabled");
+ 
+ 	return pgt;
+-- 
+1.7.10.4
+

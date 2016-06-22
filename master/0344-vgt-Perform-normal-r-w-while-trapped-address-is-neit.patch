@@ -1,0 +1,82 @@
+From 1faa58647ced6133eb69b3f04f1d36a8e631e9bb Mon Sep 17 00:00:00 2001
+From: Yulei Zhang <yulei.zhang@intel.com>
+Date: Wed, 3 Feb 2016 14:52:08 +0800
+Subject: [PATCH 344/403] vgt: Perform normal r/w while trapped address is
+ neither ppgtt nor mmio
+
+Find there is race condition if guest is SMP, while vGT
+is doing shadow ppgtt entry removing it will still get ppgtt
+access trap ioreq, decide to let it perform normal read/write
+operation while the trapped address is mappable but
+neither ppgtt nor mmio.
+
+The change still keeps the correct semantics. The case is
+that guest has two PPGTT operations, and do not care the sequence.
+With either order, vGT can perform the PPGTT shadowing correctly.
+The only issue is that there could be unnecessary memory trapping.
+
+V2:
+Replace the memcpy with MPT interface.
+---
+ drivers/gpu/drm/i915/vgt/mmio.c |   24 ++++++++++++++++++++----
+ 1 file changed, 20 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/mmio.c b/drivers/gpu/drm/i915/vgt/mmio.c
+index afe92ec..13522ca 100644
+--- a/drivers/gpu/drm/i915/vgt/mmio.c
++++ b/drivers/gpu/drm/i915/vgt/mmio.c
+@@ -324,6 +324,7 @@ bool vgt_emulate_read(struct vgt_device *vgt, uint64_t pa, void *p_data,int byte
+ 	cycles_t t0, t1;
+ 	struct vgt_statistics *stat = &vgt->stat;
+ 	int cpu;
++	unsigned char *va;
+ 
+ 	t0 = get_cycles();
+ 
+@@ -356,8 +357,15 @@ bool vgt_emulate_read(struct vgt_device *vgt, uint64_t pa, void *p_data,int byte
+ 		return rc;
+ 	}
+ 
+-	if (!reg_is_mmio(pdev, offset + bytes))
+-		goto err_mmio;
++	if (!reg_is_mmio(pdev, offset + bytes)) {
++		va = hypervisor_gpa_to_va(vgt, pa);
++		if (va) {
++			hypervisor_read_va(vgt, va, p_data, bytes, 1);
++			vgt_unlock_dev_flags(pdev, cpu, flags);
++			return true;
++		} else
++			goto err_mmio;
++	}
+ 
+ 	mht = vgt_find_mmio_entry(offset);
+ 	if ( mht && mht->read ) {
+@@ -421,6 +429,7 @@ bool vgt_emulate_write(struct vgt_device *vgt, uint64_t pa,
+ 	bool rc;
+ 	cycles_t t0, t1;
+ 	struct vgt_statistics *stat = &vgt->stat;
++	unsigned char *va;
+ 
+ 	vgt_lock_dev_flags(pdev, cpu, flags);
+ 
+@@ -462,8 +471,15 @@ bool vgt_emulate_write(struct vgt_device *vgt, uint64_t pa,
+ 		return rc;
+ 	}
+ 
+-	if (!reg_is_mmio(pdev, offset + bytes))
+-		goto err_mmio;
++	if (!reg_is_mmio(pdev, offset + bytes)) {
++		va = hypervisor_gpa_to_va(vgt, pa);
++		if (va) {
++			hypervisor_write_va(vgt, va, p_data, bytes, 1);
++			vgt_unlock_dev_flags(pdev, cpu, flags);
++			return true;
++		} else
++			goto err_mmio;
++	}
+ 
+ 	if (reg_mode_ctl(pdev, offset)) {
+ 		old_vreg = __vreg(vgt, offset);
+-- 
+1.7.10.4
+

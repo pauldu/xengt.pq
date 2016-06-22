@@ -1,0 +1,106 @@
+From 5c97b677ca525ae55358519eb1bfb2bcb8c03d58 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Mon, 27 Apr 2015 07:57:48 +0800
+Subject: [PATCH 059/403] vgt: perf: add spt_find_{hit,miss}_{cycles,cnt}
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/debugfs.c |    4 ++++
+ drivers/gpu/drm/i915/vgt/gtt.c     |   14 +++++++++++++-
+ drivers/gpu/drm/i915/vgt/vgt.h     |    4 ++++
+ tools/vgt/vgt_perf                 |   12 ++++++++++++
+ 4 files changed, 33 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/debugfs.c b/drivers/gpu/drm/i915/vgt/debugfs.c
+index f812e87..a3ffc47 100644
+--- a/drivers/gpu/drm/i915/vgt/debugfs.c
++++ b/drivers/gpu/drm/i915/vgt/debugfs.c
+@@ -1120,6 +1120,10 @@ int vgt_create_debugfs(struct vgt_device *vgt)
+ 		debugfs_create_u64_node ("wp_cycles", 0444, perf_dir_entry, &(vgt->stat.wp_cycles));
+ 		debugfs_create_u64_node ("ppgtt_wp_cnt", 0444, perf_dir_entry, &(vgt->stat.ppgtt_wp_cnt));
+ 		debugfs_create_u64_node ("ppgtt_wp_cycles", 0444, perf_dir_entry, &(vgt->stat.ppgtt_wp_cycles));
++		debugfs_create_u64_node ("spt_find_hit_cnt", 0444, perf_dir_entry, &(vgt->stat.spt_find_hit_cnt));
++		debugfs_create_u64_node ("spt_find_hit_cycles", 0444, perf_dir_entry, &(vgt->stat.spt_find_hit_cycles));
++		debugfs_create_u64_node ("spt_find_miss_cnt", 0444, perf_dir_entry, &(vgt->stat.spt_find_miss_cnt));
++		debugfs_create_u64_node ("spt_find_miss_cycles", 0444, perf_dir_entry, &(vgt->stat.spt_find_miss_cycles));
+ 		debugfs_create_u64_node ("skip_bb_cnt", 0444, perf_dir_entry, &(vgt->stat.skip_bb_cnt));
+ 
+ 		/* cmd statistics for ring/batch buffers */
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index a23c5aa..6698d1d 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -564,12 +564,24 @@ static inline shadow_page_t *vgt_find_shadow_page(struct vgt_device *vgt,
+ 		unsigned long mfn)
+ {
+ 	shadow_page_t *shadow_page;
++	struct vgt_statistics *stat = &vgt->stat;
++	cycles_t t0, t1;
++
++	t0 = get_cycles();
+ 
+ 	hash_for_each_possible(vgt->gtt.shadow_page_hash_table, shadow_page, node, mfn) {
+-		if (shadow_page->mfn == mfn)
++		if (shadow_page->mfn == mfn) {
++			t1 = get_cycles();
++			stat->spt_find_hit_cnt++;
++			stat->spt_find_hit_cycles += t1 - t0;
+ 			return shadow_page;
++		}
+ 	}
+ 
++	t1 = get_cycles();
++	stat->spt_find_miss_cnt++;
++	stat->spt_find_miss_cycles += t1 - t0;
++
+ 	return NULL;
+ }
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 952250f..873c6ba 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -763,6 +763,10 @@ struct vgt_statistics {
+ 	u64	wp_cycles;
+ 	u64	ppgtt_wp_cnt;
+ 	u64	ppgtt_wp_cycles;
++	u64	spt_find_hit_cnt;
++	u64	spt_find_hit_cycles;
++	u64	spt_find_miss_cnt;
++	u64	spt_find_miss_cycles;
+ 	u64	skip_bb_cnt;
+ };
+ 
+diff --git a/tools/vgt/vgt_perf b/tools/vgt/vgt_perf
+index 2a19933..ec35739 100755
+--- a/tools/vgt/vgt_perf
++++ b/tools/vgt/vgt_perf
+@@ -182,6 +182,16 @@ state_nodes = {
+ 		"count" : 1,
+ 		"cycles": 1,
+ 	},
++	"PPGTT shadow page find hit" : {
++		"node"	: "spt_find_hit_",
++		"count" : 1,
++		"cycles": 1,
++	},
++	"PPGTT shadow page find miss" : {
++		"node"	: "spt_find_miss_",
++		"count" : 1,
++		"cycles": 1,
++	},
+ 	"MMIO reads" : {
+ 		"node"	: "mmio_r",
+ 		"count" : 1,
+@@ -384,6 +394,8 @@ def show_result(e, s, r, time):
+ 		print_param2(e, vs, "GTT writes", bias)
+ 		print_param2(e, vs, "WP writes", bias)
+ 		print_param2(e, vs, "PPGTT WP writes", bias)
++		print_param2(e, vs, "PPGTT shadow page find hit", bias)
++		print_param2(e, vs, "PPGTT shadow page find miss", bias)
+ 		#print_param2(e, vs, "PM accesses", bias)
+ 		#print_param2(e, vs, "IRQ accesses", bias)
+ 		#print_param2(vs, "Emulations", freq, bias)
+-- 
+1.7.10.4
+

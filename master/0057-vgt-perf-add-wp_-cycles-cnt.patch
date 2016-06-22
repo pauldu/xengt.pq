@@ -1,0 +1,84 @@
+From cddbdf461d3bdd4214282725e1d79731aed6be2e Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Mon, 27 Apr 2015 06:18:58 +0800
+Subject: [PATCH 057/403] vgt: perf: add wp_{cycles,cnt}
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/debugfs.c |    2 ++
+ drivers/gpu/drm/i915/vgt/mmio.c    |    3 +++
+ drivers/gpu/drm/i915/vgt/vgt.h     |    2 ++
+ tools/vgt/vgt_perf                 |   10 ++++++++--
+ 4 files changed, 15 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/debugfs.c b/drivers/gpu/drm/i915/vgt/debugfs.c
+index a51dfa4..f812e87 100644
+--- a/drivers/gpu/drm/i915/vgt/debugfs.c
++++ b/drivers/gpu/drm/i915/vgt/debugfs.c
+@@ -1116,6 +1116,8 @@ int vgt_create_debugfs(struct vgt_device *vgt)
+ 		debugfs_create_u64_node ("total_cmds", 0444, perf_dir_entry, &(vgt->total_cmds));
+ 		debugfs_create_u64_node ("vring_scan_cnt", 0444, perf_dir_entry, &(vgt->stat.vring_scan_cnt));
+ 		debugfs_create_u64_node ("vring_scan_cycles", 0444, perf_dir_entry, &(vgt->stat.vring_scan_cycles));
++		debugfs_create_u64_node ("wp_cnt", 0444, perf_dir_entry, &(vgt->stat.wp_cnt));
++		debugfs_create_u64_node ("wp_cycles", 0444, perf_dir_entry, &(vgt->stat.wp_cycles));
+ 		debugfs_create_u64_node ("ppgtt_wp_cnt", 0444, perf_dir_entry, &(vgt->stat.ppgtt_wp_cnt));
+ 		debugfs_create_u64_node ("ppgtt_wp_cycles", 0444, perf_dir_entry, &(vgt->stat.ppgtt_wp_cycles));
+ 		debugfs_create_u64_node ("skip_bb_cnt", 0444, perf_dir_entry, &(vgt->stat.skip_bb_cnt));
+diff --git a/drivers/gpu/drm/i915/vgt/mmio.c b/drivers/gpu/drm/i915/vgt/mmio.c
+index 61676efe..459f981 100644
+--- a/drivers/gpu/drm/i915/vgt/mmio.c
++++ b/drivers/gpu/drm/i915/vgt/mmio.c
+@@ -381,6 +381,9 @@ bool vgt_emulate_write(struct vgt_device *vgt, uint64_t pa,
+ 		guest_page = vgt_find_guest_page(vgt, pa >> PAGE_SHIFT);
+ 		if (guest_page) {
+ 			rc = guest_page->handler(guest_page, pa, p_data, bytes);
++			t1 = get_cycles();
++			stat->wp_cycles += t1 - t0;
++			stat->wp_cnt++;
+ 			vgt_unlock_dev_flags(pdev, cpu, flags);
+ 			return rc;
+ 		}
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index df3662b..952250f 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -759,6 +759,8 @@ struct vgt_statistics {
+ 	u64	ring_tail_mmio_wcycles;
+ 	u64	vring_scan_cnt;
+ 	u64	vring_scan_cycles;
++	u64	wp_cnt;
++	u64	wp_cycles;
+ 	u64	ppgtt_wp_cnt;
+ 	u64	ppgtt_wp_cycles;
+ 	u64	skip_bb_cnt;
+diff --git a/tools/vgt/vgt_perf b/tools/vgt/vgt_perf
+index 638a641..2a19933 100755
+--- a/tools/vgt/vgt_perf
++++ b/tools/vgt/vgt_perf
+@@ -172,7 +172,12 @@ state_nodes = {
+ 		"count" : 1,
+ 		"cycles": 1,
+ 	},
+-	"PPGTT writes" : {
++	"WP writes" : {
++		"node"	: "wp_",
++		"count" : 1,
++		"cycles": 1,
++	},
++	"PPGTT WP writes" : {
+ 		"node"	: "ppgtt_wp_",
+ 		"count" : 1,
+ 		"cycles": 1,
+@@ -377,7 +382,8 @@ def show_result(e, s, r, time):
+ 		print_param2(e, vs, "MMIO writes", bias)
+ 		print_param2(e, vs, "GTT reads", bias)
+ 		print_param2(e, vs, "GTT writes", bias)
+-		print_param2(e, vs, "PPGTT writes", bias)
++		print_param2(e, vs, "WP writes", bias)
++		print_param2(e, vs, "PPGTT WP writes", bias)
+ 		#print_param2(e, vs, "PM accesses", bias)
+ 		#print_param2(e, vs, "IRQ accesses", bias)
+ 		#print_param2(vs, "Emulations", freq, bias)
+-- 
+1.7.10.4
+

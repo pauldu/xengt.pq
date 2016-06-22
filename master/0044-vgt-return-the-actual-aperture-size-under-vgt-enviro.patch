@@ -1,0 +1,41 @@
+From 56acf38a3ce3b5d0063bd490598b8c6b3fdc7c84 Mon Sep 17 00:00:00 2001
+From: Terrence Xu <terrence.xu@intel.com>
+Date: Mon, 20 Apr 2015 16:38:24 +0800
+Subject: [PATCH 044/403] vgt: return the actual aperture size under vgt
+ environment
+
+I915_GEM_GET_APERTURE ioctl enables userspace (For example: libdrm)
+to probe aperture size. In vgt environment, each vm only use the
+ballooned part of aperture size, so we should set the actual aperture
+size value in I915_GEM_GET_APERTURE ioctl under vgt environment.
+
+Corresponding bug number in bugzilla is: #762.
+
+Signed-off-by: Terrence Xu <terrence.xu@intel.com>
+---
+ drivers/gpu/drm/i915/i915_gem.c |    9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/i915_gem.c b/drivers/gpu/drm/i915/i915_gem.c
+index 9bb330c..9cab123 100644
+--- a/drivers/gpu/drm/i915/i915_gem.c
++++ b/drivers/gpu/drm/i915/i915_gem.c
+@@ -153,8 +153,13 @@ i915_gem_get_aperture_ioctl(struct drm_device *dev, void *data,
+ 			pinned += vma->node.size;
+ 	mutex_unlock(&dev->struct_mutex);
+ 
+-	args->aper_size = dev_priv->gtt.base.total;
+-	args->aper_available_size = args->aper_size - pinned;
++	if (!intel_vgpu_active(dev)) {
++		args->aper_size = dev_priv->gtt.base.total;
++		args->aper_available_size = args->aper_size - pinned;
++	} else {
++		args->aper_size = dev_priv->mm.vgt_low_gm_size + dev_priv->mm.vgt_high_gm_size;
++		args->aper_available_size = dev_priv->mm.vgt_low_gm_size + dev_priv->mm.vgt_high_gm_size - pinned;
++	}
+ 
+ 	return 0;
+ }
+-- 
+1.7.10.4
+

@@ -1,0 +1,31 @@
+From 81f21c434bc20ecc5ba4cd6aa914bc7c47d90b87 Mon Sep 17 00:00:00 2001
+From: Tian Zhang <tian.c.zhang@intel.com>
+Date: Fri, 15 May 2015 16:19:56 +0800
+Subject: [PATCH 079/403] Add broadwell support for vgtbuffer
+
+Signed-off-by: Tian Zhang <tian.c.zhang@intel.com>
+
+Add function 'gen8_ppgtt_insert_vmfb_entries' to support vgtbuffer
+feature on broadwell.
+---
+ drivers/gpu/drm/i915/vgt/fb_decoder.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/fb_decoder.c b/drivers/gpu/drm/i915/vgt/fb_decoder.c
+index b3f305a..5777b3e 100644
+--- a/drivers/gpu/drm/i915/vgt/fb_decoder.c
++++ b/drivers/gpu/drm/i915/vgt/fb_decoder.c
+@@ -399,8 +399,8 @@ int vgt_decode_fb_format(int vmid, struct vgt_fb_format *fb)
+ 	if (!fb)
+ 		return -EINVAL;
+ 
+-	if (!IS_HSW(pdev)) {
+-		vgt_err("Only HSW is supported now\n");
++	if (!IS_HSW(pdev) && !IS_BDW(pdev)) {
++		vgt_err("Only HSW or BDW supported now\n");
+ 		return -EINVAL;
+ 	}
+ 
+-- 
+1.7.10.4
+

@@ -1,0 +1,29 @@
+diff --git a/drivers/gpu/drm/i915/vgt/instance.c b/drivers/gpu/drm/i915/vgt/instance.c
+index 345ff57..7ad30eb 100644
+--- a/drivers/gpu/drm/i915/vgt/instance.c
++++ b/drivers/gpu/drm/i915/vgt/instance.c
+@@ -228,6 +228,11 @@ int create_vgt_instance(struct pgt_device *pdev, struct vgt_device **ptr_vgt, vg
+ 		cfg_space[VGT_REG_CFG_CLASS_CODE] = VGT_PCI_CLASS_VGA;
+ 		cfg_space[VGT_REG_CFG_SUB_CLASS_CODE] = VGT_PCI_CLASS_VGA_OTHER;
+ 		cfg_space[VGT_REG_CFG_CLASS_PROG_IF] = VGT_PCI_CLASS_VGA_OTHER;
++        } else {
++                cfg_space[VGT_REG_CFG_CLASS_CODE] = VGT_PCI_CLASS_VGA;
++                cfg_space[VGT_REG_CFG_SUB_CLASS_CODE] = VGT_PCI_SUB_CLASS_VGA_COMPATIBLE;
++                cfg_space[VGT_REG_CFG_CLASS_PROG_IF] = VGT_PCI_CLASS_PROG_IF_VGA_COMPATIBLE;
++                vgt_info("Device marked as primary!\n");
+ 	}
+ 
+ 	state_sreg_init (vgt);
+diff --git a/drivers/gpu/drm/i915/vgt/reg.h b/drivers/gpu/drm/i915/vgt/reg.h
+index 2cc71ea..83184ae 100644
+--- a/drivers/gpu/drm/i915/vgt/reg.h
++++ b/drivers/gpu/drm/i915/vgt/reg.h
+@@ -879,6 +879,8 @@ union _TRANS_CONFIG
+  */
+ #define VGT_PCI_CLASS_VGA			0x03
+ #define VGT_PCI_CLASS_VGA_OTHER			0x80
++#define VGT_PCI_SUB_CLASS_VGA_COMPATIBLE        0x00
++#define VGT_PCI_CLASS_PROG_IF_VGA_COMPATIBLE    0x00
+ 
+ #define VGT_REG_CFG_VENDOR_ID			0x00
+ #define VGT_REG_CFG_COMMAND			0x04

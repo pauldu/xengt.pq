@@ -1,0 +1,101 @@
+From 5e9c04d1065bc261fd76ef03b78fd43404727787 Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Tue, 12 Apr 2016 17:20:01 +0800
+Subject: [PATCH 397/403] create a dummy guest switch to avoid lite-restore
+ flood
+
+lite-restore flood would make rsvd memory run out, create a dummy
+switch to stop the lite-restore and free the rsvd memory timely.
+The switch base on a threshold value 1000, it's happen rarely, no
+impact to performance but could solve this problem.
+
+fix bug #1012 #1050
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/aperture_gm.c |    5 +++++
+ drivers/gpu/drm/i915/vgt/cmd_parser.c  |    5 ++++-
+ drivers/gpu/drm/i915/vgt/sched.c       |    4 +++-
+ drivers/gpu/drm/i915/vgt/vgt.h         |    4 +++-
+ 4 files changed, 15 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/aperture_gm.c b/drivers/gpu/drm/i915/vgt/aperture_gm.c
+index 534f4fe4..0088c61 100644
+--- a/drivers/gpu/drm/i915/vgt/aperture_gm.c
++++ b/drivers/gpu/drm/i915/vgt/aperture_gm.c
+@@ -150,6 +150,11 @@ void rsvd_aperture_free(struct pgt_device *pdev, unsigned long start, unsigned l
+ 	}
+ }
+ 
++void rsvd_aperture_runout_handler(struct pgt_device *pdev)
++{
++	pdev->dummy_vm_switch = true;
++}
++
+ ssize_t get_avl_vm_aperture_gm_and_fence(struct pgt_device *pdev, char *buf,
+ 		ssize_t buf_sz)
+ {
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index 8563b58..48895b7 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -1777,6 +1777,7 @@ static int batch_buffer_needs_scan(struct parser_exec_state *s)
+ 	return 1;
+ }
+ 
++#define LITE_RESTORE_FLOOD_THRESHOLD 1000
+ static int vgt_perform_bb_shadow(struct parser_exec_state *s)
+ {
+ 	struct vgt_device *vgt = s->vgt;
+@@ -1841,7 +1842,9 @@ static int vgt_perform_bb_shadow(struct parser_exec_state *s)
+ 		s_cmd_page->guest_gma = bb_guest_gma;
+ 		s_cmd_page->bound_gma = shadow_gma;
+ 
+-		s->el_ctx->shadow_priv_bb.n_pages ++;
++		if (s->el_ctx->shadow_priv_bb.n_pages++ > LITE_RESTORE_FLOOD_THRESHOLD)
++			rsvd_aperture_runout_handler(vgt->pdev);
++
+ 		list_add_tail(&s_cmd_page->list,
+ 			      &s->el_ctx->shadow_priv_bb.pages);
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/sched.c b/drivers/gpu/drm/i915/vgt/sched.c
+index 0eb5b51..6980c9f 100644
+--- a/drivers/gpu/drm/i915/vgt/sched.c
++++ b/drivers/gpu/drm/i915/vgt/sched.c
+@@ -93,8 +93,10 @@ static struct vgt_device *tbs_next_vgt(
+ 			next = head->next;
+ 		next_vgt = list_entry(next, struct vgt_device, list);
+ 
+-		if (!vgt_vrings_empty(next_vgt))
++		if (!vgt_vrings_empty(next_vgt) || pdev->dummy_vm_switch) {
++			pdev->dummy_vm_switch = false;
+ 			break;
++		}
+ 
+ 	} while (next_vgt != vgt);
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index ea7f724..90836cc 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -503,6 +503,8 @@ struct pgt_device {
+ 
+ 	int (*vgt_get_pixel_format)(u32 plane_ctl,
+ 		struct vgt_common_plane_format *common_plane, enum vgt_plane_type plane);
++
++	bool dummy_vm_switch;
+ };
+ 
+ /*
+@@ -1133,7 +1135,7 @@ extern unsigned long rsvd_aperture_alloc(struct pgt_device *pdev,
+ 		unsigned long size);
+ extern void rsvd_aperture_free(struct pgt_device *pdev, unsigned long start,
+ 		unsigned long size);
+-
++extern void rsvd_aperture_runout_handler(struct pgt_device *pdev);
+ #define reg_is_mmio(pdev, reg)	\
+ 	(reg >= 0 && reg < pdev->mmio_size)
+ #define reg_is_gtt(pdev, reg)	\
+-- 
+1.7.10.4
+

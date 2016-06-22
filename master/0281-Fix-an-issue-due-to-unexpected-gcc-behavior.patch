@@ -1,0 +1,43 @@
+From b6334cf70493306019147173dd0a81bf2bbdf4af Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Thu, 26 Nov 2015 09:17:29 +0800
+Subject: [PATCH 281/403] Fix an issue due to unexpected gcc behavior
+
+gcc will do sign extension for below case:
+
+"
+struct {
+	uint32_t lrca:20;
+}a;
+
+unsigned long val = a.lrca << 12;
+"
+
+if MSB of "lrca" is 1, the result of "val" is like 0xffffffffxxxxxxxx;
+
+Doing explicit type converting fixes this.
+
+This can fix #916, that with 1G aperture, starting the third VM will have
+problems.
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index a66e2cc..e7e3a8b 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -819,7 +819,7 @@ static int vgt_create_shadow_pages(struct vgt_device *vgt, struct execlist_conte
+ 		return -1;
+ 	}
+ 
+-	g_gma = el_ctx->guest_context.lrca << GTT_PAGE_SHIFT;
++	g_gma = ((unsigned long)el_ctx->guest_context.lrca) << GTT_PAGE_SHIFT;
+ 	s_gma = aperture_2_gm(vgt->pdev, hpa);
+ 
+ 	el_ctx->shadow_lrca = s_gma >> GTT_PAGE_SHIFT;
+-- 
+1.7.10.4
+

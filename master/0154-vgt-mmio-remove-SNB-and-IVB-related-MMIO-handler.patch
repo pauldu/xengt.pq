@@ -1,0 +1,237 @@
+From dd1dee33a6d66afd3b28640dbfd5cbdf8748c986 Mon Sep 17 00:00:00 2001
+From: "Niu,Bing" <bing.niu@intel.com>
+Date: Sun, 30 Aug 2015 22:05:55 -0400
+Subject: [PATCH 154/403] vgt: mmio remove SNB and IVB related MMIO handler
+
+IVB and SNB are out of maintenance now. remove those handlers from
+reg_info.
+
+Signed-off-by: Niu,Bing <bing.niu@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |   72 +----------------------------------
+ 1 file changed, 2 insertions(+), 70 deletions(-)
+ mode change 100644 => 100755 drivers/gpu/drm/i915/vgt/handlers.c
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+old mode 100644
+new mode 100755
+index 7986fca..047da45
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -2532,13 +2532,11 @@ reg_attr_t vgt_base_reg_info[] = {
+ {_REG_VECS_HWSTAM, 4, F_RDR, 0, D_ALL, NULL, NULL},
+ {RENDER_HWS_PGA_GEN7, 4, F_RDR_ADRFIX, 0xFFFFF000, D_ALL, NULL, NULL},
+ {BSD_HWS_PGA_GEN7, 4, F_RDR_ADRFIX, 0xFFFFF000, D_ALL, NULL, NULL},
+-{0x24080, 4, F_RDR_ADRFIX, 0xFFFFF000, D_SNB, NULL, NULL},
+ {BLT_HWS_PGA_GEN7, 4, F_RDR_ADRFIX, 0xFFFFF000, D_GEN7PLUS, NULL, NULL},
+ {VEBOX_HWS_PGA_GEN7, 4, F_RDR_ADRFIX, 0xFFFFF000, D_GEN7PLUS, NULL, NULL},
+ {_REG_VECS_HWS_PGA, 4, F_RDR_ADRFIX, 0xFFFFF000, D_HSW, NULL, NULL},
+ 
+ /* maybe an error in Linux driver. meant for VCS_HWS_PGA */
+-{0x14080, 4, F_VIRT, 0, D_SNB, NULL, NULL},
+ {_REG_RCS_EXCC, 4, F_RDR, 0, D_ALL, NULL, NULL},
+ {_REG_VCS_EXCC, 4, F_RDR, 0, D_ALL, NULL, NULL},
+ {_REG_BCS_EXCC, 4, F_RDR, 0, D_ALL, NULL, NULL},
+@@ -2552,7 +2550,6 @@ reg_attr_t vgt_base_reg_info[] = {
+ {CCID, 4, F_RDR_ADRFIX, 0xFFFFF000, D_ALL, NULL, NULL},
+ {0x12198, 4, F_RDR_ADRFIX, 0xFFFFF000, D_ALL, NULL, NULL},
+ 
+-{CXT_SIZE, 4, F_PT, 0, D_SNB, NULL, NULL},
+ {GEN7_CXT_SIZE, 4, F_PT, 0, D_ALL, NULL, NULL},
+ 
+ {_REG_RCS_TAIL, 4, F_RDR, 0, D_ALL, ring_mmio_read, ring_mmio_write},
+@@ -2594,7 +2591,6 @@ reg_attr_t vgt_base_reg_info[] = {
+ {_REG_VCS2_ACTHD_UDW, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
+ {_REG_VECS_ACTHD_UDW, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
+ 
+-{GFX_MODE, 4, F_RDR_MODE, 0, D_SNB, NULL, NULL},
+ {GFX_MODE_GEN7, 4, F_RDR_MODE, 0, D_GEN7PLUS, NULL, NULL},
+ {_REG_VCS_MFX_MODE_IVB, 4, F_RDR_MODE, 0, D_GEN7PLUS, NULL, NULL},
+ {_REG_VCS2_MFX_MODE_BDW, 4, F_RDR_MODE, 0, D_BDW_PLUS, NULL, NULL},
+@@ -2614,7 +2610,6 @@ reg_attr_t vgt_base_reg_info[] = {
+ {_REG_BCS_INSTPM, 4, F_RDR_MODE, 0, D_ALL, NULL, instpm_write},
+ {_REG_VECS_INSTPM, 4, F_RDR_MODE, 0, D_HSW_PLUS, NULL, instpm_write},
+ 
+-{GEN6_GT_MODE, 4, F_RDR_MODE, 0, D_SNB, NULL, NULL},
+ {GEN7_GT_MODE, 4, F_RDR_MODE, 0, D_GEN7PLUS, NULL, NULL},
+ {_REG_CACHE_MODE_0, 4, F_RDR_MODE, 0, D_ALL, NULL, NULL},
+ {_REG_CACHE_MODE_1, 4, F_RDR_MODE, 0, D_ALL, NULL, NULL},
+@@ -2625,7 +2620,6 @@ reg_attr_t vgt_base_reg_info[] = {
+ {_REG_BCS_BB_ADDR, 4, F_RDR_ADRFIX, 0xFFFFF000, D_ALL, NULL, NULL},
+ {_REG_VECS_BB_ADDR, 4, F_RDR_ADRFIX, 0xFFFFF000, D_HSW_PLUS, NULL, NULL},
+ /* TODO: need a handler */
+-{_REG_RCS_PP_DIR_BASE_READ, 4, F_RDR_ADRFIX, 0xFFFFF000, D_SNB, NULL, NULL},
+ {_REG_RCS_PP_DIR_BASE_IVB, 4, F_RDR_ADRFIX, 0xFFFFF000, D_PRE_BDW, NULL, NULL},
+ {_REG_VCS_PP_DIR_BASE, 4, F_RDR_ADRFIX, 0xFFFFF000, D_PRE_BDW, NULL, NULL},
+ {_REG_BCS_PP_DIR_BASE, 4, F_RDR_ADRFIX, 0xFFFFF000, D_PRE_BDW, NULL, NULL},
+@@ -2677,7 +2671,7 @@ reg_attr_t vgt_base_reg_info[] = {
+ {GEN7_L3CNTLREG1, 4, F_RDR, 0, D_HSW, NULL, NULL},
+ {GEN7_L3_CHICKEN_MODE_REGISTER, 4, F_RDR, 0, D_HSW, NULL, NULL},
+ {0x9030, 4, F_RDR, 0, D_HSW_PLUS, NULL, NULL},
+-{0x20a0, 4, F_RDR, 0, D_IVB_PLUS, NULL, NULL},
++{0x20a0, 4, F_RDR, 0, D_HSW_PLUS, NULL, NULL},
+ {0x20e8, 4, F_RDR, 0, D_HSW, NULL, NULL},
+ {_REG_RCS_TIMESTAMP, 8, F_PT, 0, D_ALL, NULL, NULL},
+ {_REG_VCS_TIMESTAMP, 8, F_PT, 0, D_ALL, NULL, NULL},
+@@ -2801,15 +2795,6 @@ reg_attr_t vgt_base_reg_info[] = {
+ {_REG_CURAPALET_2, 4, F_DPY, 0, D_ALL, NULL, NULL},
+ {_REG_CURAPALET_3, 4, F_DPY, 0, D_ALL, NULL, NULL},
+ 
+-{_CURBBASE, 4, F_DPY_ADRFIX, 0xFFFFF000, D_SNB, dpy_plane_mmio_read,
+-						dpy_plane_mmio_write},
+-{_CURBCNTR, 4, F_DPY, 0, D_SNB, dpy_plane_mmio_read,
+-						dpy_plane_mmio_write},
+-{_CURBPOS, 4, F_DPY, 0, D_SNB, dpy_plane_mmio_read,
+-						dpy_plane_mmio_write},
+-{_REG_CURBSURFLIVE_SNB, 4, F_DPY_HWSTS_ADRFIX, 0xFFFFF000, D_SNB, cur_surflive_mmio_read,
+-					surflive_mmio_write},
+-
+ {_CURBBASE_IVB, 4, F_DPY_ADRFIX, 0xFFFFF000, D_GEN7PLUS, dpy_plane_mmio_read,
+ 						cur_surf_mmio_write},
+ {_CURBCNTR_IVB, 4, F_DPY, 0, D_GEN7PLUS, dpy_plane_mmio_read,
+@@ -2830,11 +2815,6 @@ reg_attr_t vgt_base_reg_info[] = {
+ 
+ {0x7008C, 4, F_DPY, 0, D_ALL, NULL, vgt_error_handler},
+ 
+-{0x700D0, 4, F_DPY, 0, D_SNB, NULL, NULL},
+-{0x700D4, 4, F_DPY, 0, D_SNB, NULL, NULL},
+-{0x700D8, 4, F_DPY, 0, D_SNB, NULL, NULL},
+-{0x700DC, 4, F_DPY, 0, D_SNB, NULL, NULL},
+-
+ {0x701b0, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+ 
+ {_DSPACNTR, 4, F_DPY, 0, D_ALL, dpy_plane_mmio_read,
+@@ -2888,28 +2868,7 @@ reg_attr_t vgt_base_reg_info[] = {
+ {_DVSATILEOFF, 4, F_DPY, 0, D_HSW_PLUS, dpy_plane_mmio_read,
+ 							dpy_plane_mmio_write},
+ 
+-{_DVSACNTR, 4, F_DPY, 0, D_SNB, NULL, NULL},
+-{_DVSASURF, 4, F_DPY_ADRFIX, 0xFFFFF000, D_SNB, NULL, NULL},
+-{_DVSASURFLIVE, 4, F_DPY_HWSTS_ADRFIX, 0xFFFFF000, D_SNB, NULL, NULL},
+-{_DVSALINOFF, 4, F_DPY, 0, D_SNB, NULL, NULL},
+-{_DVSAPOS, 4, F_DPY, 0, D_SNB, NULL, NULL},
+-{_DVSASIZE, 4, F_DPY, 0, D_SNB, NULL, NULL},
+-{_DVSATILEOFF, 4, F_DPY, 0, D_SNB, NULL, NULL},
+-{_DVSAKEYVAL, 4, F_DPY, 0, D_SNB, NULL, NULL},
+-{_DVSAKEYMSK, 4, F_DPY, 0, D_SNB, NULL, NULL},
+-{_DVSAKEYMAXVAL, 4, F_DPY, 0, D_SNB, NULL, NULL},
+-{_DVSASCALE, 4, F_DPY, 0, D_SNB, NULL, NULL},
+-{_DVSBCNTR, 4, F_DPY, 0, D_SNB, NULL, NULL},
+ {_DVSBSURF, 4, F_DPY_ADRFIX, 0xFFFFF000, D_ALL, NULL, NULL},
+-{_DVSBSURFLIVE, 4, F_DPY_HWSTS_ADRFIX, 0xFFFFF000, D_SNB, NULL, NULL},
+-{_DVSBLINOFF, 4, F_DPY, 0, D_SNB, NULL, NULL},
+-{_DVSBPOS, 4, F_DPY, 0, D_SNB, NULL, NULL},
+-{_DVSBSIZE, 4, F_DPY, 0, D_SNB, NULL, NULL},
+-{_DVSBTILEOFF, 4, F_DPY, 0, D_SNB, NULL, NULL},
+-{_DVSBKEYVAL, 4, F_DPY, 0, D_SNB, NULL, NULL},
+-{_DVSBKEYMSK, 4, F_DPY, 0, D_SNB, NULL, NULL},
+-{_DVSBKEYMAXVAL, 4, F_DPY, 0, D_SNB, NULL, NULL},
+-{_DVSBSCALE, 4, F_DPY, 0, D_SNB, NULL, NULL},
+ 
+ {_SPRA_SURF, 4, F_DPY_ADRFIX, 0xFFFFF000, D_HSW_PLUS,
+ 			dpy_plane_mmio_read, spr_surf_mmio_write},
+@@ -2988,31 +2947,16 @@ reg_attr_t vgt_base_reg_info[] = {
+ {_PIPEA_LINK_M1, 4, F_DPY, 0, D_ALL, NULL, NULL},
+ {_PIPEA_LINK_N1, 4, F_DPY, 0, D_ALL, NULL, NULL},
+ 
+-{_PIPEA_DATA_M2, 4, F_DPY, 0, D_IVB, NULL, NULL},
+-{_PIPEA_DATA_N2, 4, F_DPY, 0, D_IVB, NULL, NULL},
+-{_PIPEA_LINK_M2, 4, F_DPY, 0, D_IVB, NULL, NULL},
+-{_PIPEA_LINK_N2, 4, F_DPY, 0, D_IVB, NULL, NULL},
+-
+ {_PIPEB_DATA_M1, 4, F_DPY, 0, D_ALL, NULL, NULL},
+ {_PIPEB_DATA_N1, 4, F_DPY, 0, D_ALL, NULL, NULL},
+ {_PIPEB_LINK_M1, 4, F_DPY, 0, D_ALL, NULL, NULL},
+ {_PIPEB_LINK_N1, 4, F_DPY, 0, D_ALL, NULL, NULL},
+ 
+-{_PIPEB_DATA_M2, 4, F_DPY, 0, D_IVB, NULL, NULL},
+-{_PIPEB_DATA_M2, 4, F_DPY, 0, D_IVB, NULL, NULL},
+-{_PIPEB_LINK_M2, 4, F_DPY, 0, D_IVB, NULL, NULL},
+-{_PIPEB_LINK_N2, 4, F_DPY, 0, D_IVB, NULL, NULL},
+-
+ {_REG_PIPEC_DATA_M1, 4, F_DPY, 0, D_ALL, NULL, NULL},
+ {_REG_PIPEC_DATA_N1, 4, F_DPY, 0, D_ALL, NULL, NULL},
+ {_REG_PIPEC_LINK_M1, 4, F_DPY, 0, D_ALL, NULL, NULL},
+ {_REG_PIPEC_LINK_N1, 4, F_DPY, 0, D_ALL, NULL, NULL},
+ 
+-{_REG_PIPEC_DATA_M2, 4, F_DPY, 0, D_IVB, NULL, NULL},
+-{_REG_PIPEC_DATA_N2, 4, F_DPY, 0, D_IVB, NULL, NULL},
+-{_REG_PIPEC_LINK_M2, 4, F_DPY, 0, D_IVB, NULL, NULL},
+-{_REG_PIPEC_LINK_N2, 4, F_DPY, 0, D_IVB, NULL, NULL},
+-
+ {_PFA_CTL_1, 4, F_DPY, 0, D_ALL, pf_read, pf_write},
+ {_PFA_WIN_SZ, 4, F_DPY, 0, D_ALL, pf_read, pf_write},
+ {_PFA_WIN_POS, 4, F_DPY, 0, D_ALL, pf_read, pf_write},
+@@ -3050,12 +2994,6 @@ reg_attr_t vgt_base_reg_info[] = {
+ {PCH_DPD_AUX_CH_CTL, 6*4, F_DPY, 0, D_ALL, NULL, dp_aux_ch_ctl_mmio_write},
+ 
+ {PCH_ADPA, 4, F_DPY, 0, D_ALL, NULL, pch_adpa_mmio_write},
+-{PCH_DP_B, 4, F_DPY, 0, D_SNB|D_IVB, NULL, dp_ctl_mmio_write},
+-{PCH_DP_C, 4, F_DPY, 0, D_SNB|D_IVB, NULL, dp_ctl_mmio_write},
+-{PCH_DP_D, 4, F_DPY, 0, D_SNB|D_IVB, NULL, dp_ctl_mmio_write},
+-{PCH_HDMIB, 4, F_DPY, 0, D_SNB|D_IVB, NULL, hdmi_ctl_mmio_write},
+-{PCH_HDMIC, 4, F_DPY, 0, D_SNB|D_IVB, NULL, hdmi_ctl_mmio_write},
+-{PCH_HDMID, 4, F_DPY, 0, D_SNB|D_IVB, NULL, hdmi_ctl_mmio_write},
+ {_PCH_TRANSACONF, 4, F_DPY, 0, D_ALL, NULL, transaconf_mmio_write},
+ {_PCH_TRANSBCONF, 4, F_DPY, 0, D_ALL, NULL, transaconf_mmio_write},
+ {_FDI_RXA_IIR, 4, F_DPY, 0, D_ALL, NULL, fdi_rx_iir_mmio_write},
+@@ -3255,7 +3193,6 @@ reg_attr_t vgt_base_reg_info[] = {
+ {SBI_DATA, 4, F_DPY, 0, D_HSW_PLUS, sbi_mmio_data_read, NULL},
+ {SBI_CTL_STAT, 4, F_DPY, 0, D_HSW_PLUS, NULL, sbi_mmio_ctl_write},
+ {PIXCLK_GATE, 4, F_DPY, 0, D_HSW_PLUS, NULL, NULL},
+-{0xF200C, 4, F_DPY, 0, D_SNB, NULL, NULL},
+ 
+ {DPA_AUX_CH_CTL, 6*4, F_DPY, 0, D_HSW_PLUS, NULL, dp_aux_ch_ctl_mmio_write},
+ 
+@@ -3304,7 +3241,6 @@ reg_attr_t vgt_base_reg_info[] = {
+ {GTFIFODBG, 4, F_RDR, 0, D_ALL, NULL, NULL},
+ {GTFIFOCTL, 4, F_RDR, 0, D_ALL, NULL, NULL},
+ {FORCEWAKE_MT, 4, F_VIRT, 0, D_ALL, NULL, mul_force_wake_write},
+-{_REG_LCPLL_CTL, 4, F_VIRT, 0, D_SNB|D_IVB, mul_force_wake_ack_read, NULL},
+ {FORCEWAKE_ACK_HSW, 4, F_VIRT, 0, D_HSW_PLUS, mul_force_wake_ack_read, NULL},
+ {ECOBUS, 4, F_DOM0, 0, D_ALL, NULL, NULL},
+ {GEN6_RC_CONTROL, 4, F_DOM0, 0, D_ALL, NULL, rc_state_ctrl_1_mmio_write},
+@@ -3359,7 +3295,6 @@ reg_attr_t vgt_base_reg_info[] = {
+ {GEN6_UCGCTL1, 4, F_DOM0, 0, D_ALL, NULL, NULL},
+ {GEN6_UCGCTL2, 4, F_DOM0, 0, D_ALL, NULL, NULL},
+ 
+-{_REG_SWF, 0x110, F_VIRT, 0, D_SNB, NULL, NULL},
+ {_REG_SWF, 0x90, F_VIRT, 0, D_GEN7PLUS, NULL, NULL},
+ 
+ {GEN6_PCODE_MAILBOX, 4, F_DOM0, 0, D_ALL, NULL, NULL},
+@@ -3381,7 +3316,6 @@ reg_attr_t vgt_base_reg_info[] = {
+ {0x3c, 4, F_DOM0, 0, D_ALL, NULL, NULL},
+ {0x860, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+ /* no definition on this. from Linux */
+-{MI_ARB_STATE, 4, F_PT, 0, D_SNB, NULL, NULL},
+ {ECOSKPD, 4, F_PT, 0, D_ALL, NULL, NULL},
+ {0x121d0, 4, F_PT, 0, D_ALL, NULL, NULL},
+ {0x1c1d0, 4, F_PT, 0, D_BDW_PLUS, NULL, NULL},
+@@ -3391,7 +3325,6 @@ reg_attr_t vgt_base_reg_info[] = {
+ {_REG_2D_CG_DIS, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+ {_REG_3D_CG_DIS, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+ {_REG_3D_CG_DIS2, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+-{0x7004, 4, F_VIRT, 0, D_SNB, NULL, NULL},
+ {0x7118, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+ {0x7180, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+ {0x7408, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+@@ -3574,7 +3507,7 @@ reg_attr_t vgt_base_reg_info[] = {
+ {0x1a080, 4, F_RDR_ADRFIX, 0xFFFFF000, D_BDW_PLUS, NULL, NULL},
+ {0x22080, 4, F_RDR_ADRFIX, 0xFFFFF000, D_BDW_PLUS, NULL, NULL},
+ 
+-{0xe100, 4, F_RDR, 0, D_IVB_PLUS, NULL, NULL},
++{0xe100, 4, F_RDR, 0, D_HSW_PLUS, NULL, NULL},
+ {0x7300, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
+ 
+ {0x420b0, 4, F_DPY, 0, D_BDW, NULL, NULL},
+@@ -3895,7 +3828,6 @@ int vgt_get_sticky_reg_num(struct pgt_device *pdev)
+ reg_addr_sz_t vgt_reg_addr_sz[] = {
+ 	{RENDER_HWS_PGA_GEN7, 4096, D_ALL},
+ 	{BSD_HWS_PGA_GEN7, 4096, D_ALL},
+-	{0x24080, 4096, D_SNB},
+ 	{BLT_HWS_PGA_GEN7, 4096, D_GEN7PLUS},
+ 	{VEBOX_HWS_PGA_GEN7, 4096, D_GEN7PLUS},
+ 	{_REG_VECS_HWS_PGA, 4096, D_HSW},
+-- 
+1.7.10.4
+

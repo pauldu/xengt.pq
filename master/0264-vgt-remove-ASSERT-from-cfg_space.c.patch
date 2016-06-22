@@ -1,0 +1,82 @@
+From bf8f13b977493f86e6dc9ca1a78e558ac4cbc4a8 Mon Sep 17 00:00:00 2001
+From: Yi Sun <yi.sun@intel.com>
+Date: Thu, 24 Sep 2015 14:50:47 +0800
+Subject: [PATCH 264/403] vgt: remove ASSERT from cfg_space.c
+
+We should handle invalid offset for a VM as an error in vgt_emulate_cfg_read/write.
+
+v4, Fix a typo.
+
+v3, Add a VGT id in error message.
+
+v2, Remove macro 'vgt_fail_on', just handle error separately.
+
+v1, Defined a macro 'vgt_fail_on' which is used to return false if condition
+is satisfied and print error message.
+
+Signed-off-by: Yi Sun <yi.sun@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cfg_space.c |   26 ++++++++++++++++++++++----
+ 1 file changed, 22 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cfg_space.c b/drivers/gpu/drm/i915/vgt/cfg_space.c
+index eaa3cdc..7e62375 100644
+--- a/drivers/gpu/drm/i915/vgt/cfg_space.c
++++ b/drivers/gpu/drm/i915/vgt/cfg_space.c
+@@ -219,7 +219,12 @@ static void vgt_hvm_opregion_handle_request(struct vgt_device *vgt, uint32_t sws
+ bool vgt_emulate_cfg_read(struct vgt_device *vgt, unsigned int offset, void *p_data, int bytes)
+ {
+ 
+-	ASSERT ((offset + bytes) <= VGT_CFG_SPACE_SZ);
++	if ((offset + bytes) > VGT_CFG_SPACE_SZ) {
++		vgt_err("VM(%d): CFG_SPACE read error, offset(%x) + bytes(%d)\n",
++				vgt->vgt_id, offset, bytes);
++		return false;
++	}
++
+ 	memcpy(p_data, &vgt->state.cfg_space[offset], bytes);
+ 
+ 	/* TODO: hooks */
+@@ -247,7 +252,12 @@ bool vgt_emulate_cfg_write(struct vgt_device *vgt, unsigned int off,
+ 	bool rc = true;
+ 	uint32_t low_mem_max_gpfn;
+ 
+-	ASSERT ((off + bytes) <= VGT_CFG_SPACE_SZ);
++	if ((off + bytes) > VGT_CFG_SPACE_SZ) {
++		vgt_err("VM(%d): CFG_SPACE write error, offset(%x) + bytes(%d)\n",
++				vgt->vgt_id, off, bytes);
++		return false;
++	}
++
+ 	cfg_reg = (uint32_t*)(cfg_space + (off & ~3));
+ 	switch (off & ~3) {
+ 		case VGT_REG_CFG_VENDOR_ID:
+@@ -284,7 +294,11 @@ bool vgt_emulate_cfg_write(struct vgt_device *vgt, unsigned int off,
+ 		case VGT_REG_CFG_SPACE_BAR0:	/* GTTMMIO */
+ 		case VGT_REG_CFG_SPACE_BAR1:	/* GMADR */
+ 		case VGT_REG_CFG_SPACE_BAR2:	/* IO */
+-			ASSERT((bytes == 4) && (off & 3) == 0);
++			if ((bytes != 4) || (off & 3) != 0) {
++				vgt_err("VM(%d): CFG_SPACE_BAR offset (%x) and bytes (%d) align error\n",
++					vgt->vgt_id, off, bytes);
++				return false;
++			}
+ 			new = *(uint32_t *)p_data;
+ 			printk("Programming bar 0x%x with 0x%x\n", off, new);
+ 			size = vgt->state.bar_size[(off - VGT_REG_CFG_SPACE_BAR0)/8];
+@@ -344,7 +358,11 @@ bool vgt_emulate_cfg_write(struct vgt_device *vgt, unsigned int off,
+ 		case VGT_REG_CFG_SPACE_BAR1+4:
+ 		case VGT_REG_CFG_SPACE_BAR0+4:
+ 		case VGT_REG_CFG_SPACE_BAR2+4:
+-			ASSERT((bytes == 4) && (off & 3) == 0);
++			if ((bytes != 4) || (off & 3) != 0) {
++				vgt_err("VM(%d): CFG_SPACE_BARx+4 offset (%x) and bytes (%d) align error\n",
++					vgt->vgt_id, off, bytes);
++				return false;
++			}
+ 			new = *(uint32_t *)p_data;
+ 			printk("Programming bar 0x%x with 0x%x\n", off, new);
+ 			size = vgt->state.bar_size[(off - (VGT_REG_CFG_SPACE_BAR0 + 4))/8];
+-- 
+1.7.10.4
+

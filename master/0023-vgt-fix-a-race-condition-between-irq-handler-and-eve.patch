@@ -1,0 +1,30 @@
+From 02d61d383ee1af927d351d596bf1f9d7c605f7fb Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Wed, 25 Mar 2015 00:21:19 +0800
+Subject: [PATCH 023/403] vgt: fix a race condition between irq handler and
+ event forwarding
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/vgt.c |    3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 472af99..98514b1 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -298,8 +298,11 @@ static int vgt_thread(void *priv)
+ 		/* forward physical GPU events to VMs */
+ 		if (test_and_clear_bit(VGT_REQUEST_IRQ,
+ 					(void *)&pdev->request)) {
++			unsigned long flags;
+ 			vgt_lock_dev(pdev, cpu);
++			vgt_get_irq_lock(pdev, flags);
+ 			vgt_forward_events(pdev);
++			vgt_put_irq_lock(pdev, flags);
+ 			vgt_unlock_dev(pdev, cpu);
+ 		}
+ 
+-- 
+1.7.10.4
+

@@ -1,0 +1,51 @@
+From ed0cb382ae5ffe910e50d18643c759c9e996a4ff Mon Sep 17 00:00:00 2001
+From: Yi Sun <yi.sun@intel.com>
+Date: Mon, 11 Jan 2016 15:02:05 +0800
+Subject: [PATCH 314/403] Use Aliasing PPGTT only when GVT-g is enabled.
+
+Rebasing to Kernel version 4.3 makes us using 48bit full ppgtt,
+instead of aliasing ppgtt which used in kernel 4.2 and before.
+
+That could cause guest TDR (bug 964) or Dom0 crashed while running
+workload (bug 955, 953).
+
+This patch recovers it to aliasing ppgtt when GVT-g actived. It's a
+temporary workaround, we'll re-enable it once fix driver issue.
+
+Signed-off-by: Yi Sun <yi.sun@intel.com>
+---
+ drivers/gpu/drm/i915/i915_gem_gtt.c |   11 +++++++----
+ 1 file changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/i915_gem_gtt.c b/drivers/gpu/drm/i915/i915_gem_gtt.c
+index 31e7d18..a5b8ea5 100644
+--- a/drivers/gpu/drm/i915/i915_gem_gtt.c
++++ b/drivers/gpu/drm/i915/i915_gem_gtt.c
+@@ -110,9 +110,6 @@ static int sanitize_enable_ppgtt(struct drm_device *dev, int enable_ppgtt)
+ 	has_full_ppgtt = INTEL_INFO(dev)->gen >= 7;
+ 	has_full_48bit_ppgtt = IS_BROADWELL(dev) || INTEL_INFO(dev)->gen >= 9;
+ 
+-	if (intel_vgpu_active(dev))
+-		has_full_ppgtt = false; /* emulation is too hard */
+-
+ 	/*
+ 	 * We don't allow disabling PPGTT for gen9+ as it's a requirement for
+ 	 * execlists, the sole mechanism available to submit work.
+@@ -145,7 +142,13 @@ static int sanitize_enable_ppgtt(struct drm_device *dev, int enable_ppgtt)
+ 		return 0;
+ 	}
+ 
+-	if (INTEL_INFO(dev)->gen >= 8 && i915.enable_execlists)
++	if (INTEL_INFO(dev)->gen >= 8 && i915.enable_execlists &&
++		/* This is a temporary workaround.
++		 * Use Aliasing PPGTT when GVT-g enabled.
++		 * We'll remove it once bug is fixed, which is introduced
++		 * by enable 32/48 full PPGTT.
++		 *  */
++		!intel_vgpu_active(dev))
+ 		return has_full_48bit_ppgtt ? 3 : 2;
+ 	else
+ 		return has_aliasing_ppgtt ? 1 : 0;
+-- 
+1.7.10.4
+

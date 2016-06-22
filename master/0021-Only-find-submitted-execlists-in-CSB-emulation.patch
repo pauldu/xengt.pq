@@ -1,0 +1,48 @@
+From d34e5dfac3158621a84421a6160431c70ea0f070 Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Wed, 25 Mar 2015 14:46:23 +0800
+Subject: [PATCH 021/403] Only find submitted execlists in CSB emulation
+
+There could be pending EXECLIST submissions in queue, thouse
+should not be searched for CSB updates.
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |    7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 38d1be2..1c868b4 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -258,7 +258,7 @@ static void vgt_el_slots_delete(struct vgt_device *vgt,
+ 	el_slot->el_ctxs[1] = NULL;
+ }
+ 
+-static void vgt_el_slots_find_ctx(bool forward_search, vgt_state_ring_t *ring_state,
++static void vgt_el_slots_find_submitted_ctx(bool forward_search, vgt_state_ring_t *ring_state,
+ 			uint32_t ctx_id, int *el_slot_idx, int *el_slot_ctx_idx)
+ {
+ 	int head = ring_state->el_slots_head;
+@@ -280,6 +280,9 @@ static void vgt_el_slots_find_ctx(bool forward_search, vgt_state_ring_t *ring_st
+ 			el_slot = &ring_state->execlist_slots[tail];
+ 		}
+ 
++		if (el_slot->status != EL_SUBMITTED)
++			continue;
++
+ 		for (i = 0; i < 2; ++ i) {
+ 			struct execlist_context *p = el_slot->el_ctxs[i];
+ 			if (p && p->guest_context.context_id == ctx_id) {
+@@ -1151,7 +1154,7 @@ static void vgt_emulate_context_status_change(struct vgt_device *vgt,
+ 		}
+ 	}
+ 
+-	vgt_el_slots_find_ctx(forward_search, ring_state, ctx_id,
++	vgt_el_slots_find_submitted_ctx(forward_search, ring_state, ctx_id,
+ 				&el_slot_idx, &el_slot_ctx_idx);
+ 	if (el_slot_idx == -1)
+ 		goto err_ctx_not_found;
+-- 
+1.7.10.4
+

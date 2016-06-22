@@ -1,0 +1,68 @@
+From 9f995251a7f5eceb1ea2d82603bf1f97d9c57005 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Tue, 28 Apr 2015 08:44:55 -0400
+Subject: [PATCH 054/403] vgt: tools: support dump preg when showing register
+ info
+
+Now you can use tools/vgt/vgt_report --preg to dump the
+accessed physical HW registers.
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ tools/vgt/vgt_report |   27 +++++++++++++++++++++++++--
+ 1 file changed, 25 insertions(+), 2 deletions(-)
+
+diff --git a/tools/vgt/vgt_report b/tools/vgt/vgt_report
+index e4d5c80..35904e8 100755
+--- a/tools/vgt/vgt_report
++++ b/tools/vgt/vgt_report
+@@ -163,6 +163,12 @@ def get_reg_state(reg):
+ 	return out
+ 
+ def show_reginfo():
++	if options.preg:
++		print "Get preg info..."
++		p_output = Popen(["cat", path_preg], stdout=PIPE)
++		print "Analyze preg info..."
++		preginfo = get_reginfo(p_output)
++
+ 	print "===================================="
+ 	print "Owner Type:"
+ 	print "\tNone, RDR(Render), DPY(Display), PM, MGMT(Management)"
+@@ -181,14 +187,31 @@ def show_reginfo():
+ 	print "\tG - Accessed by GPU CMDs"
+ 	print "\tU - Tracked but unused"
+ 
+-	print "\n%10s: %5s|%5s|%12s|%8s|%-8s" % ("Reg", "Owner", "Type", "Attributes", "State", "Name")
++	line = "\n%10s: %5s|%5s|%12s|%8s" % ("Reg", "Owner", "Type", "Attributes", "State")
++
++	if options.preg:
++		line += "|%10s" % "Preg"
++
++	line += "|%-8s" % "Name"
++
++	print line
++
+ 	print "------------------------------------"
+ 
+ 	i = 0
+ 	for reg in sorted(reginfo):
+ 		if not "Accessed" in reginfo[reg]:
+ 			continue
+-		print "%10s: %5s|%5s|%12s|%8s|%s" % (hex(reg), reginfo[reg]["Owner"], reginfo[reg]["Type"], get_reg_attr(reginfo[reg]), get_reg_state(reginfo[reg]), reginfo[reg]["name"])
++
++		line = "%10s: %5s|%5s|%12s|%8s" % (hex(reg), reginfo[reg]["Owner"], reginfo[reg]["Type"], get_reg_attr(reginfo[reg]), get_reg_state(reginfo[reg]))
++
++		if options.preg:
++			line += "|%10s" % preginfo[reg]
++
++		line += "|%s" % reginfo[reg]["name"]
++
++		print line
++
+ 		i += 1
+ 	print "Total %d registers" % i
+ 	print "===================================="
+-- 
+1.7.10.4
+

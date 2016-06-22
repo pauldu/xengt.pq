@@ -1,0 +1,13 @@
+diff --git a/drivers/xen/xengt.c b/drivers/xen/xengt.c
+index 7167caa..8a78426 100644
+--- a/drivers/xen/xengt.c
++++ b/drivers/xen/xengt.c
+@@ -181,7 +181,7 @@ static int xen_hvm_memory_mapping(int vm_id, uint64_t first_gfn, uint64_t first_
+ {
+ 	struct xen_domctl arg;
+ 	int rc = 0, err = 0;
+-	unsigned long done = 0, mapping_sz = 64;
++	unsigned long done = 0, mapping_sz = 1024;
+ 
+ 	if (add_mapping) {
+ 		rc = xen_domain_iomem_perm(vm_id, first_mfn, nr_mfns, 1);

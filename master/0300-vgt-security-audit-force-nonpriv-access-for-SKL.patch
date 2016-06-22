@@ -1,0 +1,86 @@
+From 9170a7408093c6e33051a085bae06d028442a611 Mon Sep 17 00:00:00 2001
+From: fred gao <fred.gao@intel.com>
+Date: Tue, 29 Dec 2015 15:09:01 +0800
+Subject: [PATCH 300/403] vgt/security: audit force nonpriv access for SKL
+
+v4: check nonpriv write contents based on F_RDR by Kevin.
+
+v3: add GEN8_L3SQCREG4,0x2248 into save/restore whitelist,
+    which are from nonpriv usages by Kevin.
+
+v2: update some description corrected by Kevin,
+    add nonpriv 0x24d4/0x24d8 cases found by Wang,zhi.
+
+this will fix guest vm killed during boot.
+
+Signed-off-by: fred gao <fred.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |    9 +++++++--
+ drivers/gpu/drm/i915/vgt/render.c   |    8 +++++++-
+ 2 files changed, 14 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index b048390..b71886f 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -2511,9 +2511,9 @@ static bool vgt_write_force_nonpriv(struct vgt_device *vgt, unsigned int offset,
+ 		return false;
+ 	}
+ 
+-	if (*(vgt_reg_t *)p_data == 0x2248) {
++	if (reg_is_render(vgt->pdev, *(vgt_reg_t *)p_data))
+ 		return default_mmio_write(vgt, offset, p_data, bytes);
+-	} else {
++	else {
+ 		vgt_err("Unexpected force_to_nonpriv 0x%x mmio write, value=0x%x\n",
+ 				offset, *(vgt_reg_t *)p_data);
+ 		return false;
+@@ -3667,6 +3667,9 @@ reg_attr_t vgt_reg_info_bdw[] = {
+ 
+ /* NON-PRIV */
+ {0x24d0, 4, F_RDR, 0, D_BDW_PLUS, NULL, vgt_write_force_nonpriv},
++{0x24d4, 4, F_RDR, 0, D_SKL_PLUS, NULL, vgt_write_force_nonpriv},
++{0x24d8, 4, F_RDR, 0, D_SKL_PLUS, NULL, vgt_write_force_nonpriv},
++
+ 
+ {0x83a4, 4, F_RDR, 0, D_BDW, NULL, NULL},
+ {0x4dd4, 4, F_PT, 0, D_BDW_PLUS, NULL, NULL},
+@@ -3685,6 +3688,8 @@ reg_attr_t vgt_reg_info_bdw[] = {
+ {0xe188, 4, F_RDR_MODE, 0, D_BDW_PLUS, NULL, NULL},
+ {0xe180, 4, F_RDR_MODE, 0, D_BDW_PLUS, NULL, NULL},
+ {0x2580, 4, F_RDR_MODE, 0, D_BDW_PLUS, NULL, NULL},
++
++{0x2248, 4, F_RDR, 0, D_BDW, NULL, NULL},
+ };
+ 
+ reg_attr_t vgt_reg_info_skl[] = {
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index fb18655..ef9983b 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -201,6 +201,8 @@ vgt_reg_t vgt_gen8_render_regs[] = {
+         _REG_VECS_EXECLIST_STATUS,
+         _REG_VCS2_EXECLIST_STATUS,
+         _REG_BCS_EXECLIST_STATUS,
++	/*this register is from NONPRIV usage*/
++	0x2248,
+ };
+ 
+ vgt_reg_t vgt_gen9_render_regs[] = {
+@@ -214,8 +216,12 @@ vgt_reg_t vgt_gen9_render_regs[] = {
+ 	GEN8_PRIVATE_PAT_HI,
+ 
+ 	0x7004,
+-	0x7014,
++	COMMON_SLICE_CHICKEN2,
+ 	0x7300,
++
++	/*this register is from NONPRIV usage*/
++	GEN8_L3SQCREG4,
++
+ 	0xe100,
+ 	0xe180,
+ 	0xe184,
+-- 
+1.7.10.4
+

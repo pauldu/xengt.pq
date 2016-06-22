@@ -1,0 +1,68 @@
+From 386a1de3a4cca44656f58dc3f1c51b51edf0662b Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Tue, 24 Nov 2015 17:47:49 +0800
+Subject: [PATCH 282/403] use page address for reserved aperture
+
+In shadow context, previous implementation is to use the virtual
+address corresponding to aperture memory, which is performance low due
+to non-cachable memory access. This commit changes to use page virtual
+address instead.
+
+Before doing that, we set correct dma mask in driver so that
+pci_map_page() does not allocate new pages for iova mapping.
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |    2 +-
+ drivers/gpu/drm/i915/vgt/utility.c   |    7 ++++---
+ 2 files changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index e7e3a8b..756f137 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -844,8 +844,8 @@ static int vgt_create_shadow_pages(struct vgt_device *vgt, struct execlist_conte
+ 			ops->get_entry(NULL, &gtt_entry, g_gma >> GTT_PAGE_SHIFT, false, NULL);
+ 			ops->set_entry(NULL, &gtt_entry, s_gma >> GTT_PAGE_SHIFT, false, NULL);
+ 		} else {
+-			p_shadow->vaddr = v_aperture(vgt->pdev, s_gma);
+ 			p_shadow->page = aperture_page(vgt->pdev, rsvd_pages_idx);
++			p_shadow->vaddr = page_address(p_shadow->page);
+ 			memcpy(p_shadow->vaddr, p_guest->vaddr, SIZE_PAGE);
+ 		}
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/utility.c b/drivers/gpu/drm/i915/vgt/utility.c
+index e01bc00..61e22da 100644
+--- a/drivers/gpu/drm/i915/vgt/utility.c
++++ b/drivers/gpu/drm/i915/vgt/utility.c
+@@ -854,6 +854,9 @@ int setup_gtt(struct pgt_device *pdev)
+ 	gtt_entry_t e;
+ 	u64 v;
+ 
++	if (!pci_set_dma_mask(pdev->pdev, DMA_BIT_MASK(39)))
++		pci_set_consistent_dma_mask(pdev->pdev, DMA_BIT_MASK(39));
++
+ 	check_gtt(pdev);
+ 
+ 	printk("vGT: clear all GTT entries.\n");
+@@ -864,7 +867,6 @@ int setup_gtt(struct pgt_device *pdev)
+ 	pdev->dummy_page = dummy_page;
+ 
+ 	get_page(dummy_page);
+-	set_pages_uc(dummy_page, 1);
+ 	dma_addr = pci_map_page(pdev->pdev, dummy_page, 0, PAGE_SIZE, PCI_DMA_BIDIRECTIONAL);
+ 	if (pci_dma_mapping_error(pdev->pdev, dma_addr)) {
+ 		ret = -EINVAL;
+@@ -906,8 +908,7 @@ int setup_gtt(struct pgt_device *pdev)
+ 		}
+ 
+ 		get_page(page);
+-		/* use wc instead! */
+-		set_pages_uc(page, 1);
++		set_memory_wc(page_address(page), 1);
+ 
+ 		(*pages)[i] = page;
+ 
+-- 
+1.7.10.4
+

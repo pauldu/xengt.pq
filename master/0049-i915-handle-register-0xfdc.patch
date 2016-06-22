@@ -1,0 +1,78 @@
+From 4bf1e620e94ce904ff582ffed6bc2b43e4a4ebef Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Wed, 22 Apr 2015 00:42:55 +0800
+Subject: [PATCH 049/403] i915: handle register 0xfdc
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/i915_drv.h     |    2 ++
+ drivers/gpu/drm/i915/intel_uncore.c |   26 ++++++++++++++++++++++++++
+ 2 files changed, 28 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/i915_drv.h b/drivers/gpu/drm/i915/i915_drv.h
+index cb5b027..02eab63 100644
+--- a/drivers/gpu/drm/i915/i915_drv.h
++++ b/drivers/gpu/drm/i915/i915_drv.h
+@@ -1981,6 +1981,8 @@ struct drm_i915_private {
+ 	} irq_ops;
+ #endif
+ 
++	unsigned long value_of_0xfdc;
++
+ 	/* Abstract the submission mechanism (legacy ringbuffer or execlists) away */
+ 	struct {
+ 		int (*execbuf_submit)(struct i915_execbuffer_params *params,
+diff --git a/drivers/gpu/drm/i915/intel_uncore.c b/drivers/gpu/drm/i915/intel_uncore.c
+index 4aad155..2543b9a 100644
+--- a/drivers/gpu/drm/i915/intel_uncore.c
++++ b/drivers/gpu/drm/i915/intel_uncore.c
+@@ -192,6 +192,9 @@ static void fw_domains_get_with_thread_status(struct drm_i915_private *dev_priv,
+ 
+ 	/* WaRsForcewakeWaitTC0:snb,ivb,hsw,bdw,vlv */
+ 	__gen6_gt_wait_for_thread_c0(dev_priv);
++
++	if (IS_BROADWELL(dev_priv->dev))
++		__raw_i915_write32(dev_priv, 0xfdc, dev_priv->value_of_0xfdc);
+ }
+ 
+ static void gen6_gt_check_fifodbg(struct drm_i915_private *dev_priv)
+@@ -1072,6 +1075,28 @@ do { \
+ 	dev_priv->uncore.funcs.mmio_readq = x##_read64; \
+ } while (0)
+ 
++void gen8_calc_value_of_0xfdc(struct drm_i915_private *dev_priv)
++{
++	unsigned long val_9120;
++	int bit;
++	unsigned long value = 0;
++
++	val_9120 = (__raw_i915_read32(dev_priv, 0x9120) >> 25) & 0x7;
++	for (bit = 0; bit < 3; bit++)
++		if ((val_9120 & (1 << bit)) && bit)
++			value |= (1 << (25 + bit));
++
++	val_9120 = (__raw_i915_read32(dev_priv, 0x9120) >> 21) & 0x7;
++	for (bit = 0; bit < 3; bit++)
++		if (!(val_9120 & (1 << bit)) && bit)
++			value |= (1 << (23 + bit));
++
++	value |= (1 << 28);
++
++	dev_priv->value_of_0xfdc = value;
++
++	DRM_INFO("value of 0xfdc: %lx.\n", dev_priv->value_of_0xfdc);
++}
+ 
+ static void fw_domain_init(struct drm_i915_private *dev_priv,
+ 			   enum forcewake_domain_id domain_id,
+@@ -1232,6 +1257,7 @@ void intel_uncore_init(struct drm_device *dev)
+ 		} else {
+ 			ASSIGN_WRITE_MMIO_VFUNCS(gen8);
+ 			ASSIGN_READ_MMIO_VFUNCS(gen6);
++			gen8_calc_value_of_0xfdc(dev_priv);
+ 		}
+ 		break;
+ 	case 7:
+-- 
+1.7.10.4
+

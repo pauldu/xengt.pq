@@ -1,0 +1,29 @@
+From 671566b182580fb92a238e89dbc4084e6907adc4 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Tue, 21 Apr 2015 08:24:30 +0800
+Subject: [PATCH 045/403] i915: add missing masked operation for
+ GEN8_FF_SLICE_CS_CHICKEN2
+
+Looks i915 missed the mask operation of GEN8_FF_SLICE_CS_CHICKEN2.
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/intel_pm.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/intel_pm.c b/drivers/gpu/drm/i915/intel_pm.c
+index cdb0c5b..1a23713 100644
+--- a/drivers/gpu/drm/i915/intel_pm.c
++++ b/drivers/gpu/drm/i915/intel_pm.c
+@@ -6578,7 +6578,7 @@ static void haswell_init_clock_gating(struct drm_device *dev)
+ 	/* WaDisableMidThreadPreempt:bdw */
+ 	I915_WRITE(GEN8_FF_SLICE_CS_CHICKEN2,
+ 		   I915_READ(GEN8_FF_SLICE_CS_CHICKEN2) |
+-		   GEN8_THREAD_GROUP_PREEMPTION);
++		   _MASKED_BIT_ENABLE(GEN8_THREAD_GROUP_PREEMPTION));
+ 
+ 	lpt_init_clock_gating(dev);
+ }
+-- 
+1.7.10.4
+

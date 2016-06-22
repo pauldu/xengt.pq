@@ -1,0 +1,29 @@
+From 608350fe85bf0d0fd91c6cca337d185239b9a001 Mon Sep 17 00:00:00 2001
+From: Yi Sun <yi.sun@intel.com>
+Date: Mon, 14 Mar 2016 14:01:33 +0800
+Subject: [PATCH 386/403] Fix a bug wrong condition statement.
+
+Compared a boolean variable with 0 by mistake, which leads to the
+condition never met.
+
+Signed-off-by: Yi Sun <yi.sun@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index ee8ecab..7faf390 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -2104,7 +2104,7 @@ static bool pvinfo_write(struct vgt_device *vgt, unsigned int offset,
+ 
+ 			if (event != UEVENT_MAX){
+ 				rc = vgt_dpy_stat_notify(vgt, event);
+-				if (rc < 0)
++				if (!rc)
+ 					break;
+ 			}
+ 
+-- 
+1.7.10.4
+

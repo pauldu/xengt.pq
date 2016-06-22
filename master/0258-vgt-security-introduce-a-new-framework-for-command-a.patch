@@ -1,0 +1,150 @@
+From 6ad7eb87b0890162cbfa6c3080d4c6f24ae5aa88 Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Thu, 15 Oct 2015 22:31:58 +0800
+Subject: [PATCH 258/403] vgt: security: introduce a new framework for command
+ address
+
+base on the assumption that guest VM use PPGTT context only, all
+rendering commands will target PPGTT, introduce a framework to audit
+MI_* commmand and PIPE_CONTROL.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |   51 +++++++++++++++++++++++----------
+ drivers/gpu/drm/i915/vgt/execlists.c  |    5 ++++
+ drivers/gpu/drm/i915/vgt/vgt.c        |    2 ++
+ drivers/gpu/drm/i915/vgt/vgt.h        |    1 +
+ 4 files changed, 44 insertions(+), 15 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index ffa57a5..8ac1e0f 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -46,6 +46,9 @@
+ 
+ DEFINE_HASHTABLE(vgt_cmd_table, VGT_CMD_HASH_BITS);
+ 
++static inline int cmd_address_audit(struct parser_exec_state *s, unsigned long g_addr,
++	int op_size, bool index_mode);
++
+ static void vgt_add_cmd_entry(struct vgt_cmd_entry *e)
+ {
+ 	hash_add(vgt_cmd_table, &e->hlist, e->info->opcode);
+@@ -1324,24 +1327,44 @@ static inline bool address_audit(struct parser_exec_state *s, int index)
+ 	return true;
+ }
+ 
+-static inline bool vgt_cmd_addr_audit_with_bitmap(struct parser_exec_state *s,
+-			unsigned long addr_bitmap)
++static inline int cmd_address_audit(struct parser_exec_state *s, unsigned long g_addr,
++	int op_size, bool index_mode)
+ {
+-	unsigned int bit;
+-	unsigned int delta = 0;
+-	int cmd_len = cmd_length(s);
++	struct vgt_device *vgt = s->vgt;
++	int max_surface_size = vgt->pdev->device_info.max_surface_size;
++	int i;
++	int rc = 0;
+ 
+-	if (!addr_bitmap)
+-		return true;
++	ASSERT(op_size <= max_surface_size);
+ 
+-	for_each_set_bit(bit, &addr_bitmap, sizeof(addr_bitmap)*8) {
+-		if (bit + delta >= cmd_len)
+-			return false;
+-		address_audit(s, bit + delta);
+-		delta = delta + gmadr_dw_number(s) - 1;
++	if (s->vgt->vgt_id == 0)
++		return rc;
++
++	if (index_mode)	{
++		if (g_addr >= PAGE_SIZE/sizeof(uint64_t))
++			rc = -1;
++	} else if ((!g_gm_is_valid(vgt, g_addr))
++		|| (!g_gm_is_valid(vgt, g_addr + op_size - 1))) {
++		rc = -1;
+ 	}
+ 
+-	return true;
++	if (rc < 0) {
++		vgt_err("cmd_parser: Malicious %s detected, addr=0x%lx, len=%d!\n",
++			s->info->name, g_addr, op_size);
++
++		printk("cmd dump: ");
++		for (i = 0; i < cmd_length(s); i++) {
++			if (!(i % 4))
++				printk("\n%08x ", cmd_val(s, i));
++			else
++				printk("%08x ", cmd_val(s, i));
++		}
++		printk("\ncurrent VM addr range: visible 0x%llx - 0x%llx, hidden 0x%llx - 0x%llx\n",
++			vgt_guest_visible_gm_base(vgt), vgt_guest_visible_gm_end(vgt),
++			vgt_guest_hidden_gm_base(vgt), vgt_guest_hidden_gm_end(vgt));
++	}
++
++	return rc;
+ }
+ 
+ static int vgt_cmd_handler_mi_update_gtt(struct parser_exec_state *s)
+@@ -2286,8 +2309,6 @@ static int vgt_cmd_parser_exec(struct parser_exec_state *s)
+ 
+ 	s->info = info;
+ 
+-	vgt_cmd_addr_audit_with_bitmap(s, info->addr_bitmap);
+-
+ 	t1 = get_cycles();
+ 
+ 	if (info->handler) {
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index b30cac8..7928c97b 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -1652,6 +1652,11 @@ bool vgt_batch_ELSP_write(struct vgt_device *vgt, int ring_id)
+ 			continue;
+ 		}
+ 
++		if (!ctx_descs[i]->privilege_access) {
++			vgt_err("VM-%d: Unexpected GGTT base rendering!\n", vgt->vm_id);
++			return false;
++		}
++
+ 		vgt_dbg(VGT_DBG_EXECLIST, "SUBMISSION: ctx%d guest lrca is: 0x%x\n",
+ 						i, ctx_descs[i]->lrca);
+ 		el_ctx = execlist_context_find(vgt, ctx_descs[i]->lrca);
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 8522c29..c5e40bc 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -586,6 +586,7 @@ static bool vgt_initialize_device_info(struct pgt_device *pdev)
+ 		info->gtt_entry_size = 4;
+ 		info->gtt_entry_size_shift = 2;
+ 		info->gmadr_bytes_in_cmd = 4;
++		info->max_surface_size = 36 * SIZE_1MB;
+ 	} else if (IS_BDW(pdev) || IS_SKL(pdev)) {
+ 		int gen = IS_BDW(pdev) ? 8 : 9;
+ 
+@@ -605,6 +606,7 @@ static bool vgt_initialize_device_info(struct pgt_device *pdev)
+ 		info->gtt_entry_size = 8;
+ 		info->gtt_entry_size_shift = 3;
+ 		info->gmadr_bytes_in_cmd = 8;
++		info->max_surface_size = 36 * SIZE_1MB;
+ 	}
+ 
+ 	printk("GEN device info:\n");
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index d7de772..a16638b 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -352,6 +352,7 @@ struct vgt_device_info {
+ 	u32 gtt_entry_size;
+ 	u32 gtt_entry_size_shift;
+ 	u32 gmadr_bytes_in_cmd;
++	u32 max_surface_size;
+ };
+ 
+ /* per-device structure */
+-- 
+1.7.10.4
+

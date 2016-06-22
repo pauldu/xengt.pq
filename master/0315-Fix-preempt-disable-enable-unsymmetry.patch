@@ -1,0 +1,105 @@
+From fcc17ee664341778c845f859e629a0428b34cd51 Mon Sep 17 00:00:00 2001
+From: Chen Fan <fanx.chen@intel.com>
+Date: Thu, 14 Jan 2016 09:35:04 +0800
+Subject: [PATCH 315/403] Fix preempt disable/enable unsymmetry
+
+when enable the preemption in kernel configure file, boot up kernel
+BUG_ON(in_interrupt()) occur,  because the vgt_emulate_write/read
+are under the vgt_lock_dev protection which is preemption disable.
+but among the critical region. we call get_cpu_var which re-disable
+preemption and cause preempt_count+1. after call emulate_write/read
+many times, the thread preempt_count maybe overflow to irq field.
+which would cause the following code in interrupt context.
+for irq work queue, we need to access the per_cpu value. we should
+disable the preemption. this patch fix them.
+
+Signed-off-by: Chen Fan <fanx.chen@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/interrupt.c |   27 ++++++++++++++++++---------
+ 1 file changed, 18 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/interrupt.c b/drivers/gpu/drm/i915/vgt/interrupt.c
+index f5de788..8f1a949 100644
+--- a/drivers/gpu/drm/i915/vgt/interrupt.c
++++ b/drivers/gpu/drm/i915/vgt/interrupt.c
+@@ -550,9 +550,9 @@ bool vgt_reg_master_irq_handler(struct vgt_device *vgt,
+ 		 __vreg(vgt, reg), VGT_MMIO_READ(pdev, reg));
+ 
+ 	if (likely(vgt_track_nest) && !vgt->vgt_id &&
+-		get_cpu_var(in_vgt) != 1) {
++		__this_cpu_read(in_vgt) != 1) {
+ 		vgt_err("i915 virq happens in nested vgt context(%d)!!!\n",
+-			get_cpu_var(in_vgt));
++			__this_cpu_read(in_vgt));
+ 		ASSERT(0);
+ 	}
+ 
+@@ -600,9 +600,9 @@ bool vgt_reg_ier_handler(struct vgt_device *vgt,
+ 		 __vreg(vgt, reg), VGT_MMIO_READ(pdev, reg));
+ 
+ 	if (likely(vgt_track_nest) && !vgt->vgt_id &&
+-		get_cpu_var(in_vgt) != 1) {
++		__this_cpu_read(in_vgt) != 1) {
+ 		vgt_err("i915 virq happens in nested vgt context(%d)!!!\n",
+-			get_cpu_var(in_vgt));
++			__this_cpu_read(in_vgt));
+ 		ASSERT(0);
+ 	}
+ 
+@@ -826,11 +826,18 @@ static void *delay_event_timers[BITS_PER_LONG];
+ static bool vgt_check_delay_event(void *timer)
+ {
+ 	int bit;
++	unsigned long *bitmap;
+ 
+ 	if (!vgt_delay_nest || !hypervisor_check_host()
+-			|| !vgt_enabled || !get_cpu_var(in_vgt))
++			|| !vgt_enabled)
+ 		return true;
+ 
++	if (!get_cpu_var(in_vgt)) {
++		put_cpu_var(in_vgt);
++		return true;
++	}
++	put_cpu_var(in_vgt);
++
+ 	if (timer == NULL) {
+ 		bit = 0;
+ 	} else {
+@@ -844,7 +851,9 @@ static bool vgt_check_delay_event(void *timer)
+ 		}
+ 	}
+ 
+-	set_bit(bit, &get_cpu_var(delay_event_bitmap));
++	bitmap = get_cpu_ptr(&delay_event_bitmap);
++	set_bit(bit, bitmap);
++	put_cpu_ptr(&delay_event_bitmap);
+ 	return false;
+ }
+ 
+@@ -875,11 +884,11 @@ static void vgt_flush_delay_events(void)
+ {
+ 	int bit;
+ 
+-	for_each_set_bit(bit, &get_cpu_var(delay_event_bitmap), BITS_PER_LONG) {
++	for_each_set_bit(bit, this_cpu_ptr(&delay_event_bitmap), BITS_PER_LONG) {
+ 		if (bit == next_avail_delay_event)
+ 			break;
+ 
+-		clear_bit(bit, &get_cpu_var(delay_event_bitmap));
++		clear_bit(bit, this_cpu_ptr(&delay_event_bitmap));
+ 
+ 		if (bit == 0) {
+ 			struct pgt_device *pdev = &default_device;
+@@ -951,7 +960,7 @@ static void do_inject_dom0_virtual_interrupt(void *info, int ipi)
+ 		clear_bit(0, &pdev->dom0_ipi_irq_injecting);
+ 
+ 	/* still in vgt. the injection will happen later */
+-	if (get_cpu_var(in_vgt))
++	if (__this_cpu_read(in_vgt))
+ 		return;
+ 
+ 	spin_lock_irqsave(&pdev->lock, flags);
+-- 
+1.7.10.4
+

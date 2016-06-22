@@ -1,0 +1,54 @@
+diff --git a/i915.conf b/i915.conf
+new file mode 100644
+index 0000000..003c338
+--- /dev/null
++++ b/i915.conf
+@@ -0,0 +1 @@
++blacklist i915
+diff --git a/mk/Makefile b/mk/Makefile
+index 5cff5a9..b1b75d9 100644
+--- a/mk/Makefile
++++ b/mk/Makefile
+@@ -15,6 +15,7 @@ SOURCES := ../drivers
+ SOURCES += ../include
+ SOURCES += ../gvt-g-whitelist
+ SOURCES += ../gvt-g-monitor.conf
++SOURCES += ../i915.conf
+ SOURCES += Kbuild
+ 
+ include $(PROJECT_OUTPUTDIR)/kernel-dom0/kernel.inc
+diff --git a/mk/xengt.spec b/mk/xengt.spec
+index 1119658..e051758 100644
+--- a/mk/xengt.spec
++++ b/mk/xengt.spec
+@@ -45,6 +45,12 @@ find %{buildroot}/lib/modules/%{kernel_version}/extra/ -mindepth 1 -type d -dele
+ # mark modules executable so that strip-to-file can strip them
+ find %{buildroot}/lib/modules/%{kernel_version} -name "*.ko" -type f | xargs chmod u+x
+ 
++mkdir -p ${RPM_BUILD_ROOT}%{_sysconfdir}
++install -m 644 gvt-g-whitelist ${RPM_BUILD_ROOT}%{_sysconfdir}
++install -m 644 gvt-g-monitor.conf ${RPM_BUILD_ROOT}%{_sysconfdir}
++mkdir -p ${RPM_BUILD_ROOT}%{_sysconfdir}/modprobe.d
++install -m 644 i915.conf ${RPM_BUILD_ROOT}%{_sysconfdir}/modprobe.d/
++
+ %clean
+ rm -rf %{buildroot}
+ 
+@@ -88,4 +94,17 @@ mkinitrd -f /boot/initrd-%{kernel_version}.img %{kernel_version}
+ /lib/modules/%{kernel_version}/*/*.ko
+ %doc
+ 
++%package userspace
++Summary: %{vendor_name} %{driver_name} userspace
++Group: System Environment/Base
++
++%description userspace
++%{vendor_name} %{driver_name} Userspace components
++
++%files userspace
++%defattr(-,root,root,-)
++%{_sysconfdir}/gvt-g-whitelist
++%{_sysconfdir}/gvt-g-monitor.conf
++%{_sysconfdir}/modprobe.d/i915.conf
++
+ %changelog

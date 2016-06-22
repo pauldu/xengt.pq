@@ -1,0 +1,53 @@
+From e227a3a5b872e733b363cfb920a4bb7e5969ccdb Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Mon, 10 Aug 2015 22:49:45 +0800
+Subject: [PATCH 209/403] vgt/skl: introduce new command
+ 3DSTATE_COMPONENT_PACKING into command parser
+
+XenGT
+
+OP_3DSTATE_COMPONENT_PACKING            OP_3D_MEDIA(0x3, 0x0, 0x55) /* SKL+ */
+
+Intel GPU Tools: lib/gen9_render.h:
+
+GEN9_3DSTATE_COMPONENT_PACKING		GEN6_3D(3, 0, 0x55)
+
+v2:
+
+- Take Zhiyuan's comment. Change the length type to F_LEN_VAR.
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |    3 +++
+ drivers/gpu/drm/i915/vgt/cmd_parser.h |    1 +
+ 2 files changed, 4 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index d526979..99900d5 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -2176,6 +2176,9 @@ static struct cmd_info cmd_info[] = {
+ 	{"3DSTATE_CONSTANT_VS", OP_3DSTATE_CONSTANT_VS, F_LEN_VAR, R_RCS, D_BDW_PLUS,
+ 		0, 8, vgt_cmd_handler_3dstate_constant_bdw},
+ 
++	{"3DSTATE_COMPONENT_PACKING", OP_3DSTATE_COMPONENT_PACKING, F_LEN_VAR, R_RCS,
++		D_SKL_PLUS, 0, 8, NULL},
++
+ 	{"MEDIA_INTERFACE_DESCRIPTOR_LOAD", OP_MEDIA_INTERFACE_DESCRIPTOR_LOAD,
+ 		F_LEN_VAR, R_RCS, D_ALL, 0, 16, NULL},
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.h b/drivers/gpu/drm/i915/vgt/cmd_parser.h
+index 536cd48..fa81187 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.h
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.h
+@@ -237,6 +237,7 @@ struct decode_info{
+ #define OP_3DSTATE_RASTER   			OP_3D_MEDIA(0x3, 0x0, 0x50) /* BDW+ */
+ #define OP_3DSTATE_SBE_SWIZ   			OP_3D_MEDIA(0x3, 0x0, 0x51) /* BDW+ */
+ #define OP_3DSTATE_WM_HZ_OP   			OP_3D_MEDIA(0x3, 0x0, 0x52) /* BDW+ */
++#define OP_3DSTATE_COMPONENT_PACKING            OP_3D_MEDIA(0x3, 0x0, 0x55) /* SKL+ */
+ 
+ #define OP_3DSTATE_DRAWING_RECTANGLE            OP_3D_MEDIA( 0x3 ,0x1, 0x00 )
+ #define OP_3DSTATE_SAMPLER_PALETTE_LOAD0        OP_3D_MEDIA( 0x3 ,0x1, 0x02 )
+-- 
+1.7.10.4
+

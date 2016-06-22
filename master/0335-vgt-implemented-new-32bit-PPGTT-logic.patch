@@ -1,0 +1,292 @@
+From fcf23a54acea31abf30f17157ea8200d45eaeb2b Mon Sep 17 00:00:00 2001
+From: Min He <min.he@intel.com>
+Date: Wed, 27 Jan 2016 23:23:13 +0800
+Subject: [PATCH 335/403] vgt: implemented new 32bit PPGTT logic
+
+V3: commit the partial entries before unset WP of guest page
+V2: added brief introduction to the new logic.
+
+This patch implemented new logic for handling 32bit guest PPGTT
+modification:
+ 1. added a new structure partial_entry_t to record guest entry, index,
+ and high/low DW
+ 2. added a list in ppgtt_spt_t structure to record all the partially
+ accessed guest entries in the guest page.
+ 3. if a guest entry is partially accessed, we will record it into
+ partial_entry_t structure. After both high and low DWs were accessed, we
+ will update the guest entry.
+
+Also, this patch cleaned up previous implementation, which has below
+issues:
+ 1. when guest access entries in high--low--high DWORD sequence, the
+ first low part of entry will be dropped.
+ 2. only one instance of partial access is recorded, which may cause
+ shadow entry been updated accidentally.
+
+Signed-off-by: Min He <min.he@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |    1 -
+ drivers/gpu/drm/i915/vgt/gtt.c       |  130 +++++++++++++++++++++++++---------
+ drivers/gpu/drm/i915/vgt/gtt.h       |   15 ++--
+ 3 files changed, 105 insertions(+), 41 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 7546c17..274cabe 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -1681,7 +1681,6 @@ static inline bool vgt_hw_ELSP_write(struct vgt_device *vgt,
+ 
+ 	ASSERT(ctx0 && ctx1);
+ 
+-	ppgtt_check_partial_access(vgt);
+ 	ppgtt_sync_oos_pages(vgt);
+ 
+ 	vgt_dbg(VGT_DBG_EXECLIST, "EXECLIST is submitted into hardware! "
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index 7dde63d..f018d39 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -597,9 +597,6 @@ void vgt_clean_guest_page(struct vgt_device *vgt, guest_page_t *guest_page)
+ 
+ 	if (guest_page->writeprotection)
+ 		hypervisor_unset_wp_pages(vgt, guest_page);
+-
+-	if (guest_page == vgt->gtt.last_partial_ppgtt_access_gpt)
+-		vgt->gtt.last_partial_ppgtt_access_index = -1;
+ }
+ 
+ guest_page_t *vgt_find_guest_page(struct vgt_device *vgt, unsigned long gfn)
+@@ -686,6 +683,7 @@ static void ppgtt_free_shadow_page(ppgtt_spt_t *spt)
+ 
+ 	vgt_clean_shadow_page(&spt->shadow_page);
+ 	vgt_clean_guest_page(spt->vgt, &spt->guest_page);
++	list_del_init(&spt->partial_access_list_head);
+ 
+ 	mempool_free(spt, spt->vgt->pdev->gtt.mempool);
+ }
+@@ -745,6 +743,7 @@ static ppgtt_spt_t *ppgtt_alloc_shadow_page(struct vgt_device *vgt,
+ 
+ 	spt->vgt = vgt;
+ 	spt->guest_page_type = type;
++	INIT_LIST_HEAD(&spt->partial_access_list_head);
+ 	atomic_set(&spt->refcount, 1);
+ 
+ 	/*
+@@ -1022,6 +1021,63 @@ fail:
+ 	return false;
+ }
+ 
++static struct partial_entry_t *find_partial_access_entry(ppgtt_spt_t *spt,
++		int index)
++{
++	struct list_head *pos, *n;
++	struct partial_entry_t *entry = NULL;
++
++	list_for_each_safe(pos, n, &spt->partial_access_list_head) {
++		entry = container_of(pos, struct partial_entry_t, list);
++		if (entry->index == index)
++			return entry;
++	}
++	return NULL;
++}
++
++static struct partial_entry_t *alloc_partial_entry(ppgtt_spt_t *spt, int index,
++		gtt_entry_t we, bool hi)
++{
++	struct partial_entry_t *entry = kzalloc(sizeof(struct partial_entry_t),
++			GFP_ATOMIC);
++
++	if (!entry) {
++		vgt_err("failed to allocate partial entry\n");
++		return NULL;
++	}
++	entry->index = index;
++	entry->hi = hi;
++	entry->entry = we;
++	list_add_tail(&entry->list, &spt->partial_access_list_head);
++	return entry;
++}
++
++static void free_partial_entry(struct partial_entry_t *p_entry)
++{
++	list_del_init(&p_entry->list);
++	kfree(p_entry);
++}
++
++static void sync_partial_entries(ppgtt_spt_t *spt)
++{
++	struct list_head *pos, *n;
++	struct partial_entry_t *entry = NULL;
++	gtt_entry_t we;
++	int offset = 0;
++
++	list_for_each_safe(pos, n, &spt->partial_access_list_head) {
++		entry = container_of(pos, struct partial_entry_t, list);
++		ppgtt_get_guest_entry(spt, &we, entry->index);
++		offset = entry->hi ? 1 : 0;
++		we.val32[offset] = entry->entry.val32[offset];
++		ppgtt_set_guest_entry(spt, &we, entry->index);
++
++		trace_gpt_change(spt->vgt->vm_id, "sync partial entries", spt,
++					we.type, we.val64, entry->index);
++		free_partial_entry(entry);
++	}
++}
++
+ static bool vgt_sync_oos_page(struct vgt_device *vgt, oos_page_t *oos_page)
+ {
+ 	struct vgt_device_info *info = &vgt->pdev->device_info;
+@@ -1215,28 +1271,6 @@ static inline bool can_do_out_of_sync(guest_page_t *gpt)
+ 		&& gpt->write_cnt >= 2;
+ }
+ 
+-bool ppgtt_check_partial_access(struct vgt_device *vgt)
+-{
+-	struct vgt_vgtt_info *gtt = &vgt->gtt;
+-
+-	if (gtt->last_partial_ppgtt_access_index == -1)
+-		return true;
+-
+-	if (!gtt->warn_partial_ppgtt_access_once) {
+-		vgt_warn("Incomplete PPGTT page table access sequence.\n");
+-		gtt->warn_partial_ppgtt_access_once = true;
+-	}
+-
+-	if (!ppgtt_handle_guest_write_page_table(
+-			gtt->last_partial_ppgtt_access_gpt,
+-			&gtt->last_partial_ppgtt_access_entry,
+-			gtt->last_partial_ppgtt_access_index))
+-		return false;
+-
+-	gtt->last_partial_ppgtt_access_index = -1;
+-	return true;
+-}
+-
+ static bool ppgtt_handle_guest_write_page_table_bytes(void *gp,
+ 		uint64_t pa, void *p_data, int bytes)
+ {
+@@ -1245,9 +1279,9 @@ static bool ppgtt_handle_guest_write_page_table_bytes(void *gp,
+ 	struct vgt_device *vgt = spt->vgt;
+ 	struct vgt_gtt_pte_ops *ops = vgt->pdev->gtt.pte_ops;
+ 	struct vgt_device_info *info = &vgt->pdev->device_info;
+-	struct vgt_vgtt_info *gtt = &vgt->gtt;
+-	gtt_entry_t we, se;
++	gtt_entry_t we;
+ 	unsigned long index;
++	struct partial_entry_t *p_entry = NULL;
+ 
+ 	bool partial_access = (bytes != info->gtt_entry_size);
+ 	bool hi = (partial_access && (pa & (info->gtt_entry_size - 1)));
+@@ -1257,12 +1291,37 @@ static bool ppgtt_handle_guest_write_page_table_bytes(void *gp,
+ 	ppgtt_get_guest_entry(spt, &we, index);
+ 	memcpy((char *)&we.val64 + (pa & (info->gtt_entry_size - 1)), p_data, bytes);
+ 
+-	if (partial_access && hi) {
+-		trace_gpt_change(vgt->vm_id, "partial access - LOW",
+-				NULL, we.type, *(u32 *)(p_data), index);
++	if (partial_access) {
++		trace_gpt_change(vgt->vm_id,
++			hi ? "partial access - HIGH" : "partial access - LOW",
++			NULL, we.type, *(u32 *)(p_data), index);
++
++		p_entry = find_partial_access_entry(spt, index);
++		if (!p_entry) {
++			p_entry = alloc_partial_entry(spt, index, we, hi);
++			if (!p_entry) {
++				vgt_err("failed to alloc partial entry\n");
++				return false;
++			}
++			return true;
++		} else if (p_entry->hi == hi) {
++			/* same DW was updated twice, don't care*/
++			memcpy((char *)&p_entry->entry.val64 +
++				(pa & (info->gtt_entry_size - 1)),
++				p_data, bytes);
++			return true;
++		}
+ 
+-		ppgtt_set_guest_entry(spt, &we, index);
+-		return true;
++		/*
++		 * both DWs were updated,
++		 * we can restore the partial entry,
++		 * and continue to update shadow table
++		 */
++		we = p_entry->entry;
++		memcpy((char *)&we.val64 +
++			(pa & (info->gtt_entry_size - 1)),
++			p_data, bytes);
++		free_partial_entry(p_entry);
+ 	}
+ 
+ 	ops->test_pse(&we);
+@@ -1284,6 +1343,11 @@ static bool ppgtt_handle_guest_write_page_table_bytes(void *gp,
+ 			if (!gpt->oos_page)
+ 				ppgtt_allocate_oos_page(vgt, gpt);
+ 
++			/* since we have oos page here, we will commit all the
++			 * partial entries and remove them from the list
++			 */
++			sync_partial_entries(spt);
++
+ 			if (!ppgtt_set_guest_page_oos(vgt, gpt)) {
+ 				/* should not return false since we can handle it*/
+ 				ppgtt_set_guest_page_sync(vgt, gpt);
+@@ -2047,8 +2111,6 @@ bool vgt_init_vgtt(struct vgt_device *vgt)
+ 	INIT_LIST_HEAD(&gtt->mm_list_head);
+ 	INIT_LIST_HEAD(&gtt->oos_page_list_head);
+ 
+-	gtt->last_partial_ppgtt_access_index = -1;
+-
+ 	if (!vgt_expand_shadow_page_mempool(vgt->pdev)) {
+ 		vgt_err("fail to expand the shadow page mempool.");
+ 		return false;
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.h b/drivers/gpu/drm/i915/vgt/gtt.h
+index 968c6c1..8a26f09 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.h
++++ b/drivers/gpu/drm/i915/vgt/gtt.h
+@@ -226,10 +226,6 @@ struct vgt_vgtt_info {
+ 	DECLARE_HASHTABLE(el_ctx_hash_table, VGT_HASH_BITS);
+ 	atomic_t n_write_protected_guest_page;
+ 	struct list_head oos_page_list_head;
+-	int last_partial_ppgtt_access_index;
+-	gtt_entry_t last_partial_ppgtt_access_entry;
+-	struct guest_page *last_partial_ppgtt_access_gpt;
+-	bool warn_partial_ppgtt_access_once;
+ 	struct page *scratch_page;
+ 	unsigned long scratch_page_mfn;
+ 
+@@ -249,8 +245,6 @@ extern bool vgt_g2v_destroy_ppgtt_mm(struct vgt_device *vgt, int page_table_leve
+ extern struct vgt_mm *gen8_find_ppgtt_mm(struct vgt_device *vgt,
+                 int page_table_level, void *root_entry);
+ 
+-extern bool ppgtt_check_partial_access(struct vgt_device *vgt);
+-
+ typedef bool guest_page_handler_t(void *gp, uint64_t pa, void *p_data, int bytes);
+ 
+ struct oos_page;
+@@ -277,12 +271,21 @@ struct oos_page {
+ };
+ typedef struct oos_page oos_page_t;
+ 
++struct partial_entry_t {
++	int index;
++	gtt_entry_t entry;
++	bool hi;
++	struct list_head list;
++};
++
++
+ typedef struct {
+ 	shadow_page_t shadow_page;
+ 	guest_page_t guest_page;
+ 	gtt_type_t guest_page_type;
+ 	atomic_t refcount;
+ 	struct vgt_device *vgt;
++	struct list_head partial_access_list_head;
+ } ppgtt_spt_t;
+ 
+ extern bool vgt_init_guest_page(struct vgt_device *vgt, guest_page_t *guest_page,
+-- 
+1.7.10.4
+

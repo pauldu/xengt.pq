@@ -1,0 +1,43 @@
+From 6969052a42e03fc2e8c87de635dc7dc81350bc87 Mon Sep 17 00:00:00 2001
+From: Yi Sun <yi.sun@intel.com>
+Date: Thu, 4 Feb 2016 14:26:30 +0800
+Subject: [PATCH 347/403] Dump warning when guest is scaling a plane.
+
+v2. Fix a typo: && -> &
+
+Guest should use pipe scaling but not plane scaling. So when guest is
+trying to enable a plane scaler, only dump a warning.
+
+Signed-off-by: Yi Sun <yi.sun@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |   14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 6709103..4edf301 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -2198,6 +2198,20 @@ static bool pf_write(struct vgt_device *vgt, unsigned int offset,
+ 	void *p_data, unsigned int bytes)
+ {
+ 
++	u32 val = *(u32 *)p_data;
++
++	if(offset == _PS_1A_CTRL ||
++		offset == _PS_2A_CTRL ||
++		offset == _PS_1B_CTRL ||
++		offset == _PS_2B_CTRL ||
++		offset == _PS_1C_CTRL) {
++
++		if((val & PS_PLANE_SEL_MASK) != 0)
++			WARN_ONCE(1, "VM(%d): guest is trying to scaling a plane\n",
++					vgt->vm_id);
++			return true;
++	}
++
+ 	if (enable_panel_fitting) {
+ 		memcpy ((char *)vgt->state.vReg + offset, p_data, bytes);
+ 	} else {
+-- 
+1.7.10.4
+

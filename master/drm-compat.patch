@@ -1,0 +1,61 @@
+diff --git a/include/drm/drm_backport.h b/include/drm/drm_backport.h
+index 312f8b1..e3d795c 100644
+--- a/include/drm/drm_backport.h
++++ b/include/drm/drm_backport.h
+@@ -357,4 +357,56 @@ static inline enum acpi_backlight_type acpi_video_get_backlight_type(void)
+ 	return acpi_backlight_vendor;
+ }
+ 
++/*
++ *
++ */
++
++static inline unsigned long long rdtsc(void)
++{
++	DECLARE_ARGS(val, low, high);
++
++	asm volatile("rdtsc" : EAX_EDX_RET(val, low, high));
++
++	return EAX_EDX_VAL(val, low, high);
++}
++
++
++static inline unsigned long long rdtsc_ordered(void)
++{
++	rdtsc_barrier();
++
++	return rdtsc();
++} 
++
++/*
++ *
++ */
++
++static inline void __iomem *acpi_os_ioremap(acpi_physical_address phys,
++					    acpi_size size)
++{
++       return ioremap_cache(phys, size);
++}
++
++/*
++ *
++ */
++
++#include <linux/mempool.h>
++
++int mempool_resize2(mempool_t *pool, int new_min_nr);
++
++#define mempool_resize mempool_resize2
++
++/*
++ *
++ */
++
++#include <linux/connector.h>
++
++int cn_netlink_send2(struct cn_msg *msg, u32 portid, u32 __group,
++		     gfp_t gfp_mask);
++
++#define cn_netlink_send cn_netlink_send2
++
+ #endif /* DRM_BACKPORT_H_ */

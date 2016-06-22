@@ -1,0 +1,67 @@
+From 7da2050c0b22311d3fe6103b97993e3c2abdfab7 Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Fri, 30 Oct 2015 15:26:21 +0800
+Subject: [PATCH 269/403] vgt: security: avoid hang cause by wrong command
+
+should keep bit[22:18] of register dword zero to avoid hang by lrm, lrr, lri
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |   21 ++++++++++++++++++++-
+ 1 file changed, 20 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index c3dc381..28c8bb2 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -848,8 +848,13 @@ static int vgt_cmd_handler_lri(struct parser_exec_state *s)
+ {
+ 	int i, rc = 0;
+ 	int cmd_len = cmd_length(s);
++	struct pgt_device *pdev = s->vgt->pdev;
+ 
+ 	for (i = 1; i < cmd_len; i += 2) {
++		if (IS_BDW(pdev) && (s->ring_id != RING_BUFFER_RCS))
++			rc |= (cmd_val(s, i) & BIT_RANGE_MASK(22, 18)) ? -1 : 0;
++		if (rc)
++			break;
+ 		rc |= cmd_reg_handler(s,
+ 			cmd_val(s, i) & BIT_RANGE_MASK(22, 2), i, "lri");
+ 	}
+@@ -861,9 +866,17 @@ static int vgt_cmd_handler_lrr(struct parser_exec_state *s)
+ {
+ 	int i, rc = 0;
+ 	int cmd_len = cmd_length(s);
++	struct pgt_device *pdev = s->vgt->pdev;
+ 
+ 	for (i = 1; i < cmd_len; i += 2) {
+-		rc = cmd_reg_handler(s,
++		if (IS_BDW(pdev))
++			rc |= ((cmd_val(s, i) & BIT_RANGE_MASK(22, 18)) ||
++			       (cmd_val(s, i + 1) & BIT_RANGE_MASK(22, 18))) ?
++				-1 : 0;
++		if (rc)
++			break;
++
++		rc |= cmd_reg_handler(s,
+ 			cmd_val(s, i) & BIT_RANGE_MASK(22, 2), i, "lrr-src");
+ 		rc |= cmd_reg_handler(s,
+ 			cmd_val(s, i+1) & BIT_RANGE_MASK(22, 2), i, "lrr-dst");
+@@ -878,8 +891,14 @@ static int vgt_cmd_handler_lrm(struct parser_exec_state *s)
+ 	unsigned long gma;
+ 	int i, rc = 0;
+ 	int cmd_len = cmd_length(s);
++	struct pgt_device *pdev = s->vgt->pdev;
+ 
+ 	for (i = 1; i < cmd_len;) {
++		if (IS_BDW(pdev))
++			rc |= (cmd_val(s, i) & BIT_RANGE_MASK(22, 18)) ? -1 : 0;
++		if (rc)
++			break;
++
+ 		rc |= cmd_reg_handler(s,
+ 			cmd_val(s, i) & BIT_RANGE_MASK(22, 2), i, "lrm");
+ 
+-- 
+1.7.10.4
+

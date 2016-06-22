@@ -1,0 +1,27 @@
+From b964f0beeb68898409f426c114b756ef1f963442 Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Mon, 23 Mar 2015 08:26:12 +0800
+Subject: [PATCH 017/403] Revert "vgt: use virtual head as last scan head
+ under execlist mode"
+
+This reverts commit 9b46708e442bc3ea485a2f0119e72dc5e823f257.
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 45849b4..bbca9ea 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -1431,7 +1431,7 @@ static void vgt_update_ring_info(struct vgt_device *vgt,
+ 	vgt->rb[ring_id].has_ppgtt_mode_enabled = 1;
+ 	vgt->rb[ring_id].has_ppgtt_base_set = 1;
+ 	vgt->rb[ring_id].request_id = el_ctx->request_id;
+-	vgt->rb[ring_id].last_scan_head = vring->head & RB_HEAD_OFF_MASK;
++	vgt->rb[ring_id].last_scan_head = el_ctx->last_scan_head;
+ 
+ 	vgt_scan_vring(vgt, ring_id);
+ 	/* the function is used to update ring/buffer only. No real submission inside */
+-- 
+1.7.10.4
+

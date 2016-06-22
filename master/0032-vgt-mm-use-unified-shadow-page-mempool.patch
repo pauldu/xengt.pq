@@ -1,0 +1,207 @@
+From 0ff08fe2fed325f6fd88853a67ebbe2a339f4dc3 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Mon, 13 Apr 2015 04:13:09 +0800
+Subject: [PATCH 032/403] vgt: mm: use unified shadow page mempool
+
+This patch can fix bug #725.
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/gtt.c |   55 ++++++++++++++++++++++------------------
+ drivers/gpu/drm/i915/vgt/vgt.h |    5 ++--
+ drivers/xen/xengt.c            |    2 +-
+ 3 files changed, 35 insertions(+), 27 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index 74b6850..eb4d0232 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -586,7 +586,7 @@ static void ppgtt_free_shadow_page(ppgtt_spt_t *spt)
+ 	vgt_clean_shadow_page(&spt->shadow_page);
+ 	vgt_clean_guest_page(spt->vgt, &spt->guest_page);
+ 
+-	mempool_free(spt, spt->vgt->gtt.mempool);
++	mempool_free(spt, spt->vgt->pdev->gtt.mempool);
+ }
+ 
+ static void ppgtt_free_all_shadow_page(struct vgt_device *vgt)
+@@ -642,12 +642,13 @@ static ppgtt_spt_t *ppgtt_alloc_shadow_page(struct vgt_device *vgt,
+ {
+ 	ppgtt_spt_t *spt = NULL;
+ 
+-	spt = mempool_alloc(vgt->gtt.mempool, GFP_ATOMIC);
++	spt = mempool_alloc(vgt->pdev->gtt.mempool, GFP_ATOMIC);
+ 	if (!spt) {
+ 		vgt_err("fail to allocate ppgtt shadow page.\n");
+ 		return NULL;
+ 	}
+ 
++	spt->vgt = vgt;
+ 	spt->guest_page_type = type;
+ 	atomic_set(&spt->refcount, 1);
+ 
+@@ -1596,13 +1597,16 @@ void vgt_ppgtt_switch(struct vgt_device *vgt)
+ 	}
+ }
+ 
+-bool vgt_expand_shadow_page_mempool(struct vgt_device *vgt)
++bool vgt_expand_shadow_page_mempool(struct pgt_device *pdev)
+ {
+-	mempool_t *mempool = vgt->gtt.mempool;
++	mempool_t *mempool = pdev->gtt.mempool;
++	bool rc = true;
+ 	int new_min_nr;
+ 
++	mutex_lock(&pdev->gtt.mempool_lock);
++
+ 	if (mempool->curr_nr >= preallocated_shadow_pages / 3)
+-		return true;
++		goto out;
+ 
+ 	/*
+ 	 * Have to do this to let the pool expand directly.
+@@ -1610,21 +1614,24 @@ bool vgt_expand_shadow_page_mempool(struct vgt_device *vgt)
+ 	new_min_nr = preallocated_shadow_pages - 1;
+ 	if (mempool_resize(mempool, new_min_nr)) {
+ 		vgt_err("fail to resize the mempool.\n");
+-		return false;
++		rc = false;
++		goto out;
+ 	}
+ 
+ 	new_min_nr = preallocated_shadow_pages;
+ 	if (mempool_resize(mempool, new_min_nr)) {
+ 		vgt_err("fail to resize the mempool.\n");
+-		return false;
++		rc = false;
++		goto out;
+ 	}
+ 
+-	return true;
++out:
++	mutex_unlock(&pdev->gtt.mempool_lock);
++	return rc;
+ }
+ 
+ static void *mempool_alloc_spt(gfp_t gfp_mask, void *pool_data)
+ {
+-	struct vgt_device *vgt = pool_data;
+ 	ppgtt_spt_t *spt;
+ 
+ 	spt = kzalloc(sizeof(*spt), gfp_mask);
+@@ -1636,7 +1643,6 @@ static void *mempool_alloc_spt(gfp_t gfp_mask, void *pool_data)
+ 		kfree(spt);
+ 		return NULL;
+ 	}
+-	spt->vgt = vgt;
+ 	return spt;
+ }
+ 
+@@ -1659,6 +1665,11 @@ bool vgt_init_vgtt(struct vgt_device *vgt)
+ 
+ 	INIT_LIST_HEAD(&gtt->mm_list_head);
+ 
++	if (!vgt_expand_shadow_page_mempool(vgt->pdev)) {
++		vgt_err("fail to expand the shadow page mempool.");
++		return false;
++	}
++
+ 	ggtt_mm = vgt_create_mm(vgt, VGT_MM_GGTT,
+ 			GTT_TYPE_GGTT_PTE, NULL, 1, 0);
+ 	if (!ggtt_mm) {
+@@ -1667,17 +1678,6 @@ bool vgt_init_vgtt(struct vgt_device *vgt)
+ 	}
+ 
+ 	gtt->ggtt_mm = ggtt_mm;
+-
+-	if (!vgt->vm_id)
+-		return true;
+-
+-	gtt->mempool = mempool_create(preallocated_shadow_pages,
+-		mempool_alloc_spt, mempool_free_spt, vgt);
+-	if (!gtt->mempool) {
+-		vgt_err("fail to create mempool.\n");
+-		return false;
+-	}
+-
+ 	return true;
+ }
+ 
+@@ -1688,9 +1688,6 @@ void vgt_clean_vgtt(struct vgt_device *vgt)
+ 
+ 	ppgtt_free_all_shadow_page(vgt);
+ 
+-	if (vgt->gtt.mempool)
+-		mempool_destroy(vgt->gtt.mempool);
+-
+ 	list_for_each_safe(pos, n, &vgt->gtt.mm_list_head) {
+ 		mm = container_of(pos, struct vgt_mm, list);
+ 		vgt->pdev->gtt.mm_free_page_table(mm);
+@@ -1725,11 +1722,21 @@ bool vgt_gtt_init(struct pgt_device *pdev)
+ 		return false;
+ 	}
+ 
++	mutex_init(&pdev->gtt.mempool_lock);
++
++	pdev->gtt.mempool = mempool_create(preallocated_shadow_pages,
++		mempool_alloc_spt, mempool_free_spt, pdev);
++	if (!pdev->gtt.mempool) {
++		vgt_err("fail to create mempool.\n");
++		return false;
++	}
++
+ 	return true;
+ }
+ 
+ void vgt_gtt_clean(struct pgt_device *pdev)
+ {
++	mempool_destroy(pdev->gtt.mempool);
+ }
+ 
+ int ring_ppgtt_mode(struct vgt_device *vgt, int ring_id, u32 off, u32 mode)
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 5810ffa..d895a94 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -608,7 +608,6 @@ struct vgt_vgtt_info {
+ 	struct vgt_mm *ggtt_mm;
+ 	unsigned long active_ppgtt_mm_bitmap;
+ 	struct list_head mm_list_head;
+-	mempool_t *mempool;
+ 	DECLARE_HASHTABLE(shadow_page_hash_table, VGT_HASH_BITS);
+ 	DECLARE_HASHTABLE(guest_page_hash_table, VGT_HASH_BITS);
+ 	DECLARE_HASHTABLE(el_ctx_hash_table, VGT_HASH_BITS);
+@@ -621,7 +620,7 @@ extern void vgt_clean_vgtt(struct vgt_device *vgt);
+ extern bool vgt_gtt_init(struct pgt_device *pdev);
+ extern void vgt_gtt_clean(struct pgt_device *pdev);
+ 
+-extern bool vgt_expand_shadow_page_mempool(struct vgt_device *vgt);
++extern bool vgt_expand_shadow_page_mempool(struct pgt_device *pdev);
+ 
+ extern bool vgt_g2v_create_ppgtt_mm(struct vgt_device *vgt, int page_table_level);
+ extern bool vgt_g2v_destroy_ppgtt_mm(struct vgt_device *vgt, int page_table_level);
+@@ -1137,6 +1136,8 @@ struct vgt_gtt_info {
+ 	struct vgt_gtt_gma_ops *gma_ops;
+ 	bool (*mm_alloc_page_table)(struct vgt_mm *mm);
+ 	void (*mm_free_page_table)(struct vgt_mm *mm);
++	mempool_t *mempool;
++	struct mutex mempool_lock;
+ };
+ 
+ /* per-device structure */
+diff --git a/drivers/xen/xengt.c b/drivers/xen/xengt.c
+index 37360ff..2cc22f7 100644
+--- a/drivers/xen/xengt.c
++++ b/drivers/xen/xengt.c
+@@ -859,7 +859,7 @@ static int vgt_emulation_thread(void *priv)
+ 			ioreq = vgt_get_hvm_ioreq(vgt, vcpu);
+ 
+ 			if (vgt_hvm_do_ioreq(vgt, ioreq) ||
+-					!vgt_expand_shadow_page_mempool(vgt)) {
++					!vgt_expand_shadow_page_mempool(vgt->pdev)) {
+ 				hypervisor_pause_domain(vgt);
+ 				hypervisor_shutdown_domain(vgt);
+ 			}
+-- 
+1.7.10.4
+

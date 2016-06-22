@@ -1,0 +1,67 @@
+From 92c7b09b73f952b61a463b98feed5364db0e6abd Mon Sep 17 00:00:00 2001
+From: Weinan Li <weinan.z.li@intel.com>
+Date: Wed, 23 Dec 2015 13:08:36 +0800
+Subject: [PATCH 297/403] vgt: remove the PM interrupts mask when dom0 run
+ into idle.
+
+gpu pm support adjust the gpu's frequency dynamically, when submit commands
+to gpu, it generate rps interrupts according to the gpu's utilization and
+threshold value state, irq handler decide to inc/dec the gpu frequency.
+
+the policy of rps control is set as max when there is boost submission,
+unmask the rps interrupts, then adjust it according to work loading, set
+as idle freq after the last submission is finished, and mask the rps
+interrupts before the next boost submission.
+
+in vgt, only dom0 can access the pm reference registers, but dom0 i915
+driver don't know there is or not unfinished submission from DomU. it will
+deal as idle after the last submission from itself is finished. gpu will
+run with low freq if no more boost submission from dom0.
+
+keep the policy, but remove the mask of rps interrupts with vgt enabled
+when run into idle state(not really gpu idle), ensure the gpu freq also can
+be adjusted when only work loading from domU.
+
+this trick will be removed later when host mediation is removed.
+
+this can fix bug 935.
+
+v3: use i915_host_mediate instead of intel_vgpu_active().
+
+v2: add vgt enable/disable check.
+
+Signed-off-by: Weinan Li <weinan.z.li@intel.com>
+---
+ drivers/gpu/drm/i915/intel_pm.c |   16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/intel_pm.c b/drivers/gpu/drm/i915/intel_pm.c
+index 439ba29..983e0bc4 100644
+--- a/drivers/gpu/drm/i915/intel_pm.c
++++ b/drivers/gpu/drm/i915/intel_pm.c
+@@ -4403,7 +4403,21 @@ void gen6_rps_idle(struct drm_i915_private *dev_priv)
+ 		else
+ 			gen6_set_rps(dev_priv->dev, dev_priv->rps.idle_freq);
+ 		dev_priv->rps.last_adj = 0;
+-		I915_WRITE(GEN6_PMINTRMSK, 0xffffffff);
++		/* mask the rps interrupts before the next boost submission
++		 * with vgt disabled.
++		 * in vgt, only dom0 can access the pm reference registers,
++		 * but dom0 i915 driver don't know there is or not unfinished
++		 * submission from DomU. it will deal as idle after the last
++		 * submission from itself is finished. gpu will run with low
++		 * freq if no more boost submission from dom0.
++		 * remove the mask of rps interrupts when run into idle
++		 * state(not really gpu idle) with vgt enabled, ensure the
++		 * gpu freq also can be adjusted when only work loading
++		 * from domU.
++		 * this trick will be removed later when host mediation is
++		 * removed. */
++		if (!i915_host_mediate)
++			I915_WRITE(GEN6_PMINTRMSK, 0xffffffff);
+ 	}
+ 	mutex_unlock(&dev_priv->rps.hw_lock);
+ 
+-- 
+1.7.10.4
+

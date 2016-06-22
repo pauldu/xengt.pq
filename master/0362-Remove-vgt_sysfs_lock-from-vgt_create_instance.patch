@@ -1,0 +1,57 @@
+From 4bc018bb62be7167eadd2151d32377598cd18748 Mon Sep 17 00:00:00 2001
+From: Yi Sun <yi.sun@intel.com>
+Date: Mon, 29 Feb 2016 11:22:03 +0800
+Subject: [PATCH 362/403] Remove vgt_sysfs_lock from vgt_create_instance.
+
+Function vgt_create_instance_store held vgt_sysfs_lock while adding or
+deleting display related kobjects in sysfs such as display ports.
+But in some particular case, user space can access the same sysfs node
+at the same time. That introduced the ABBA dead-lock.
+
+So we shrank the scope of mutex vgt_sysfs_lock, putting them in func
+vgt_[add|del]_state_sysfs seperatedly.
+
+This can fix bug #980
+
+Signed-off-by: Yi Sun <yi.sun@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/sysfs.c |    6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/sysfs.c b/drivers/gpu/drm/i915/vgt/sysfs.c
+index 5180428..da6e4e6 100644
+--- a/drivers/gpu/drm/i915/vgt/sysfs.c
++++ b/drivers/gpu/drm/i915/vgt/sysfs.c
+@@ -72,9 +72,7 @@ static ssize_t vgt_create_instance_store(struct kobject *kobj, struct kobj_attri
+ 	} else
+ 		return -EINVAL;
+ 
+-	mutex_lock(&vgt_sysfs_lock);
+ 	rc = (vp.vm_id > 0) ? vgt_add_state_sysfs(vp) : vgt_del_state_sysfs(vp);
+-	mutex_unlock(&vgt_sysfs_lock);
+ 
+ 	return rc < 0 ? rc : count;
+ }
+@@ -1026,7 +1024,9 @@ static int vgt_add_state_sysfs(vgt_params_t vp)
+ 	if (vmid_2_vgt_device(vp.vm_id))
+ 		return -EINVAL;
+ 
++	mutex_lock(&vgt_sysfs_lock);
+ 	retval = create_vgt_instance(&default_device, &vgt, vp);
++	mutex_unlock(&vgt_sysfs_lock);
+ 
+ 	if (retval < 0)
+ 		return retval;
+@@ -1098,7 +1098,9 @@ int vgt_del_state_sysfs(vgt_params_t vp)
+ 
+ 	kobject_put(&vgt->kobj);
+ 
++	mutex_lock(&vgt_sysfs_lock);
+ 	vgt_release_instance(vgt);
++	mutex_unlock(&vgt_sysfs_lock);
+ 
+ 	return 0;
+ }
+-- 
+1.7.10.4
+

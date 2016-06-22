@@ -1,0 +1,394 @@
+From 82ca484c745b4c0dbdf46d2f94dd58e757cbf909 Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Tue, 22 Dec 2015 09:46:06 +0800
+Subject: [PATCH 303/403] remove vmfb_mapping
+
+The gem vgtbuffer implementation hacks i915 gem object too much. A
+flag "vmfb_mapping" was added into gem object, and the object binding
+to gm will check the flag to call different function for vgtbuffer.
+
+The implementation is broken in previous code rebase. It was not
+investigated and is currently feature disabled. The vgtbuffer will
+have a new implementation, so here we remove all the hacks in
+i915_gem.c and i915_gem_gtt.c
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+
+Conflicts:
+	drivers/gpu/drm/i915/i915_drv.h
+	drivers/gpu/drm/i915/i915_gem.c
+	drivers/gpu/drm/i915/i915_gem_gtt.c
+---
+ drivers/gpu/drm/i915/i915_drv.h           |    6 --
+ drivers/gpu/drm/i915/i915_gem.c           |   31 ++----
+ drivers/gpu/drm/i915/i915_gem_gtt.c       |  160 +++--------------------------
+ drivers/gpu/drm/i915/i915_gem_vgtbuffer.c |    1 -
+ 4 files changed, 22 insertions(+), 176 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/i915_drv.h b/drivers/gpu/drm/i915/i915_drv.h
+index b82c9a7..16ad7a4 100644
+--- a/drivers/gpu/drm/i915/i915_drv.h
++++ b/drivers/gpu/drm/i915/i915_drv.h
+@@ -2152,8 +2152,6 @@ struct drm_i915_gem_object {
+ 	unsigned int cache_level:3;
+ 	unsigned int cache_dirty:1;
+ 
+-	unsigned int has_vmfb_mapping:1;
+-
+ 	unsigned int frontbuffer_bits:INTEL_FRONTBUFFER_BITS;
+ 
+ 	unsigned int pin_display;
+@@ -2941,15 +2939,11 @@ i915_gem_object_get_page(struct drm_i915_gem_object *obj, int n)
+ 
+ static inline void i915_gem_object_pin_pages(struct drm_i915_gem_object *obj)
+ {
+-	if (obj->has_vmfb_mapping)
+-		return;
+ 	BUG_ON(obj->pages == NULL);
+ 	obj->pages_pin_count++;
+ }
+ static inline void i915_gem_object_unpin_pages(struct drm_i915_gem_object *obj)
+ {
+-	if (obj->has_vmfb_mapping)
+-		return;
+ 	BUG_ON(obj->pages_pin_count == 0);
+ 	obj->pages_pin_count--;
+ }
+diff --git a/drivers/gpu/drm/i915/i915_gem.c b/drivers/gpu/drm/i915/i915_gem.c
+index c6d8a89..450d7a2 100644
+--- a/drivers/gpu/drm/i915/i915_gem.c
++++ b/drivers/gpu/drm/i915/i915_gem.c
+@@ -3242,8 +3242,7 @@ static int __i915_vma_unbind(struct i915_vma *vma, bool wait)
+ 	if (vma->pin_count)
+ 		return -EBUSY;
+ 
+-	if (!obj->has_vmfb_mapping)
+-		BUG_ON(obj->pages == NULL);
++	BUG_ON(obj->pages == NULL);
+ 
+ 	if (wait) {
+ 		ret = i915_gem_object_wait_rendering(obj, false);
+@@ -3252,7 +3251,7 @@ static int __i915_vma_unbind(struct i915_vma *vma, bool wait)
+ 	}
+ 
+ 	if (i915_is_ggtt(vma->vm) &&
+-	    vma->ggtt_view.type == I915_GGTT_VIEW_NORMAL && !obj->has_vmfb_mapping) {
++	    vma->ggtt_view.type == I915_GGTT_VIEW_NORMAL) {
+ 		i915_gem_object_finish_gtt(obj);
+ 
+ 		/* release the fence reg _after_ flushing */
+@@ -3277,15 +3276,13 @@ static int __i915_vma_unbind(struct i915_vma *vma, bool wait)
+ 		vma->ggtt_view.pages = NULL;
+ 	}
+ 
+-	if (!(obj->has_vmfb_mapping && i915_is_ggtt(vma->vm)))
+-		drm_mm_remove_node(&vma->node);
++	drm_mm_remove_node(&vma->node);
+ 
+ 	i915_gem_vma_destroy(vma);
+ 
+ 	/* Since the unbound list is global, only move to that list if
+ 	 * no more VMAs exist. */
+-	if (list_empty(&obj->vma_list) && !obj->has_vmfb_mapping) {
+-		i915_gem_gtt_finish_object(obj);
++	if (list_empty(&obj->vma_list)) {
+ 		list_move_tail(&obj->global_list, &dev_priv->mm.unbound_list);
+ 	}
+ 
+@@ -3460,13 +3457,11 @@ i915_gem_object_bind_to_vm(struct drm_i915_gem_object *obj,
+ 		return ERR_PTR(-E2BIG);
+ 	}
+ 
+-	if (!obj->has_vmfb_mapping) {
+-		ret = i915_gem_object_get_pages(obj);
+-		if (ret)
+-			return ERR_PTR(ret);
++	ret = i915_gem_object_get_pages(obj);
++	if (ret)
++		return ERR_PTR(ret);
+ 
+-		i915_gem_object_pin_pages(obj);
+-	}
++	i915_gem_object_pin_pages(obj);
+ 
+ 	vma = ggtt_view ? i915_gem_obj_lookup_or_create_ggtt_vma(obj, ggtt_view) :
+ 			  i915_gem_obj_lookup_or_create_vma(obj, vm);
+@@ -3481,13 +3476,6 @@ i915_gem_object_bind_to_vm(struct drm_i915_gem_object *obj,
+ 		search_flag = DRM_MM_SEARCH_DEFAULT;
+ 		alloc_flag = DRM_MM_CREATE_DEFAULT;
+ 	}
+-	if (obj->has_vmfb_mapping && i915_is_ggtt(vm)) {
+-		vma->node.allocated = 1;
+-		trace_i915_vma_bind(vma, flags);
+-		i915_vma_bind(vma, obj->cache_level,
+-			flags & PIN_GLOBAL ? GLOBAL_BIND : 0);
+-		return vma;
+-	}
+ 
+ search_free:
+ 	ret = drm_mm_insert_node_in_range_generic(&vm->mm, &vma->node,
+@@ -4537,9 +4525,6 @@ void i915_gem_vma_destroy(struct i915_vma *vma)
+ {
+ 	struct i915_address_space *vm = NULL;
+ 
+-	if (vma->obj->has_vmfb_mapping)
+-		vma->node.allocated = 0;
+-
+ 	WARN_ON(vma->node.allocated);
+ 
+ 	/* Keep the vma as a placeholder in the execbuffer reservation lists */
+diff --git a/drivers/gpu/drm/i915/i915_gem_gtt.c b/drivers/gpu/drm/i915/i915_gem_gtt.c
+index 0db08bd..cdcd556 100644
+--- a/drivers/gpu/drm/i915/i915_gem_gtt.c
++++ b/drivers/gpu/drm/i915/i915_gem_gtt.c
+@@ -92,18 +92,6 @@
+  *
+  */
+ 
+-#ifdef DRM_I915_VGT_SUPPORT
+-static void (*insert_vmfb_entries)(struct i915_address_space *vm,
+-					   uint32_t num_pages,
+-					   uint64_t start);
+-static void gen6_ppgtt_insert_vmfb_entries(struct i915_address_space *vm,
+-					   uint32_t num_pages,
+-					   uint64_t start);
+-static void gen8_ppgtt_insert_vmfb_entries(struct i915_address_space *vm,
+-					   uint32_t num_pages,
+-					   uint64_t start);
+-#endif
+-
+ static int
+ i915_get_ggtt_vma_pages(struct i915_vma *vma);
+ 
+@@ -173,12 +161,7 @@ static int ppgtt_bind_vma(struct i915_vma *vma,
+ 	if (vma->obj->gt_ro)
+ 		pte_flags |= PTE_READ_ONLY;
+ 
+-	if (vma->obj->has_vmfb_mapping)
+-		gen6_ppgtt_insert_vmfb_entries(vma->vm,
+-				    vma->obj->base.size >> PAGE_SHIFT,
+-				    vma->node.start);
+-	else
+-		vma->vm->insert_entries(vma->vm, vma->obj->pages, vma->node.start,
++	vma->vm->insert_entries(vma->vm, vma->obj->pages, vma->node.start,
+ 				cache_level, pte_flags);
+ 
+ 	return 0;
+@@ -796,67 +779,6 @@ static void gen8_ppgtt_clear_range(struct i915_address_space *vm,
+ 	}
+ }
+ 
+-static void gen8_ppgtt_insert_vmfb_entries(struct i915_address_space *vm,
+-					   uint32_t num_pages,
+-					   uint64_t start)
+-{
+-	struct i915_hw_ppgtt *ppgtt =
+-		container_of(vm, struct i915_hw_ppgtt, base);
+-	gen8_pte_t *pt_vaddr = NULL;
+-	unsigned pdpe = start >> GEN8_PDPE_SHIFT & GEN8_PDPE_MASK;
+-	unsigned pde = start >> GEN8_PDE_SHIFT & GEN8_PDE_MASK;
+-	unsigned pte = start >> GEN8_PTE_SHIFT & GEN8_PTE_MASK;
+-	unsigned first_entry = start >> PAGE_SHIFT;
+-	struct i915_page_directory *pd;
+-	struct i915_page_table *pt;
+-	struct page *page_table;
+-	int i;
+-
+-	struct drm_i915_private *dev_priv = ppgtt->base.dev->dev_private;
+-	uint64_t __iomem *vmfb_start = dev_priv->gtt.gsm;
+-
+-	vmfb_start += first_entry;
+-
+-	if (WARN_ON(!ppgtt->pdp.page_directory[pdpe]))
+-		return;
+-
+-	pd = ppgtt->pdp.page_directory[pdpe];
+-
+-	if (WARN_ON(!pd->page_table[pde]))
+-		return;
+-
+-	pt = pd->page_table[pde];
+-
+-	if (WARN_ON(!pt->base.page))
+-		return;
+-
+-	page_table = pt->base.page;
+-
+-	for (i = 0; i < num_pages; i++) {
+-		if (pt_vaddr == NULL)
+-			pt_vaddr = kmap_atomic(page_table);
+-
+-		pt_vaddr[pte] = GTT_READ64(vmfb_start);
+-		vmfb_start++;
+-
+-		if (++pte == GEN8_PTES) {
+-			if (!HAS_LLC(ppgtt->base.dev))
+-				drm_clflush_virt_range(pt_vaddr, PAGE_SIZE);
+-			kunmap_atomic(pt_vaddr);
+-			pt_vaddr = NULL;
+-			if (++pde == GEN8_PDES) {
+-				pdpe++;
+-				pde = 0;
+-			}
+-			pte = 0;
+-		}
+-	}
+-	if (pt_vaddr) {
+-		if (!HAS_LLC(ppgtt->base.dev))
+-			drm_clflush_virt_range(pt_vaddr, PAGE_SIZE);
+-		kunmap_atomic(pt_vaddr);
+-	}
+-}
+ static void
+ gen8_ppgtt_insert_pte_entries(struct i915_address_space *vm,
+ 			      struct i915_page_directory_pointer *pdp,
+@@ -1640,8 +1562,6 @@ free_scratch:
+ 
+ static void gen6_dump_ppgtt(struct i915_hw_ppgtt *ppgtt, struct seq_file *m)
+ {
+-	struct drm_device *dev = ppgtt->base.dev;
+-
+ 	struct i915_address_space *vm = &ppgtt->base;
+ 	struct i915_page_table *unused;
+ 	gen6_pte_t scratch_pte;
+@@ -1926,41 +1846,6 @@ static void gen6_ppgtt_clear_range(struct i915_address_space *vm,
+ 	}
+ }
+ 
+-static void gen6_ppgtt_insert_vmfb_entries(struct i915_address_space *vm,
+-					   uint32_t num_pages,
+-					   uint64_t start)
+-{
+-	struct i915_hw_ppgtt *ppgtt =
+-		container_of(vm, struct i915_hw_ppgtt, base);
+-	gen6_pte_t *pt_vaddr = NULL;
+-	unsigned first_entry = start >> PAGE_SHIFT;
+-	unsigned act_pt = first_entry / GEN6_PTES;
+-	unsigned act_pte = first_entry % GEN6_PTES;
+-
+-	struct drm_i915_private *dev_priv = ppgtt->base.dev->dev_private;
+-	uint32_t __iomem *vmfb_start = dev_priv->gtt.gsm;
+-	int i;
+-
+-	vmfb_start += first_entry;
+-
+-	for (i = 0; i < num_pages; i++) {
+-		if (pt_vaddr == NULL)
+-			pt_vaddr = kmap_atomic(ppgtt->pd.page_table[act_pt]->base.page);
+-
+-		pt_vaddr[act_pte] = GTT_READ32(vmfb_start);
+-		vmfb_start++;
+-
+-		if (++act_pte == GEN6_PTES) {
+-			kunmap_atomic(pt_vaddr);
+-			pt_vaddr = NULL;
+-			act_pt++;
+-			act_pte = 0;
+-		}
+-	}
+-	if (pt_vaddr)
+-		kunmap_atomic(pt_vaddr);
+-}
+-
+ static void gen6_ppgtt_insert_entries(struct i915_address_space *vm,
+ 				      struct sg_table *pages,
+ 				      uint64_t start,
+@@ -2458,9 +2343,6 @@ void i915_gem_suspend_gtt_mappings(struct drm_device *dev)
+ 
+ int i915_gem_gtt_prepare_object(struct drm_i915_gem_object *obj)
+ {
+-	if (obj->has_vmfb_mapping)
+-		return 0;
+-
+ 	if (!dma_map_sg(&obj->base.dev->pdev->dev,
+ 			obj->pages->sgl, obj->pages->nents,
+ 			PCI_DMA_BIDIRECTIONAL))
+@@ -2688,25 +2570,17 @@ static int aliasing_gtt_bind_vma(struct i915_vma *vma,
+ 	if (obj->gt_ro)
+ 		pte_flags |= PTE_READ_ONLY;
+ 
+-
+ 	if (flags & GLOBAL_BIND) {
+-		if (!obj->has_vmfb_mapping)
+-			vma->vm->insert_entries(vma->vm, pages,
++		vma->vm->insert_entries(vma->vm, pages,
+ 					vma->node.start,
+ 					cache_level, pte_flags);
+ 	}
+ 
+ 	if (flags & LOCAL_BIND) {
+ 		struct i915_hw_ppgtt *appgtt = dev_priv->mm.aliasing_ppgtt;
+-		if (obj->has_vmfb_mapping)
+-			insert_vmfb_entries(&appgtt->base,
+-					    obj->base.size >> PAGE_SHIFT,
+-					    vma->node.start);
+-		else
+-			appgtt->base.insert_entries(&appgtt->base,
+-							    pages,
+-							    vma->node.start,
+-							    cache_level, pte_flags);
++		appgtt->base.insert_entries(&appgtt->base, pages,
++					    vma->node.start,
++					    cache_level, pte_flags);
+ 	}
+ 
+ 	return 0;
+@@ -2722,20 +2596,19 @@ static void ggtt_unbind_vma(struct i915_vma *vma)
+ 				    vma->node.size);
+ 
+ 	if (vma->bound & GLOBAL_BIND) {
+-		if (!obj->has_vmfb_mapping)
+-			vma->vm->clear_range(vma->vm,
+-					     vma->node.start,
+-					     size,
+-					     true);
++		vma->vm->clear_range(vma->vm,
++				     vma->node.start,
++				     size,
++				     true);
+ 	}
+ 
+ 	if (dev_priv->mm.aliasing_ppgtt && vma->bound & LOCAL_BIND) {
+ 		struct i915_hw_ppgtt *appgtt = dev_priv->mm.aliasing_ppgtt;
+-		if (!obj->has_vmfb_mapping)
+-			appgtt->base.clear_range(&appgtt->base,
+-						 vma->node.start,
+-						 size,
+-						 true);
++
++		appgtt->base.clear_range(&appgtt->base,
++					 vma->node.start,
++					 size,
++					 true);
+ 	}
+ }
+ 
+@@ -3376,13 +3249,8 @@ __i915_gem_vma_create(struct drm_i915_gem_object *obj,
+ 	switch (INTEL_INFO(vm->dev)->gen) {
+ 	case 9:
+ 	case 8:
+-		if (vma->obj->has_vmfb_mapping && !insert_vmfb_entries)
+-			insert_vmfb_entries = gen8_ppgtt_insert_vmfb_entries;
+ 	case 7:
+ 	case 6:
+-		if (vma->obj->has_vmfb_mapping && !insert_vmfb_entries)
+-			insert_vmfb_entries = gen6_ppgtt_insert_vmfb_entries;
+-		break;
+ 	case 5:
+ 	case 4:
+ 	case 3:
+diff --git a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
+index 08fd859..f641ef4 100644
+--- a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
++++ b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
+@@ -199,7 +199,6 @@ i915_gem_vgtbuffer_ioctl(struct drm_device *dev, void *data,
+ 
+ 	i915_gem_object_init(obj, &i915_gem_vgtbuffer_ops);
+ 	obj->cache_level = I915_CACHE_L3_LLC;
+-	obj->has_vmfb_mapping = true;
+ 	obj->pages = NULL;
+ 
+ 	struct i915_address_space *ggtt_vm = &dev_priv->gtt.base;
+-- 
+1.7.10.4
+

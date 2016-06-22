@@ -1,0 +1,39 @@
+From 113f39a05d8bfb929851101f058f509b79f91c02 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Mon, 7 Mar 2016 18:05:41 +0800
+Subject: [PATCH 378/403] vgt: remove waitqueue_active() check in xen mpt
+ module
+
+To call waitqueue_active(), holding the queue spinlock is required,
+which is missed in current code piece. The kernel thread might miss
+an IO request should be processed due to the race condition between
+waitqueue_active() and wake_up().
+
+And it's also not necessary to leverage waitqueue_active() as an
+optimization here. If the wait queue is really empty, wake_up()
+will do nothing.
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/xen/xengt.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/xen/xengt.c b/drivers/xen/xengt.c
+index 1ac5a64..4dc0116 100644
+--- a/drivers/xen/xengt.c
++++ b/drivers/xen/xengt.c
+@@ -990,9 +990,9 @@ static inline void vgt_raise_emulation_request(struct vgt_device *vgt,
+ 	int vcpu)
+ {
+ 	struct vgt_hvm_info *info = vgt->hvm_info;
++
+ 	set_bit(vcpu, info->ioreq_pending);
+-	if (waitqueue_active(&info->io_event_wq))
+-		wake_up(&info->io_event_wq);
++	wake_up(&info->io_event_wq);
+ }
+ 
+ static irqreturn_t vgt_hvm_io_req_handler(int irq, void* dev)
+-- 
+1.7.10.4
+

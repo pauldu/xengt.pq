@@ -1,0 +1,183 @@
+From 9461c782f3d9c5d92bbecd63918987b3f1670219 Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Mon, 29 Feb 2016 17:30:06 +0800
+Subject: [PATCH 368/403] Revert "Remove the handling of cmd buffer
+ resubmission"
+
+This reverts commit 93726aa4856e62a2c2d7b32ea242210bbdf6dafd.
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |   92 +++++++++++++++++++++++++++------
+ 1 file changed, 77 insertions(+), 15 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index 84f3530..b0a7d56 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -691,10 +691,26 @@ static inline int ip_gma_advance(struct parser_exec_state *s, unsigned int dw_le
+ 
+ static inline int get_cmd_length(struct cmd_info *info, uint32_t cmd)
+ {
+-	if ((info->flag & F_LEN_MASK) == F_LEN_CONST)
++	/*
++	 * MI_NOOP is special as the replacement elements. It's fixed
++	 * length in definition, but variable length when using for
++	 * replacement purpose. Instead of having the same handler
++	 * invoke twice (may be postponed), special case length
++	 * handling for MI_NOOP.
++	 */
++	if (info->opcode == OP_MI_NOOP) {
++		unsigned int subop, length = info->len;
++		subop = (cmd & VGT_NOOP_ID_CMD_MASK) >>
++			VGT_NOOP_ID_CMD_SHIFT;
++		if (subop == OP_MI_DISPLAY_FLIP)
++			length = cmd & CMD_LENGTH_MASK;
++
++		return length;
++	} else if ((info->flag & F_LEN_MASK) == F_LEN_CONST) {
+ 		return info->len;
+-	else /* F_LEN_VAR */
++	} else /* F_LEN_VAR */{
+ 		return (cmd & ((1U << info->len) - 1)) + 2;
++	}
+ }
+ 
+ static inline int cmd_length(struct parser_exec_state *s)
+@@ -1307,7 +1323,7 @@ static bool vgt_flip_parameter_check(struct parser_exec_state *s,
+ 	return true;
+ }
+ 
+-static int vgt_handle_mi_display_flip(struct parser_exec_state *s)
++static int vgt_handle_mi_display_flip(struct parser_exec_state *s, bool resubmitted)
+ {
+ 	struct vgt_device *vgt = s->vgt;
+ 	struct pgt_device *pdev = vgt->pdev;
+@@ -1336,8 +1352,14 @@ static int vgt_handle_mi_display_flip(struct parser_exec_state *s)
+ 	plane_tile_mask = IS_SKL(pdev) ? PLANE_CTL_TILED_MASK : PLANE_TILE_MASK;
+ 	stride_shift = IS_SKL(pdev) ? _PRI_PLANE_STRIDE_SHIFT : 0;
+ 
+-	plane_code = (opcode & plane_select_mask) >> plane_select_shift;
+-	length = cmd_length(s);
++	if (resubmitted) {
++		plane_code = (opcode & PLANE_INFO_MASK) >> PLANE_INFO_SHIFT;
++		length = opcode & CMD_LENGTH_MASK;
++	} else {
++		plane_code = (opcode & plane_select_mask) >> plane_select_shift;
++		length = cmd_length(s);
++	}
++
+ 
+ 	if (!display_flip_decode_plane_info(pdev, plane_code, &pipe, &plane)) {
+ 		vgt_warn("Invalid pipe/plane in MI_DISPLAY_FLIP!\n");
+@@ -1354,7 +1376,7 @@ static int vgt_handle_mi_display_flip(struct parser_exec_state *s)
+ 		goto wrong_command;
+ 	}
+ 
+-	{
++	if (!resubmitted) {
+ 		if (!vgt_flip_parameter_check(s, plane_code, stride_val, surf_val))
+ 			goto wrong_command;
+ 
+@@ -1405,12 +1427,16 @@ static int vgt_handle_mi_display_flip(struct parser_exec_state *s)
+ 	msg.plane_id = plane;
+ 	vgt_fb_notifier_call_chain(FB_DISPLAY_FLIP, &msg);
+ 
+-	if ((s->vgt == current_foreground_vm(s->vgt->pdev))) {
++	if ((s->vgt == current_foreground_vm(s->vgt->pdev)) && !resubmitted) {
+ 		if (!display_flip_encode_plane_info(pdev, real_pipe,
+ 					plane, &real_plane_code))
+ 			goto wrong_command;
+ 
+-		add_patch_entry(s, cmd_ptr(s, 0), MI_NOOP);
++		value = cmd_val(s, 0);
++		add_patch_entry(s,
++			cmd_ptr(s, 0),
++			((value & ~plane_select_mask) |
++			 (real_plane_code << plane_select_shift)));
+ 
+ 		vgt_inject_flip_done(s->vgt, pipe);
+ 
+@@ -1421,10 +1447,14 @@ static int vgt_handle_mi_display_flip(struct parser_exec_state *s)
+ 		s->vgt->vm_id);
+ 
+ 	for (i = 1; i < length; i ++) {
+-		rc |= add_patch_entry(s, cmd_ptr(s, i), MI_NOOP);
++		rc |= add_patch_entry(s, cmd_ptr(s, i), MI_NOOP |
++			(OP_MI_DISPLAY_FLIP << VGT_NOOP_ID_CMD_SHIFT));
+ 	}
+ 
+-	rc |= add_patch_entry(s, cmd_ptr(s, 0), MI_NOOP);
++	rc |= add_patch_entry(s, cmd_ptr(s, 0), MI_NOOP |
++			(OP_MI_DISPLAY_FLIP << VGT_NOOP_ID_CMD_SHIFT) |
++			(plane_code << PLANE_INFO_SHIFT) |
++			(length & CMD_LENGTH_MASK));
+ 
+ 	vgt_inject_flip_done(s->vgt, pipe);
+ 
+@@ -1438,7 +1468,7 @@ wrong_command:
+ 
+ static int vgt_cmd_handler_mi_display_flip(struct parser_exec_state *s)
+ {
+-	return vgt_handle_mi_display_flip(s);
++	return vgt_handle_mi_display_flip(s, false);
+ }
+ static bool is_wait_for_flip_pending(uint32_t cmd)
+ {
+@@ -1916,8 +1946,26 @@ static int vgt_cmd_handler_mi_batch_buffer_start(struct parser_exec_state *s)
+ 	return rc;
+ }
+ 
++static int vgt_cmd_handler_mi_noop(struct parser_exec_state* s)
++{
++	unsigned int cmd;
++	cmd = (cmd_val(s, 0) & VGT_NOOP_ID_CMD_MASK) >> VGT_NOOP_ID_CMD_SHIFT;
++
++	if (cmd) {
++		if (cmd == OP_MI_DISPLAY_FLIP) {
++			vgt_handle_mi_display_flip(s, true);
++		} else {
++			vgt_err("VM %d: Guest reuse cmd buffer that is not handled!\n",
++					s->vgt->vm_id);
++			return -EFAULT;
++		}
++	}
++
++	return 0;
++}
++
+ static struct cmd_info cmd_info[] = {
+-	{"MI_NOOP", OP_MI_NOOP, F_LEN_CONST, R_ALL, D_ALL, 0, 1, NULL},
++	{"MI_NOOP", OP_MI_NOOP, F_LEN_CONST|F_POST_HANDLE, R_ALL, D_ALL, 0, 1, vgt_cmd_handler_mi_noop},
+ 
+ 	{"MI_SET_PREDICATE", OP_MI_SET_PREDICATE, F_LEN_CONST, R_ALL, D_HSW_PLUS,
+ 		0, 1, NULL},
+@@ -2738,10 +2786,24 @@ static int vgt_cmd_parser_exec(struct parser_exec_state *s)
+ 	t1 = get_cycles();
+ 
+ 	if (info->handler) {
+-		if (info->flag & F_POST_HANDLE)
+-			rc = add_post_handle_entry(s, info->handler);
+-		else
++		int post_handle = 0;
++
++		if (info->flag & F_POST_HANDLE) {
++			post_handle = 1;
++
++			/* Post handle special case.*/
++			/*
++			 * OP_MI_NOOP: only handles nooped MI_DISPLAY_FILP
++			 * to prevent the heavy usage of patch list.
++			 */
++			if (info->opcode == OP_MI_NOOP && cmd_length(s) == 1)
++				post_handle = 0;
++		}
++
++		if (!post_handle)
+ 			rc = info->handler(s);
++		else
++			rc = add_post_handle_entry(s, info->handler);
+ 
+ 		if (rc < 0) {
+ 			vgt_err("%s handler error", info->name);
+-- 
+1.7.10.4
+

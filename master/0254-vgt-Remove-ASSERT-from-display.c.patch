@@ -1,0 +1,60 @@
+From 89c14eb3b3c5322d9d70f4d902f28e32c8cfb66d Mon Sep 17 00:00:00 2001
+From: Yi Sun <yi.sun@intel.com>
+Date: Mon, 12 Oct 2015 22:06:44 +0800
+Subject: [PATCH 254/403] vgt: Remove ASSERT from display.c
+
+v2. Split previous patch into two separately ones. This one only removes
+ASSERT.
+
+A invalid register or display pipe from a VM should not casuse host
+Kernel panic.
+
+Signed-off-by: Yi Sun <yi.sun@intel.com>
+
+Conflicts:
+	drivers/gpu/drm/i915/vgt/display.c
+---
+ drivers/gpu/drm/i915/vgt/display.c |   19 +++++++++++++++----
+ 1 file changed, 15 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/display.c b/drivers/gpu/drm/i915/vgt/display.c
+index db05343..1faf185 100644
+--- a/drivers/gpu/drm/i915/vgt/display.c
++++ b/drivers/gpu/drm/i915/vgt/display.c
+@@ -523,8 +523,13 @@ bool rebuild_pipe_mapping(struct vgt_device *vgt, unsigned int reg, uint32_t new
+ 	}
+ 
+ 	/*enable pipe case*/
+-	ASSERT((reg == TRANS_DDI_FUNC_CTL_EDP) ||
+-			(new_data & TRANS_DDI_PORT_MASK));
++	if ((reg != TRANS_DDI_FUNC_CTL_EDP) &&
++			!(new_data & TRANS_DDI_PORT_MASK)) {
++
++		vgt_err("vGT(%d) rebuild_pipe_mapping: invalid register(%x) or data(%x)\n",
++				vgt->vgt_id, reg, new_data);
++		return false;
++	}
+ 
+ 	if (reg == TRANS_DDI_FUNC_CTL_EDP) {
+ 		// In such case, it is virtual PORT_A mapping to physical PORT_A
+@@ -567,9 +572,15 @@ bool rebuild_pipe_mapping(struct vgt_device *vgt, unsigned int reg, uint32_t new
+ 		}
+ 	}
+ 
+-	ASSERT(virtual_pipe != I915_MAX_PIPES);
++	if (virtual_pipe == I915_MAX_PIPES) {
++		vgt_err("vGT(%d) rebuild_pipe_mapping: invalid display pipe(%d)\n",
++				vgt->vgt_id, virtual_pipe);
++		return false;
++	}
++
+ 	vgt_set_pipe_mapping(vgt, virtual_pipe, physical_pipe);
+-	vgt_dbg(VGT_DBG_DPY, "vGT: add pipe mapping  %x - > %x \n", virtual_pipe, physical_pipe);
++	vgt_dbg(VGT_DBG_DPY, "vGT: add pipe mapping %x -> %x\n",
++			virtual_pipe, physical_pipe);
+ 	vgt_update_irq_reg(vgt);
+ 
+ 	if (current_foreground_vm(vgt->pdev) == vgt) {
+-- 
+1.7.10.4
+

@@ -1,0 +1,58 @@
+From d09ecf675659ddc80a6eb6d4509b38657147e472 Mon Sep 17 00:00:00 2001
+From: "Zheng, Xiao" <xiao.zheng@intel.com>
+Date: Wed, 12 Aug 2015 13:42:08 +0800
+Subject: [PATCH 217/403] vgt/skl: add new pixel format for SKL
+
+Introduce new plane pixel format on SKL
+
+Signed-off-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/fb_decoder.c |   21 ++++++++++++++++++---
+ 1 file changed, 18 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/fb_decoder.c b/drivers/gpu/drm/i915/vgt/fb_decoder.c
+index a76ec8d..3f94e8f 100644
+--- a/drivers/gpu/drm/i915/vgt/fb_decoder.c
++++ b/drivers/gpu/drm/i915/vgt/fb_decoder.c
+@@ -48,6 +48,14 @@ static struct pixel_format hsw_pixel_formats[FORMAT_NUM] = {
+ 	[0b1110] = {DRM_FORMAT_XBGR8888, 32, "32-bit RGBX (8:8:8:8 MSB-X:B:G:R)"},
+ };
+ 
++/* non-supported format has bpp default to 0 */
++static struct pixel_format skl_pixel_formats[FORMAT_NUM] = {
++	[0b1100]  = {DRM_FORMAT_C8, 8, "8-bit Indexed"},
++	[0b1110]  = {DRM_FORMAT_RGB565, 16, "16-bit BGRX (5:6:5 MSB-R:G:B)"},
++	[0b0100]  = {DRM_FORMAT_XRGB8888, 32, "32-bit BGRX (8:8:8:8 MSB-X:R:G:B)"},
++	[0b1010]  = {DRM_FORMAT_XRGB2101010, 32, "32-bit BGRX (2:10:10:10 MSB-X:R:G:B)"},
++};
++
+ int vgt_decode_primary_plane_format(struct vgt_device *vgt,
+ 	int pipe, struct vgt_primary_plane_format *plane)
+ {
+@@ -58,13 +66,20 @@ int vgt_decode_primary_plane_format(struct vgt_device *vgt,
+ 	if (!plane->enabled)
+ 		return 0;
+ 
+-	plane->tiled = !!(val & DISPPLANE_TILED);
++	if (IS_SKLPLUS(vgt->pdev)) {
++		plane->tiled = !!(val & PLANE_CTL_TILED_MASK);
++		fmt = (val & PLANE_CTL_FORMAT_MASK) >> 24;
++	} else {
++		plane->tiled = !!(val & DISPPLANE_TILED);
++		fmt = (val & DISPPLANE_PIXFORMAT_MASK) >> _PRI_PLANE_FMT_SHIFT;
++	}
+ 
+-	fmt = (val & DISPPLANE_PIXFORMAT_MASK) >> _PRI_PLANE_FMT_SHIFT;
+-	if (!hsw_pixel_formats[fmt].bpp) {
++	if ((IS_SKLPLUS(vgt->pdev) && !skl_pixel_formats[fmt].bpp)
++		|| (!IS_SKLPLUS(vgt->pdev) && !hsw_pixel_formats[fmt].bpp)) {
+ 		vgt_err("Non-supported pixel format (0x%x)\n", fmt);
+ 		return -EINVAL;
+ 	}
++
+ 	plane->hw_format = fmt;
+ 	plane->bpp = hsw_pixel_formats[fmt].bpp;
+ 	plane->drm_format = hsw_pixel_formats[fmt].drm_format;
+-- 
+1.7.10.4
+

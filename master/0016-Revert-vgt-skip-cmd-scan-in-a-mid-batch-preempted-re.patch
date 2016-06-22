@@ -1,0 +1,32 @@
+From 0e0e96abcf579a5b22dae4270fec20c9834040d3 Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Mon, 23 Mar 2015 08:25:57 +0800
+Subject: [PATCH 016/403] Revert "vgt: skip cmd scan in a mid-batch preempted
+ resubmit context"
+
+This reverts commit 84d5eabee7037979d1340f978b075c5d152f67a0.
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |    7 +------
+ 1 file changed, 1 insertion(+), 6 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 6002578..45849b4 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -1433,12 +1433,7 @@ static void vgt_update_ring_info(struct vgt_device *vgt,
+ 	vgt->rb[ring_id].request_id = el_ctx->request_id;
+ 	vgt->rb[ring_id].last_scan_head = vring->head & RB_HEAD_OFF_MASK;
+ 
+-	if (!guest_state->bb_cur_head_UDW.val &&
+-			!guest_state->bb_cur_head_LDW.val &&
+-			!guest_state->second_bb_addr_UDW.val &&
+-			!guest_state->second_bb_addr_LDW.val)
+-		vgt_scan_vring(vgt, ring_id);
+-
++	vgt_scan_vring(vgt, ring_id);
+ 	/* the function is used to update ring/buffer only. No real submission inside */
+ 	vgt_submit_commands(vgt, ring_id);
+ 
+-- 
+1.7.10.4
+

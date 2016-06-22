@@ -1,0 +1,122 @@
+From 053b86561fb4901403a8308d41e6ea611c73700d Mon Sep 17 00:00:00 2001
+From: "Zheng, Xiao" <xiao.zheng@intel.com>
+Date: Wed, 13 Apr 2016 11:31:11 +0800
+Subject: [PATCH 398/403] vgt: centrelized kernel parameter check
+
+One time check for kernel parameters at beginning.
+In future we may runtime change these parameters for debug purpose
+
+Signed-off-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/gtt.c |    8 --------
+ drivers/gpu/drm/i915/vgt/vgt.c |   34 ++++++++++++++++++++++++++++++++++
+ drivers/gpu/drm/i915/vgt/vgt.h |   16 ----------------
+ 3 files changed, 34 insertions(+), 24 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index 3dc6086..2ca6bb2 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -2209,20 +2209,12 @@ bool vgt_gtt_init(struct pgt_device *pdev)
+ 		pdev->gtt.mm_alloc_page_table = gen7_mm_alloc_page_table;
+ 		pdev->gtt.mm_free_page_table = gen7_mm_free_page_table;
+ 
+-		if (preallocated_shadow_pages == -1)
+-			preallocated_shadow_pages = 512;
+-		if (preallocated_oos_pages == -1)
+-			preallocated_oos_pages = 2048;
+ 	} else if (IS_BDW(pdev) || IS_SKL(pdev)) {
+ 		pdev->gtt.pte_ops = &gen8_gtt_pte_ops;
+ 		pdev->gtt.gma_ops = &gen8_gtt_gma_ops;
+ 		pdev->gtt.mm_alloc_page_table = gen8_mm_alloc_page_table;
+ 		pdev->gtt.mm_free_page_table = gen8_mm_free_page_table;
+ 
+-		if (preallocated_shadow_pages == -1)
+-			preallocated_shadow_pages = 8192;
+-		if (preallocated_oos_pages == -1)
+-			preallocated_oos_pages = 4096;
+ 	} else {
+ 		vgt_err("Unsupported platform.\n");
+ 		return false;
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 52a0345..89b1530 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -590,6 +590,38 @@ static bool vgt_set_device_type(struct pgt_device *pdev)
+ 	return false;
+ }
+ 
++static void vgt_kernel_param_sanity_check(struct pgt_device *pdev)
++{
++	/* adjust and check all kernel parameters here */
++	// render_engine_reset
++	if (IS_BDW(pdev)) {
++		// ignore RCS reset request for BDW
++		render_engine_reset = 0;
++	}
++
++	// tbs_period_ms
++	if (tbs_period_ms == -1 || tbs_period_ms > VGT_TBS_PERIOD_MAX
++		|| tbs_period_ms < VGT_TBS_PERIOD_MIN) {
++		tbs_period_ms = IS_BDWPLUS(pdev) ?
++			VGT_TBS_PERIOD_MIN : VGT_TBS_PERIOD_MAX;
++	}
++
++	// preallocated_shadow_pages/prealocated_oos_page
++	if (IS_PREBDW(pdev)) {
++		if (preallocated_shadow_pages == -1)
++			preallocated_shadow_pages = 512;
++		if (preallocated_oos_pages == -1)
++			preallocated_oos_pages = 2048;
++
++	} else if (IS_BDW(pdev) || IS_SKL(pdev)) {
++		if (preallocated_shadow_pages == -1)
++			preallocated_shadow_pages = 8192;
++		if (preallocated_oos_pages == -1)
++			preallocated_oos_pages = 4096;
++	}
++}
++
++
+ static bool vgt_initialize_device_info(struct pgt_device *pdev)
+ {
+ 	struct vgt_device_info *info = &pdev->device_info;
+@@ -597,6 +629,8 @@ static bool vgt_initialize_device_info(struct pgt_device *pdev)
+ 	if (!vgt_set_device_type(pdev))
+ 		return false;
+ 
++	vgt_kernel_param_sanity_check(pdev);
++
+ 	if (!IS_HSW(pdev) && !IS_BDW(pdev) && !IS_SKL(pdev)) {
+ 		vgt_err("Unsupported gen_dev_type(%s)!\n",
+ 			IS_IVB(pdev) ?
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 90836cc..9a5d81d 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -1291,22 +1291,6 @@ static inline void vgt_init_sched_info(struct vgt_device *vgt)
+ 	}
+ 
+ 	if (timer_based_qos) {
+-
+-		if (tbs_period_ms == -1) {
+-			tbs_period_ms = IS_BDWPLUS(vgt->pdev) ?
+-				VGT_TBS_PERIOD_MIN : VGT_TBS_PERIOD_MAX;
+-		}
+-
+-		if (tbs_period_ms > VGT_TBS_PERIOD_MAX
+-			|| tbs_period_ms < VGT_TBS_PERIOD_MIN) {
+-			vgt_err("Invalid tbs_period=%d parameters. "
+-				"Best value between <%d..%d>\n",
+-				VGT_TBS_PERIOD_MIN, VGT_TBS_PERIOD_MAX,
+-				tbs_period_ms);
+-			tbs_period_ms = IS_BDW(vgt->pdev) ?
+-				VGT_TBS_PERIOD_MIN : VGT_TBS_PERIOD_MAX;
+-		}
+-
+ 		ctx_tbs_period(vgt) = VGT_TBS_DEFAULT_PERIOD(tbs_period_ms);
+ 		vgt_info("VM-%d setup timebased schedule period %d ms\n",
+ 			vgt->vm_id, tbs_period_ms);
+-- 
+1.7.10.4
+

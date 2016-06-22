@@ -1,0 +1,44 @@
+From 7daa16e763be1578b65a64923d0dd46e59157c3a Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Wed, 9 Mar 2016 16:50:08 +0800
+Subject: [PATCH 380/403] don't sync shadow buffer address to guest
+
+as indirect ctx and per ctx bb have been shadowed, their base address
+should not sync to guest.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |   10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 4e5a3b8..a3d17fc 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -627,6 +627,8 @@ static void update_guest_regstate_from_shadow(void *dest_page, void *src_page,
+ 	int regstate_size = sizeof(struct reg_state_ctx_header);
+ 	int pdp_offset = offsetof(struct reg_state_ctx_header, pdp3_UDW);
+ 	int rbctrl_offset = offsetof(struct reg_state_ctx_header, rb_ctrl);
++	int bbperctx_offset = offsetof(struct reg_state_ctx_header, bb_per_ctx_ptr);
++	int ictxoffset_offset = offsetof(struct reg_state_ctx_header, rcs_indirect_ctx_offset);
+ 
+ 	dest_ctx = (struct reg_state_ctx_header *)(dest_page);
+ 	src_ctx = (struct reg_state_ctx_header *)(src_page);
+@@ -642,7 +644,13 @@ static void update_guest_regstate_from_shadow(void *dest_page, void *src_page,
+ 	dest_ctx->rb_start.addr = src_ctx->rb_start.addr;
+ 
+ 	memcpy(dest_page + rbctrl_offset, src_page + rbctrl_offset,
+-	       pdp_offset - rbctrl_offset);
++	       bbperctx_offset - rbctrl_offset);
++
++	dest_ctx->bb_per_ctx_ptr.addr = src_ctx->bb_per_ctx_ptr.addr;
++	dest_ctx->rcs_indirect_ctx.addr = src_ctx->rcs_indirect_ctx.addr;
++
++	memcpy(dest_page + ictxoffset_offset, src_page + ictxoffset_offset,
++	       pdp_offset - ictxoffset_offset);
+ 
+ 	dest_ctx->pdp0_LDW.addr = src_ctx->pdp0_LDW.addr;
+ 	dest_ctx->pdp0_UDW.addr = src_ctx->pdp0_UDW.addr;
+-- 
+1.7.10.4
+

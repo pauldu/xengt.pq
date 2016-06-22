@@ -1,0 +1,1439 @@
+From 16edcc7f08634874a6fad1f8981e19508569c076 Mon Sep 17 00:00:00 2001
+From: Yulei Zhang <yulei.zhang@intel.com>
+Date: Wed, 22 Jul 2015 08:52:32 +0800
+Subject: [PATCH 136/403] vgt: remove klog from vgt and replace with trace
+
+V3: remove Makefile and README for klog tool
+
+V2: remove redundant trace log and combine with vgt_dbg
+
+Signed-off-by: Yulei Zhang <yulei.zhang@intel.com>
+---
+ drivers/gpu/drm/i915/Makefile         |    1 -
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |   37 +-
+ drivers/gpu/drm/i915/vgt/klog.c       |  714 ---------------------------------
+ drivers/gpu/drm/i915/vgt/vgt.c        |    2 -
+ tools/vgt/Makefile                    |    6 -
+ tools/vgt/README                      |   20 -
+ tools/vgt/klog.c                      |  524 ------------------------
+ 7 files changed, 8 insertions(+), 1296 deletions(-)
+ delete mode 100644 drivers/gpu/drm/i915/vgt/klog.c
+ delete mode 100644 tools/vgt/Makefile
+ delete mode 100644 tools/vgt/README
+ delete mode 100644 tools/vgt/klog.c
+
+diff --git a/drivers/gpu/drm/i915/Makefile b/drivers/gpu/drm/i915/Makefile
+index 00c059c..74afe9d 100644
+--- a/drivers/gpu/drm/i915/Makefile
++++ b/drivers/gpu/drm/i915/Makefile
+@@ -115,7 +115,6 @@ i915-$(CONFIG_I915_VGT)  += $(VGT)/vgt.o	\
+ 			   $(VGT)/gtt.o \
+ 			   $(VGT)/aperture_gm.o \
+ 			   $(VGT)/utility.o \
+-			   $(VGT)/klog.o \
+ 			   $(VGT)/dev.o \
+ 			   $(VGT)/cmd_parser.o \
+ 			   $(VGT)/sched.o \
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index 3c87eff..b160791 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -568,18 +568,15 @@ static void parser_exec_state_dump(struct parser_exec_state *s)
+ 		vgt_err(" ip_va(NULL)\n");
+ 	} else {
+ 		int cnt = 0;
++		/* print the whole page to trace */
+ 		vgt_err("  ip_va=%p: %08x %08x %08x %08x \n",
+ 				s->ip_va, cmd_val(s, 0), cmd_val(s, 1), cmd_val(s, 2), cmd_val(s, 3));
+ 
+ 		vgt_print_opcode(cmd_val(s, 0), s->ring_id);
+ 
+-		/* print the whole page to trace */
+-		trace_printk("ERROR ip_va=%p: %08x %08x %08x %08x \n",
+-				s->ip_va, cmd_val(s, 0), cmd_val(s, 1), cmd_val(s, 2), cmd_val(s, 3));
+-
+ 		s->ip_va = (uint32_t*)((((u64)s->ip_va) >> 12) << 12);
+ 		while(cnt < 1024) {
+-		trace_printk("DUMP ip_va=%p: %08x %08x %08x %08x %08x %08x %08x %08x \n",
++		vgt_err("  DUMP ip_va=%p: %08x %08x %08x %08x %08x %08x %08x %08x \n",
+ 				s->ip_va, cmd_val(s, 0), cmd_val(s, 1), cmd_val(s, 2), cmd_val(s, 3),
+ 				          cmd_val(s, 4), cmd_val(s, 5), cmd_val(s, 6), cmd_val(s, 7));
+ 
+@@ -1429,9 +1426,6 @@ static int vgt_cmd_handler_mi_batch_buffer_start(struct parser_exec_state *s)
+ 		s->ret_ip_gma_bb = s->ip_gma + cmd_length(s) * sizeof(uint32_t);
+ 	}
+ 
+-	klog_printk("MI_BATCH_BUFFER_START: Addr=%x ClearCommandBufferEnable=%d\n",
+-			cmd_val(s, 1), (cmd_val(s, 0) >> 11) & 1);
+-
+ 	address_audit(s, 1);
+ 
+ 	if (batch_buffer_needs_scan(s)) {
+@@ -2437,12 +2431,11 @@ static int vgt_cmd_parser_exec(struct parser_exec_state *s)
+ 
+ 	info = vgt_get_cmd_info(cmd, s->ring_id);
+ 	if (info == NULL) {
+-		vgt_err("ERROR: unknown cmd 0x%x, opcode=0x%x\n", cmd,
++		vgt_err("ERROR: unknown cmd 0x%x, ring%d[%lx, %lx] gma[%lx] va[%p] opcode=0x%x\n", 
++				cmd, s->ring_id, s->ring_start,
++				s->ring_start + s->ring_size, s->ip_gma, s->ip_va,
+ 				vgt_get_opcode(cmd, s->ring_id));
+ 		parser_exec_state_dump(s);
+-		klog_printk("ERROR: unknown cmd %x, ring%d[%lx, %lx] gma[%lx] va[%p]\n",
+-				cmd, s->ring_id, s->ring_start,
+-				s->ring_start + s->ring_size, s->ip_gma, s->ip_va);
+ 
+ 		return -EFAULT;
+ 	}
+@@ -2451,19 +2444,6 @@ static int vgt_cmd_parser_exec(struct parser_exec_state *s)
+ 
+ 	vgt_cmd_addr_audit_with_bitmap(s, info->addr_bitmap);
+ 
+-	/* Let's keep this logic here. Someone has special needs for dumping
+-	 * commands can customize this code snippet.
+-	 */
+-#if 0
+-	klog_printk("%s ip(%08lx): ",
+-			s->buf_type == RING_BUFFER_INSTRUCTION ?
+-			"RB" : "BB",
+-			s->ip_gma);
+-	for (i = 0; i < cmd_length(s); i++) {
+-		klog_printk("%08x ", cmd_val(s, i));
+-	}
+-	klog_printk("\n");
+-#endif
+ 	t1 = get_cycles();
+ 
+ 	if (info->handler) {
+@@ -2564,8 +2544,8 @@ static int __vgt_scan_vring(struct vgt_device *vgt, int ring_id, vgt_reg_t head,
+ 	if (rc < 0)
+ 		goto out;
+ 
+-	klog_printk("ring buffer scan start on ring %d\n", ring_id);
+-	vgt_dbg(VGT_DBG_CMD, "scan_start: start=%lx end=%lx\n", gma_head, gma_tail);
++	vgt_dbg(VGT_DBG_CMD, "ring buffer scan start on ring %d: start=%lx end=%lx\n", 
++		ring_id, gma_head, gma_tail);
+ 	while(s.ip_gma != gma_tail){
+ 		s.cmd_issue_irq = false;
+ 		if (s.buf_type == RING_BUFFER_INSTRUCTION){
+@@ -2607,8 +2587,7 @@ static int __vgt_scan_vring(struct vgt_device *vgt, int ring_id, vgt_reg_t head,
+ 		rs->cmd_nr++;
+ 	}
+ 
+-	klog_printk("ring buffer scan end on ring %d\n", ring_id);
+-	vgt_dbg(VGT_DBG_CMD, "scan_end\n");
++	vgt_dbg(VGT_DBG_CMD, "ring buffer scan end on ring %d\n", ring_id);
+ out:
+ 	if (s.ip_buf)
+ 		kfree(s.ip_buf);
+diff --git a/drivers/gpu/drm/i915/vgt/klog.c b/drivers/gpu/drm/i915/vgt/klog.c
+deleted file mode 100644
+index c5dc94d..0000000
+--- a/drivers/gpu/drm/i915/vgt/klog.c
++++ /dev/null
+@@ -1,714 +0,0 @@
+-/*
+- *  klog - facility to transfer buck kernel log between kernel and userspace
+- *
+- * Copyright(c) 2011-2013 Intel Corporation. All rights reserved.
+- *
+- * This program is free software; you can redistribute it and/or modify
+- * it under the terms of Version 2 of the GNU General Public License as
+- * published by the Free Software Foundation.
+- *
+- * This program is distributed in the hope that it will be useful, but
+- * WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+- * General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License
+- * along with this program; if not, write to the Free Software
+- * Foundation, Inc., 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
+- *
+- * Copyright (C) IBM Corporation, 2005
+- *
+- * 2005		Tom Zanussi <zanussi@us.ibm.com>
+- *
+- */
+-
+-#include <linux/module.h>
+-#include <linux/relay.h>
+-#include <linux/debugfs.h>
+-#include <linux/slab.h>
+-
+-/* maximum size of klog formatting buffer beyond which truncation will occur */
+-#define KLOG_TMPBUF_SIZE (1024)
+-/* per-cpu klog formatting temporary buffer */
+-static char klog_buf[NR_CPUS][KLOG_TMPBUF_SIZE];
+-
+-/* This app's channel/control files will appear in /debug/klog */
+-#define APP_DIR		"klog"
+-
+-static struct rchan *chan = NULL;
+-
+-/* app data */
+-static struct dentry *	dir;
+-static int		logging;
+-static int		mappings;
+-static int		suspended;
+-static size_t		dropped;
+-static size_t		subbuf_size = 262144;
+-static size_t		n_subbufs = 4;
+-
+-/* channel-management control files */
+-static struct dentry	*enabled_control;
+-static struct dentry	*create_control;
+-static struct dentry	*subbuf_size_control;
+-static struct dentry	*n_subbufs_control;
+-static struct dentry	*dropped_control;
+-
+-/* produced/consumed control files */
+-static struct dentry	*produced_control[NR_CPUS];
+-static struct dentry	*consumed_control[NR_CPUS];
+-
+-/* control file fileop declarations */
+-struct file_operations	enabled_fops;
+-struct file_operations	create_fops;
+-struct file_operations	subbuf_size_fops;
+-struct file_operations	n_subbufs_fops;
+-struct file_operations	dropped_fops;
+-struct file_operations	produced_fops;
+-struct file_operations	consumed_fops;
+-
+-/* forward declarations */
+-static int create_controls(void);
+-static void destroy_channel(void);
+-static void remove_controls(void);
+-
+-/**
+- *	module init - creates channel management control files
+- *
+- *	Returns 0 on success, negative otherwise.
+- */
+-int vgt_klog_init(void)
+-{
+-	dir = debugfs_create_dir(APP_DIR, NULL);
+-	if (!dir) {
+-		printk("Couldn't create relay app directory.\n");
+-		return -ENOMEM;
+-	}
+-
+-	if (create_controls()) {
+-		debugfs_remove(dir);
+-		return -ENOMEM;
+-	}
+-
+-	return 0;
+-}
+-
+-void vgt_klog_cleanup(void)
+-{
+-	destroy_channel();
+-	remove_controls();
+-	if (dir)
+-		debugfs_remove(dir);
+-}
+-
+-/* Boilerplate code below here */
+-
+-/**
+- *	remove_channel_controls - removes produced/consumed control files
+- */
+-static void remove_channel_controls(void)
+-{
+-	int i;
+-
+-	for (i = 0; i < NR_CPUS; i++) {
+-		if (produced_control[i]) {
+-			debugfs_remove(produced_control[i]);
+-			produced_control[i] = NULL;
+-			continue;
+-		}
+-		break;
+-	}
+-
+-	for (i = 0; i < NR_CPUS; i++) {
+-		if (consumed_control[i]) {
+-			debugfs_remove(consumed_control[i]);
+-			consumed_control[i] = NULL;
+-			continue;
+-		}
+-		break;
+-	}
+-}
+-
+-/**
+- *	create_channel_controls - creates produced/consumed control files
+- *
+- *	Returns channel on success, negative otherwise.
+- */
+-static int create_channel_controls(struct dentry *parent,
+-				const char *base_filename,
+-				struct rchan *chan)
+-{
+-	unsigned int i;
+-	char *tmpname = kmalloc(NAME_MAX + 1, GFP_KERNEL);
+-	if (!tmpname)
+-		return -ENOMEM;
+-
+-	for_each_online_cpu(i) {
+-		sprintf(tmpname, "%s%d.produced", base_filename, i);
+-		produced_control[i] = debugfs_create_file(tmpname, 0, parent, chan->buf[i], &produced_fops);
+-		if (!produced_control[i]) {
+-			printk("Couldn't create relay control file %s.\n",
+-				tmpname);
+-			goto cleanup_control_files;
+-		}
+-
+-		sprintf(tmpname, "%s%d.consumed", base_filename, i);
+-		consumed_control[i] = debugfs_create_file(tmpname, 0, parent, chan->buf[i], &consumed_fops);
+-		if (!consumed_control[i]) {
+-			printk("Couldn't create relay control file %s.\n",
+-				tmpname);
+-			goto cleanup_control_files;
+-		}
+-	}
+-	kfree(tmpname);
+-	return 0;
+-
+-cleanup_control_files:
+-	remove_channel_controls();
+-	kfree(tmpname);
+-	return -ENOMEM;
+-}
+-
+-/*
+- * subbuf_start() relay callback.
+- *
+- * Defined so that we can 1) reserve padding counts in the sub-buffers, and
+- * 2) keep a count of events dropped due to the buffer-full condition.
+- */
+-static int subbuf_start_handler(struct rchan_buf *buf,
+-				void *subbuf,
+-				void *prev_subbuf,
+-				size_t prev_padding)
+-{
+-	if (prev_subbuf)
+-		*((size_t *)prev_subbuf) = prev_padding;
+-
+-	if (relay_buf_full(buf)) {
+-		if (!suspended) {
+-			suspended = 1;
+-			printk("cpu %d buffer full!!!\n", smp_processor_id());
+-		}
+-		dropped++;
+-		return 0;
+-	} else if (suspended) {
+-		suspended = 0;
+-		printk("cpu %d buffer no longer full.\n", smp_processor_id());
+-	}
+-
+-	subbuf_start_reserve(buf, sizeof(size_t));
+-
+-	return 1;
+-}
+-
+-/*
+- * file_create() callback.  Creates relay file in debugfs.
+- */
+-static struct dentry *create_buf_file_handler(const char *filename,
+-						struct dentry *parent,
+-						umode_t mode,
+-						struct rchan_buf *buf,
+-						int *is_global)
+-{
+-	struct dentry *buf_file;
+-
+-	buf_file = debugfs_create_file(filename, mode, parent, buf,
+-					&relay_file_operations);
+-
+-	return buf_file;
+-}
+-
+-/*
+- * file_remove() default callback.  Removes relay file in debugfs.
+- */
+-static int remove_buf_file_handler(struct dentry *dentry)
+-{
+-	debugfs_remove(dentry);
+-
+-	return 0;
+-}
+-
+-/*
+- * relay callbacks
+- */
+-static struct rchan_callbacks relay_callbacks =
+-{
+-	.subbuf_start = subbuf_start_handler,
+-	.create_buf_file = create_buf_file_handler,
+-	.remove_buf_file = remove_buf_file_handler,
+-};
+-
+-/**
+- *	create_channel - creates channel /debug/klog/cpuXXX
+- *
+- *	Creates channel along with associated produced/consumed control files
+- *
+- *	Returns channel on success, NULL otherwise
+- */
+-static struct rchan *create_channel(unsigned subbuf_size,
+-					unsigned n_subbufs)
+-{
+-	struct rchan *chan;
+-
+-	printk("create_channel: subbuf_size %u, n_subbufs %u, dir %p\n", subbuf_size, n_subbufs, dir);
+-
+-	chan = relay_open("cpu", dir, subbuf_size,
+-			n_subbufs, &relay_callbacks, NULL);
+-
+-	if (!chan) {
+-		printk("relay app channel creation failed\n");
+-		return NULL;
+-	}
+-
+-	if (create_channel_controls(dir, "cpu", chan)) {
+-		relay_close(chan);
+-		return NULL;
+-	}
+-
+-	logging = 0;
+-	mappings = 0;
+-	suspended = 0;
+-	dropped = 0;
+-
+-	return chan;
+-}
+-
+-/**
+- *	destroy_channel - destroys channel /debug/APP_DIR/cpuXXX
+- *
+- *	Destroys channel along with associated produced/consumed control files
+- */
+-static void destroy_channel(void)
+-{
+-	if (chan) {
+-		relay_close(chan);
+-		chan = NULL;
+-	}
+-	remove_channel_controls();
+-}
+-
+-/**
+- *	remove_controls - removes channel management control files
+- */
+-static void remove_controls(void)
+-{
+-	if (enabled_control)
+-		debugfs_remove(enabled_control);
+-
+-	if (subbuf_size_control)
+-		debugfs_remove(subbuf_size_control);
+-
+-	if (n_subbufs_control)
+-		debugfs_remove(n_subbufs_control);
+-
+-	if (create_control)
+-		debugfs_remove(create_control);
+-
+-	if (dropped_control)
+-		debugfs_remove(dropped_control);
+-}
+-
+-/**
+- *	create_controls - creates channel management control files
+- *
+- *	Returns 0 on success, negative otherwise.
+- */
+-static int create_controls(void)
+-{
+-	enabled_control = debugfs_create_file("enabled", 0, dir,
+-						NULL, &enabled_fops);
+-	if (!enabled_control) {
+-		printk("Couldn't create relay control file 'enabled'.\n");
+-		goto fail;
+-	}
+-
+-	subbuf_size_control = debugfs_create_file("subbuf_size", 0, dir,
+-						NULL, &subbuf_size_fops);
+-	if (!subbuf_size_control) {
+-		printk("Couldn't create relay control file 'subbuf_size'.\n");
+-		goto fail;
+-	}
+-
+-	n_subbufs_control = debugfs_create_file("n_subbufs", 0, dir,
+-						NULL, &n_subbufs_fops);
+-	if (!n_subbufs_control) {
+-		printk("Couldn't create relay control file 'n_subbufs'.\n");
+-		goto fail;
+-	}
+-
+-	create_control = debugfs_create_file("create", 0, dir,
+-						NULL, &create_fops);
+-	if (!create_control) {
+-		printk("Couldn't create relay control file 'create'.\n");
+-		goto fail;
+-	}
+-
+-	dropped_control = debugfs_create_file("dropped", 0, dir,
+-						NULL, &dropped_fops);
+-	if (!dropped_control) {
+-		printk("Couldn't create relay control file 'dropped'.\n");
+-		goto fail;
+-	}
+-
+-	return 0;
+-fail:
+-	remove_controls();
+-	return -1;
+-}
+-
+-/*
+- * control file fileop definitions
+- */
+-
+-/*
+- * control files for relay channel management
+- */
+-
+-static ssize_t enabled_read(struct file *filp, char __user *buffer,
+-				size_t count, loff_t *ppos)
+-{
+-	char buf[16];
+-
+-	snprintf(buf, sizeof(buf), "%d\n", logging);
+-	return simple_read_from_buffer(buffer, count, ppos,
+-					buf, strlen(buf));
+-}
+-
+-static ssize_t enabled_write(struct file *filp, const char __user *buffer,
+-				size_t count, loff_t *ppos)
+-{
+-	char buf[16];
+-	char *tmp;
+-	int enabled;
+-
+-	if (count > sizeof(buf))
+-		return -EINVAL;
+-
+-	memset(buf, 0, sizeof(buf));
+-
+-	if (copy_from_user(buf, buffer, count))
+-		return -EFAULT;
+-
+-	enabled = simple_strtol(buf, &tmp, 10);
+-	if (tmp == buf)
+-		return -EINVAL;
+-
+-	if (enabled && chan)
+-		logging = 1;
+-	else if (!enabled) {
+-		logging = 0;
+-		if (chan)
+-			relay_flush(chan);
+-	}
+-
+-	return count;
+-}
+-
+-/*
+- * 'enabled' file operations - boolean r/w
+- *
+- *  toggles logging to the relay channel
+- */
+-struct file_operations enabled_fops = {
+-	.owner	=	THIS_MODULE,
+-	.read	=	enabled_read,
+-	.write	=	enabled_write,
+-};
+-
+-static ssize_t create_read(struct file *filp, char __user *buffer,
+-			size_t count, loff_t *ppos)
+-{
+-	char buf[16];
+-
+-	snprintf(buf, sizeof(buf), "%d\n", !!chan);
+-
+-	return simple_read_from_buffer(buffer, count, ppos,
+-					buf, strlen(buf));
+-}
+-
+-static ssize_t create_write(struct file *filp, const char __user *buffer,
+-				size_t count, loff_t *ppos)
+-{
+-	char buf[16];
+-	char *tmp;
+-	int create;
+-
+-	if (count > sizeof(buf))
+-		return -EINVAL;
+-
+-	memset(buf, 0, sizeof(buf));
+-
+-	if (copy_from_user(buf, buffer, count))
+-		return -EFAULT;
+-
+-	create = simple_strtol(buf, &tmp, 10);
+-	if (tmp == buf)
+-		return -EINVAL;
+-
+-	if (create) {
+-		destroy_channel();
+-		chan = create_channel(subbuf_size, n_subbufs);
+-		if(!chan)
+-			return count;
+-	} else
+-		destroy_channel();
+-
+-	return count;
+-}
+-
+-/*
+- * 'create' file operations - boolean r/w
+- *
+- *  creates/destroys the relay channel
+- */
+-struct file_operations create_fops = {
+-	.owner	=	THIS_MODULE,
+-	.read	=	create_read,
+-	.write	=	create_write,
+-};
+-
+-static ssize_t subbuf_size_read(struct file *filp, char __user *buffer,
+-				size_t count, loff_t *ppos)
+-{
+-	char buf[16];
+-
+-	snprintf(buf, sizeof(buf), "%zu\n", subbuf_size);
+-
+-	return simple_read_from_buffer(buffer, count, ppos,
+-					buf, strlen(buf));
+-}
+-
+-static ssize_t subbuf_size_write(struct file *filp, const char __user *buffer,
+-				size_t count, loff_t *ppos)
+-{
+-	char buf[16];
+-	char *tmp;
+-	size_t size;
+-
+-	if (count > sizeof(buf))
+-		return -EINVAL;
+-
+-	memset(buf, 0, sizeof(buf));
+-
+-	if (copy_from_user(buf, buffer, count))
+-		return -EFAULT;
+-
+-	size = simple_strtol(buf, &tmp, 10);
+-	if (tmp == buf)
+-		return -EINVAL;
+-
+-	subbuf_size = size;
+-
+-	return count;
+-}
+-
+-/*
+- * 'subbuf_size' file operations - r/w
+- *
+- *  gets/sets the subbuffer size to use in channel creation
+- */
+-struct file_operations subbuf_size_fops = {
+-	.owner =	THIS_MODULE,
+-	.read =		subbuf_size_read,
+-	.write =	subbuf_size_write,
+-};
+-
+-static ssize_t n_subbufs_read(struct file *filp, char __user *buffer,
+-				size_t count, loff_t *ppos)
+-{
+-	char buf[16];
+-
+-	snprintf(buf, sizeof(buf), "%zu\n", n_subbufs);
+-
+-	return simple_read_from_buffer(buffer, count, ppos,
+-					buf, strlen(buf));
+-}
+-
+-static ssize_t n_subbufs_write(struct file *filp, const char __user *buffer,
+-				size_t count, loff_t *ppos)
+-{
+-	char buf[16];
+-	char *tmp;
+-	size_t n;
+-
+-	if (count > sizeof(buf))
+-		return -EINVAL;
+-
+-	memset(buf, 0, sizeof(buf));
+-
+-	if (copy_from_user(buf, buffer, count))
+-		return -EFAULT;
+-
+-	n = simple_strtol(buf, &tmp, 10);
+-	if (tmp == buf)
+-		return -EINVAL;
+-
+-	n_subbufs = n;
+-
+-	return count;
+-}
+-
+-/*
+- * 'n_subbufs' file operations - r/w
+- *
+- *  gets/sets the number of subbuffers to use in channel creation
+- */
+-struct file_operations n_subbufs_fops = {
+-	.owner =	THIS_MODULE,
+-	.read =		n_subbufs_read,
+-	.write =	n_subbufs_write,
+-};
+-
+-static ssize_t dropped_read(struct file *filp, char __user *buffer,
+-				size_t count, loff_t *ppos)
+-{
+-	char buf[16];
+-
+-	snprintf(buf, sizeof(buf), "%zu\n", dropped);
+-
+-	return simple_read_from_buffer(buffer, count, ppos,
+-					buf, strlen(buf));
+-}
+-
+-/*
+- * 'dropped' file operations - r
+- *
+- *  gets the number of dropped events seen
+- */
+-struct file_operations dropped_fops = {
+-	.owner =	THIS_MODULE,
+-	.read =		dropped_read,
+-};
+-
+-
+-/*
+- * control files for relay produced/consumed sub-buffer counts
+- */
+-
+-static int produced_open(struct inode *inode, struct file *filp)
+-{
+-	filp->private_data = inode->i_private;
+-
+-	return 0;
+-}
+-
+-static ssize_t produced_read(struct file *filp, char __user *buffer,
+-				size_t count, loff_t *ppos)
+-{
+-	struct rchan_buf *buf = filp->private_data;
+-
+-	return simple_read_from_buffer(buffer, count, ppos,
+-					&buf->subbufs_produced,
+-					sizeof(buf->subbufs_produced));
+-}
+-
+-/*
+- * 'produced' file operations - r, binary
+- *
+- *  There is a .produced file associated with each per-cpu relay file.
+- *  Reading a .produced file returns the number of sub-buffers so far
+- *  produced for the associated relay buffer.
+- */
+-struct file_operations produced_fops = {
+-	.owner =	THIS_MODULE,
+-	.open =		produced_open,
+-	.read =		produced_read,
+-	.llseek = default_llseek,
+-};
+-
+-static int consumed_open(struct inode *inode, struct file *filp)
+-{
+-	filp->private_data = inode->i_private;
+-
+-	return 0;
+-}
+-
+-static ssize_t consumed_read(struct file *filp, char __user *buffer,
+-				size_t count, loff_t *ppos)
+-{
+-	struct rchan_buf *buf = filp->private_data;
+-
+-	return simple_read_from_buffer(buffer, count, ppos,
+-					&buf->subbufs_consumed,
+-					sizeof(buf->subbufs_consumed));
+-}
+-
+-static ssize_t consumed_write(struct file *filp, const char __user *buffer,
+-				size_t count, loff_t *ppos)
+-{
+-	struct rchan_buf *buf = filp->private_data;
+-	size_t consumed;
+-
+-	if (copy_from_user(&consumed, buffer, sizeof(consumed)))
+-		return -EFAULT;
+-
+-	relay_subbufs_consumed(buf->chan, buf->cpu, consumed);
+-
+-	return count;
+-}
+-
+-/**
+- *	klog_printk - send a formatted string to the klog handler
+- *	@fmt: format string, same as printk
+- */
+-
+-static int new_text_line[NR_CPUS] = {1};
+-void klog_printk(const char *fmt, ...)
+-{
+-	va_list args;
+-	int tlen, len,cpu,i;
+-	char *cbuf;
+-	char tbuf[KLOG_TMPBUF_SIZE];
+-	unsigned long flags;
+-
+-	unsigned long long t;
+-	unsigned long nanosec_rem;
+-
+-	if (!logging)
+-		return;
+-
+-	local_irq_save(flags);
+-
+-	cpu = smp_processor_id();
+-	cbuf = klog_buf[cpu];
+-
+-	va_start(args, fmt);
+-	len = vsnprintf(tbuf, KLOG_TMPBUF_SIZE , fmt, args);
+-	va_end(args);
+-
+-	for (i=0; i<len; i++){
+-		if (new_text_line[cpu]){
+-			/* Add the current time stamp */
+-			t = cpu_clock(cpu);
+-			nanosec_rem = do_div(t, 1000000000);
+-			tlen = sprintf(cbuf, "[%5lu.%06lu] ",
+-					(unsigned long) t,
+-					nanosec_rem / 1000);
+-			cbuf += tlen;
+-			new_text_line[cpu] = 0;
+-		}
+-		*cbuf++ = tbuf[i];
+-		if (tbuf[i] == '\n')
+-			new_text_line[cpu] = 1;
+-	}
+-
+-	relay_write(chan, klog_buf[cpu], cbuf - klog_buf[cpu]);
+-
+-	local_irq_restore(flags);
+-}
+-
+-/*
+- * 'consumed' file operations - r/w, binary
+- *
+- *  There is a .consumed file associated with each per-cpu relay file.
+- *  Writing to a .consumed file adds the value written to the
+- *  subbuffers-consumed count of the associated relay buffer.
+- *  Reading a .consumed file returns the number of sub-buffers so far
+- *  consumed for the associated relay buffer.
+- */
+-struct file_operations consumed_fops = {
+-	.owner	=	THIS_MODULE,
+-	.open	=	consumed_open,
+-	.read	=	consumed_read,
+-	.write	=	consumed_write,
+-	.llseek	=	default_llseek,
+-};
+-
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 1da105d..c1cf9b5 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -1265,7 +1265,6 @@ bool vgt_check_host(void)
+ void i915_stop_vgt(void)
+ {
+ 	vgt_destroy();
+-	vgt_klog_cleanup();
+ 	__symbol_put(vgt_pkdm->name);
+ 	vgt_pkdm = NULL;
+ 	vgt_ops = NULL;
+@@ -1297,7 +1296,6 @@ bool i915_start_vgt(struct pci_dev *pdev)
+ 		return false;
+ 
+ 	vgt_param_check();
+-	vgt_klog_init();
+ 
+ 	return vgt_initialize(pdev) == 0;
+ }
+diff --git a/tools/vgt/Makefile b/tools/vgt/Makefile
+deleted file mode 100644
+index 8ca04b9..0000000
+--- a/tools/vgt/Makefile
++++ /dev/null
+@@ -1,6 +0,0 @@
+-all: klog
+-
+-klog: klog.c
+-	$(CC) -o klog klog.c -lpthread
+-clean:
+-	/bin/rm -rf klog *.o
+diff --git a/tools/vgt/README b/tools/vgt/README
+deleted file mode 100644
+index ac7707f..0000000
+--- a/tools/vgt/README
++++ /dev/null
+@@ -1,20 +0,0 @@
+-klog
+-----
+-
+-klog is the userspace app to collect kernel log generated by klog_printk().
+-
+-To build it, simply:
+-
+-# make
+-
+-To use it, you first need to make sure debugfs is mounted in /sys/kernel/debug:
+-
+-# mount -t debugfs debugfs /sys/kernel/debug
+-
+-then run klog to start the kernel log collecting:
+-
+-# ./klog
+-# ^C to stop logging
+-
+-the kernel log will be saved in per-CPU file
+-./cpu0 ./cup1 ...
+diff --git a/tools/vgt/klog.c b/tools/vgt/klog.c
+deleted file mode 100644
+index c6497ba..0000000
+--- a/tools/vgt/klog.c
++++ /dev/null
+@@ -1,524 +0,0 @@
+-/*
+- * klog - log klog trace data
+- *
+- * This program is free software; you can redistribute it and/or modify
+- * it under the terms of the GNU General Public License version 2 as
+- * published by the Free Software Foundation.
+- *
+- * This program is distributed in the hope that it will be useful,
+- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- * GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License
+- * along with this program; if not, write to the Free Software
+- * Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA 02111-1307, USA.
+- *
+- * Copyright (C) 2005 - Tom Zanussi (zanussi@us.ibm.com), IBM Corp
+- *
+- * Usage:
+- *
+- * mount -t debugfs debugfs /debug
+- * insmod ./klog-mod.ko
+- * ./klog [-b subbuf-size -n n_subbufs]
+- *
+- * captured output will appear in ./cpu0...cpuN-1
+- *
+- */
+-
+-#include <stdio.h>
+-#include <stdlib.h>
+-#include <unistd.h>
+-#include <string.h>
+-#include <signal.h>
+-#include <sys/stat.h>
+-#include <fcntl.h>
+-#include <errno.h>
+-#include <sys/mman.h>
+-#include <sys/poll.h>
+-#include <pthread.h>
+-
+-/* name of directory containing relay files */
+-char *app_dirname = "/sys/kernel/debug/klog";
+-/* base name of per-cpu relay files (e.g. /debug/klog/cpu0, cpu1, ...) */
+-char *percpu_basename = "cpu";
+-/* base name of per-cpu output files (e.g. ./cpu0, cpu1, ...) */
+-char *percpu_out_basename = "cpu";
+-
+-/* maximum number of CPUs we can handle - change if more */
+-#define NR_CPUS 256
+-
+-/* internal variables */
+-static size_t subbuf_size = 524288; /* 512K */
+-static size_t n_subbufs = 8;
+-static unsigned int ncpus;
+-static int processing;
+-static pthread_mutex_t processing_mutex;
+-
+-/* per-cpu internal variables */
+-static int relay_file[NR_CPUS];
+-static int out_file[NR_CPUS];
+-static char *relay_buffer[NR_CPUS];
+-static pthread_t reader[NR_CPUS];
+-
+-/* control files */
+-static int produced_file[NR_CPUS];
+-static int consumed_file[NR_CPUS];
+-
+-/* per-cpu buffer info */
+-static struct buf_status
+-{
+-	size_t produced;
+-	size_t consumed;
+-	size_t max_backlog; /* max # sub-buffers ready at one time */
+-} status[NR_CPUS];
+-
+-static void usage(void)
+-{
+-	fprintf(stderr, "klog [-b subbuf_size -n n_subbufs]\n");
+-	exit(1);
+-}
+-
+-/* Boilerplate code below here */
+-
+-/**
+- *	process_subbufs - write ready subbufs to disk
+- */
+-static int process_subbufs(unsigned int cpu)
+-{
+-	size_t i, start_subbuf, end_subbuf, subbuf_idx, subbufs_consumed = 0;
+-	size_t subbufs_ready = status[cpu].produced - status[cpu].consumed;
+-	char *subbuf_ptr;
+-	size_t padding;
+-	int len;
+-
+-	start_subbuf = status[cpu].consumed % n_subbufs;
+-	end_subbuf = start_subbuf + subbufs_ready;
+-	for (i = start_subbuf; i < end_subbuf; i++) {
+-		subbuf_idx = i % n_subbufs;
+-		subbuf_ptr = relay_buffer[cpu] + subbuf_idx * subbuf_size;
+-		padding = *((size_t *)subbuf_ptr);
+-		subbuf_ptr += sizeof(padding);
+-		len = (subbuf_size - sizeof(padding)) - padding;
+-		if (write(out_file[cpu], subbuf_ptr, len) < 0) {
+-			printf("Couldn't write to output file for cpu %d, exiting: errcode = %d: %s\n", cpu, errno, strerror(errno));
+-			exit(1);
+-		}
+-		subbufs_consumed++;
+-	}
+-
+-	return subbufs_consumed;
+-}
+-
+-/**
+- *	check_buffer - check for and read any available sub-buffers in a buffer
+- */
+-static void check_buffer(unsigned cpu)
+-{
+-	size_t subbufs_consumed;
+-
+-	lseek(produced_file[cpu], 0, SEEK_SET);
+-	if (read(produced_file[cpu], &status[cpu].produced,
+-		 sizeof(status[cpu].produced)) < 0) {
+-		printf("Couldn't read from consumed file for cpu %d, exiting: errcode = %d: %s\n", cpu, errno, strerror(errno));
+-		exit(1);
+-	}
+-
+-	subbufs_consumed = process_subbufs(cpu);
+-	if (subbufs_consumed) {
+-		if (subbufs_consumed == n_subbufs)
+-			fprintf(stderr, "cpu %d buffer full.  Consider using a larger buffer size.\n", cpu);
+-		if (subbufs_consumed > status[cpu].max_backlog)
+-			status[cpu].max_backlog = subbufs_consumed;
+-		status[cpu].consumed += subbufs_consumed;
+-		if (write(consumed_file[cpu], &subbufs_consumed,
+-			  sizeof(subbufs_consumed)) < 0) {
+-			printf("Couldn't write to consumed file for cpu %d, exiting: errcode = %d: %s\n", cpu, errno, strerror(errno));
+-			exit(1);
+-		}
+-	}
+-}
+-
+-/**
+- *	reader_thread - per-cpu channel buffer reader
+- */
+-static void *reader_thread(void *data)
+-{
+-	int rc;
+-	unsigned long cpu = (unsigned long)data;
+-	struct pollfd pollfd;
+-
+-	do {
+-		pollfd.fd = relay_file[cpu];
+-		pollfd.events = POLLIN;
+-		rc = poll(&pollfd, 1, -1);
+-		if (rc < 0) {
+-			if (errno != EINTR) {
+-				printf("poll error: %s\n",strerror(errno));
+-				exit(1);
+-			}
+-			printf("poll warning: %s\n",strerror(errno));
+-			rc = 0;
+-		}
+-		pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
+-		pthread_mutex_lock(&processing_mutex);
+-		processing++;
+-		pthread_mutex_unlock(&processing_mutex);
+-		check_buffer(cpu);
+-		pthread_mutex_lock(&processing_mutex);
+-		processing--;
+-		pthread_mutex_unlock(&processing_mutex);
+-		pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
+-	} while (1);
+-}
+-
+-/**
+- *	control_read - read a control file and return the value read
+- */
+-static size_t control_read(const char *dirname,
+-			   const char *filename)
+-{
+-	char tmp[4096];
+-	int fd;
+-
+-	sprintf(tmp, "%s/%s", dirname, filename);
+-	fd = open(tmp, O_RDONLY);
+-	if (fd < 0) {
+-		printf("Couldn't open control file %s\n", tmp);
+-		exit(1);
+-	}
+-
+-	if (read(fd, tmp, sizeof(tmp)) < 0) {
+-		printf("Couldn't read control file %s: errcode = %d: %s\n",
+-		       tmp, errno, strerror(errno));
+-		close(fd);
+-		exit(1);
+-	}
+-
+-	close(fd);
+-
+-	return atoi(tmp);
+-}
+-
+-/**
+- *	control_read - write a value to a control file
+- */
+-static void control_write(const char *dirname,
+-			  const char *filename,
+-			  size_t val)
+-{
+-	char tmp[4096];
+-	int fd;
+-
+-	sprintf(tmp, "%s/%s", dirname, filename);
+-	fd = open(tmp, O_RDWR);
+-	if (fd < 0) {
+-		printf("Couldn't open control file %s\n", tmp);
+-		exit(1);
+-	}
+-
+-	sprintf(tmp, "%zu", val);
+-
+-	if (write(fd, tmp, strlen(tmp)) < 0) {
+-		printf("Couldn't write control file %s: errcode = %d: %s\n",
+-		       tmp, errno, strerror(errno));
+-		close(fd);
+-		exit(1);
+-	}
+-
+-	close(fd);
+-}
+-
+-static void summarize(void)
+-{
+-	int i;
+-	size_t dropped;
+-
+-	printf("summary:\n");
+-	for (i = 0; i < ncpus; i++) {
+-		printf("  cpu %u:\n", i);
+-		printf("    %zu sub-buffers processed\n",
+-		       status[i].consumed);
+-		printf("    %zu max backlog\n", status[i].max_backlog);
+-		printf("    data stored in file ./cpu%d\n", i);
+-	}
+-
+-	dropped = control_read(app_dirname, "dropped");
+-	if (dropped)
+-		printf("\n    %zu dropped events.\n", dropped);
+-}
+-
+-/**
+- *      create_percpu_threads - create per-cpu threads
+- */
+-static int create_percpu_threads(void)
+-{
+-	unsigned long i;
+-
+-	for (i = 0; i < ncpus; i++) {
+-		/* create a thread for each per-cpu buffer */
+-		if (pthread_create(&reader[i], NULL, reader_thread,
+-				   (void *)i) < 0) {
+-			printf("Couldn't create thread\n");
+-			control_write(app_dirname, "enabled", 0);
+-			control_write(app_dirname, "create", 0);
+-			return -1;
+-		}
+-	}
+-
+-	return 0;
+-}
+-
+-/**
+- *      kill_percpu_threads - kill per-cpu threads 0->n-1
+- *      @n: number of threads to kill
+- *
+- *      Returns number of threads killed.
+- */
+-static int kill_percpu_threads(int n)
+-{
+-        int i, killed = 0, err;
+-
+-        for (i = 0; i < n; i++) {
+-                if ((err = pthread_cancel(reader[i])) == 0)
+-			killed++;
+-		else
+-			fprintf(stderr, "WARNING: couldn't kill per-cpu thread %d, err = %d\n", i, err);
+-        }
+-
+-        if (killed != n)
+-                fprintf(stderr, "WARNING: couldn't kill all per-cpu threads:  %d killed, %d total\n", killed, n);
+-
+-        return killed;
+-}
+-
+-/**
+- *	close_control_files - open per-cpu produced/consumed control files
+- */
+-static void close_control_files(void)
+-{
+-	int i;
+-
+-	for (i = 0; i < ncpus; i++) {
+-		if (produced_file[i] > 0)
+-			close(produced_file[i]);
+-		if (consumed_file[i] > 0)
+-			close(consumed_file[i]);
+-	}
+-}
+-
+-/**
+- *	open_control_files - open per-cpu produced/consumed control files
+- */
+-static int open_control_files(const char *dirname, const char *basename)
+-{
+-	int i;
+-	char tmp[4096];
+-
+-	for (i = 0; i < ncpus; i++) {
+-		sprintf(tmp, "%s/%s%d.produced", dirname, basename, i);
+-		produced_file[i] = open(tmp, O_RDONLY);
+-		if (produced_file[i] < 0) {
+-			printf("Couldn't open control file %s\n", tmp);
+-			goto fail;
+-		}
+-	}
+-
+-	for (i = 0; i < ncpus; i++) {
+-		sprintf(tmp, "%s/%s%d.consumed", dirname, basename, i);
+-		consumed_file[i] = open(tmp, O_RDWR);
+-		if (consumed_file[i] < 0) {
+-			printf("Couldn't open control file %s\n", tmp);
+-			goto fail;
+-		}
+-	}
+-
+-	return 0;
+-fail:
+-	close_control_files();
+-	return -1;
+-}
+-
+-/**
+- *	open_cpu_files - open and mmap buffer and create output file for a cpu
+- */
+-static int open_cpu_files(int cpu, const char *dirname, const char *basename,
+-			  const char *out_basename)
+-{
+-	size_t total_bufsize;
+-	char tmp[4096];
+-
+-	memset(&status[cpu], 0, sizeof(struct buf_status));
+-
+-	sprintf(tmp, "%s/%s%d", dirname, basename, cpu);
+-	relay_file[cpu] = open(tmp, O_RDONLY | O_NONBLOCK);
+-	if (relay_file[cpu] < 0) {
+-		printf("Couldn't open relay file %s: errcode = %s\n",
+-		       tmp, strerror(errno));
+-		return -1;
+-	}
+-
+-	sprintf(tmp, "%s%d", out_basename, cpu);
+-	if((out_file[cpu] = open(tmp, O_CREAT | O_RDWR | O_TRUNC, S_IRUSR |
+-				 S_IWUSR | S_IRGRP | S_IROTH)) < 0) {
+-		printf("Couldn't open output file %s: errcode = %s\n",
+-		       tmp, strerror(errno));
+-		close(relay_file[cpu]);
+-		return -1;
+-	}
+-
+-	total_bufsize = subbuf_size * n_subbufs;
+-	relay_buffer[cpu] = mmap(NULL, total_bufsize, PROT_READ,
+-				 MAP_PRIVATE | MAP_POPULATE, relay_file[cpu],
+-				 0);
+-	if(relay_buffer[cpu] == MAP_FAILED)
+-	{
+-		printf("Couldn't mmap relay file, total_bufsize (%ld) = subbuf_size (%ld) * n_subbufs(%ld), error = %s \n", total_bufsize, subbuf_size, n_subbufs, strerror(errno));
+-		close(relay_file[cpu]);
+-		close(out_file[cpu]);
+-		return -1;
+-	}
+-
+-	return 0;
+-}
+-
+-/**
+- *	close_cpu_files - close and munmap buffer and open output file for cpu
+- */
+-static void close_cpu_files(int cpu)
+-{
+-	size_t total_bufsize = subbuf_size * n_subbufs;
+-
+-	munmap(relay_buffer[cpu], total_bufsize);
+-	close(relay_file[cpu]);
+-	close(out_file[cpu]);
+-}
+-
+-static void close_app_files(void)
+-{
+-	int i;
+-
+-	for (i = 0; i < ncpus; i++)
+-		close_cpu_files(i);
+-}
+-
+-static int open_app_files(void)
+-{
+-	int i;
+-
+-	for (i = 0; i < ncpus; i++) {
+-		if (open_cpu_files(i, app_dirname, percpu_basename,
+-				   percpu_out_basename) < 0) {
+-			control_write(app_dirname, "enabled", 0);
+-			control_write(app_dirname, "create", 0);
+-			return -1;
+-		}
+-	}
+-
+-	return 0;
+-}
+-
+-int main(int argc, char **argv)
+-{
+-	extern char *optarg;
+-	extern int optopt;
+-	int i, c, signal;
+-	size_t opt_subbuf_size = 0;
+-	size_t opt_n_subbufs = 0;
+-	sigset_t signals;
+-
+-	pthread_mutex_init(&processing_mutex, NULL);
+-
+-	sigemptyset(&signals);
+-	sigaddset(&signals, SIGINT);
+-	sigaddset(&signals, SIGTERM);
+-	pthread_sigmask(SIG_BLOCK, &signals, NULL);
+-
+-	while ((c = getopt(argc, argv, "b:n:")) != -1) {
+-		switch (c) {
+-		case 'b':
+-			opt_subbuf_size = (unsigned)atoi(optarg);
+-			if (!opt_subbuf_size)
+-				usage();
+-			break;
+-		case 'n':
+-			opt_n_subbufs = (unsigned)atoi(optarg);
+-			if (!opt_n_subbufs)
+-				usage();
+-			break;
+-		case '?':
+-			printf("Unknown option -%c\n", optopt);
+-			usage();
+-			break;
+-		default:
+-			break;
+-		}
+-	}
+-
+-	if ((opt_n_subbufs && !opt_subbuf_size) ||
+-	    (!opt_n_subbufs && opt_subbuf_size))
+-		usage();
+-
+-	if (opt_n_subbufs && opt_n_subbufs) {
+-		subbuf_size = opt_subbuf_size;
+-		n_subbufs = opt_n_subbufs;
+-	}
+-
+-	ncpus = sysconf(_SC_NPROCESSORS_ONLN);
+-
+-	control_write(app_dirname, "subbuf_size", subbuf_size);
+-	control_write(app_dirname, "n_subbufs", n_subbufs);
+-	/* disable logging in case we exited badly in a previous run */
+-	control_write(app_dirname, "enabled", 0);
+-	fprintf(stderr, "control_write: create\n");
+-
+-	control_write(app_dirname, "create", 1);
+-
+-	if (open_app_files())
+-		return -1;
+-
+-	if (open_control_files(app_dirname, percpu_basename)) {
+-		close_app_files();
+-		return -1;
+-	}
+-
+-	if (create_percpu_threads()) {
+-		close_control_files();
+-		close_app_files();
+-		return -1;
+-	}
+-
+-	control_write(app_dirname, "enabled", 1);
+-
+-	printf("Creating channel with %lu sub-buffers of size %lu.\n",
+-	       n_subbufs, subbuf_size);
+-	printf("Logging... Press Control-C to stop.\n");
+-
+-	sigemptyset(&signals);
+-	sigaddset(&signals, SIGINT);
+-	sigaddset(&signals, SIGTERM);
+-
+-	while (sigwait(&signals, &signal) == 0) {
+-		switch(signal) {
+-		case SIGINT:
+-		case SIGTERM:
+-			control_write(app_dirname, "enabled", 0);
+-			kill_percpu_threads(ncpus);
+-			while(1) {
+-				pthread_mutex_lock(&processing_mutex);
+-				if (!processing) {
+-					pthread_mutex_unlock(&processing_mutex);
+-					break;
+-				}
+-				pthread_mutex_unlock(&processing_mutex);
+-			}
+-			for (i = 0; i < ncpus; i++)
+-				check_buffer(i);
+-			summarize();
+-			close_control_files();
+-			close_app_files();
+-			control_write(app_dirname, "create", 0);
+-			exit(0);
+-		}
+-	}
+-}
+-- 
+1.7.10.4
+

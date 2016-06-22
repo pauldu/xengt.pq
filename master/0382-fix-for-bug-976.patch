@@ -1,0 +1,53 @@
+From d55358c128802293b9d2f5b7cf0811425594fb36 Mon Sep 17 00:00:00 2001
+From: Min He <min.he@intel.com>
+Date: Sat, 12 Mar 2016 00:59:19 +0800
+Subject: [PATCH 382/403] fix for bug 976
+
+This patch sets the initial value of ret_val in xxx_surf_mmio_write
+functions, to avoid unexpected values writes to the sregs of xxx_surf_mmio
+regs.
+
+This patch can fix bug 976 -- [4.3.0-rc6-vgt+][skl-greenlow/skl-gt4e]
+[windows]creating multiple guests together or running workload in multiple
+guests make xen hang sporadically. Bug #976 was caused by the invalid value
+inside surface MMIO.
+
+Signed-off-by: Min He <min.he@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |    6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index ae88935..ee8ecab 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -1383,7 +1383,7 @@ static bool pri_surf_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ 	struct fb_notify_msg msg;
+ 	enum pipe pipe = VGT_DSPSURFPIPE(offset);
+ 	unsigned int real_offset;
+-	vgt_reg_t ret_val;
++	vgt_reg_t ret_val = 0;
+ 	bool rc = true;
+ 
+ 	__vreg(vgt, offset) = *(vgt_reg_t*)p_data;
+@@ -1426,7 +1426,7 @@ static bool spr_surf_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ 	struct fb_notify_msg msg;
+ 	enum pipe pipe = VGT_SPRSURFPIPE(offset);
+ 	unsigned int real_offset;
+-	vgt_reg_t ret_val;
++	vgt_reg_t ret_val = 0;
+ 	bool rc = true;
+ 
+ 	__vreg(vgt, offset) = *(vgt_reg_t*)p_data;
+@@ -1464,7 +1464,7 @@ static bool cur_surf_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ {
+ 	enum pipe pipe = VGT_CURSURFPIPE(offset);
+ 	unsigned int real_offset;
+-	vgt_reg_t ret_val;
++	vgt_reg_t ret_val = 0;
+ 	bool rc = true;
+ 
+ 	__vreg(vgt, offset) = *(vgt_reg_t*)p_data;
+-- 
+1.7.10.4
+

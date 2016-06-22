@@ -1,0 +1,38 @@
+From c0055d1cb4b36aa303b201cda711be5a6b9519c3 Mon Sep 17 00:00:00 2001
+From: Jike Song <jike.song@intel.com>
+Date: Thu, 21 Jan 2016 22:31:28 +0800
+Subject: [PATCH 316/403] vgt: call _hvm_exit only for guests
+
+Signed-off-by: Jike Song <jike.song@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/instance.c |    7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/instance.c b/drivers/gpu/drm/i915/vgt/instance.c
+index 1cb9b44..a063041 100644
+--- a/drivers/gpu/drm/i915/vgt/instance.c
++++ b/drivers/gpu/drm/i915/vgt/instance.c
+@@ -337,7 +337,8 @@ int create_vgt_instance(struct pgt_device *pdev, struct vgt_device **ptr_vgt, vg
+ err:
+ 	vgt_clean_vgtt(vgt);
+ err2:
+-	hypervisor_hvm_exit(vgt);
++	if (vgt->vm_id)
++		hypervisor_hvm_exit(vgt);
+ 	if (vgt->aperture_base > 0)
+ 		free_vm_aperture_gm_and_fence(vgt);
+ 	vfree(vgt->state.vReg);
+@@ -421,7 +422,9 @@ void vgt_release_instance(struct vgt_device *vgt)
+ 		}
+ 	}
+ 
+-	hypervisor_hvm_exit(vgt);
++	if (vgt->vm_id)
++		hypervisor_hvm_exit(vgt);
++
+ 	vgt_lock_dev(pdev, cpu);
+ 
+ 	vgt->pdev->device[vgt->vgt_id] = NULL;
+-- 
+1.7.10.4
+

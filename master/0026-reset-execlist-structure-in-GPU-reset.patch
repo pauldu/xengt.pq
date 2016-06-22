@@ -1,0 +1,27 @@
+From d6185f82a5608f1902757be662b602a8eb2890e9 Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Wed, 25 Mar 2015 18:00:57 +0800
+Subject: [PATCH 026/403] reset execlist structure in GPU reset
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/vgt.c |    3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 98514b1..2625e59 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -1041,6 +1041,9 @@ static void do_device_reset(struct pgt_device *pdev)
+ 
+ 		vgt_info("RING %d: H: %x T: %x S: %x C: %x.\n",
+ 				i, head, tail, start, ctl);
++
++		if (pdev->enable_execlist)
++			reset_el_structure(pdev, i);
+ 	}
+ 
+ 	ier = VGT_MMIO_READ(pdev, _REG_DEIER);
+-- 
+1.7.10.4
+

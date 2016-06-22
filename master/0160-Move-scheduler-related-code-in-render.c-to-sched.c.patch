@@ -1,0 +1,222 @@
+From ff6f1c8fd834085391ef41b7f4ee18488c83069e Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Wed, 26 Aug 2015 08:54:33 +0800
+Subject: [PATCH 160/403] Move scheduler related code in render.c to sched.c
+
+No functional changes.
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/render.c |   90 -------------------------------------
+ drivers/gpu/drm/i915/vgt/sched.c  |   90 +++++++++++++++++++++++++++++++++++++
+ 2 files changed, 90 insertions(+), 90 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index 9ee409d..f921e65 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -123,61 +123,6 @@ bool idle_render_engine(struct pgt_device *pdev, int id)
+ 	return true;
+ }
+ 
+-static bool vgt_ring_check_offset_passed(struct pgt_device *pdev, int ring_id,
+-	u32 head, u32 tail, u32 offset)
+-{
+-	bool rc = true;
+-	/*
+-	 * Check if ring buffer is wrapped, otherwise there
+-	 * are remaining instruction in ringbuffer, but no
+-	 * interrupt anymore, so switch to polling mode.
+-	 */
+-	rc = (head > tail) ? false : true;
+-
+-	if (head > offset)
+-		rc = (offset > tail) ? true : rc;
+-	else
+-		rc = (offset > tail) ? rc : false;
+-
+-	return rc;
+-}
+-
+-static bool vgt_rings_need_idle_notification(struct pgt_device *pdev)
+-{
+-	int i;
+-	u32 head, tail, offset;
+-
+-	for (i=0; i < pdev->max_engines; i++) {
+-		if (pdev->ring_buffer[i].need_irq) {
+-			head = VGT_MMIO_READ(pdev, RB_HEAD(pdev, i)) & RB_HEAD_OFF_MASK;
+-			tail = VGT_MMIO_READ(pdev, RB_TAIL(pdev, i)) & RB_TAIL_OFF_MASK;
+-			if (head != tail) {
+-				offset = pdev->ring_buffer[i].ip_offset;
+-				if (!vgt_ring_check_offset_passed(pdev, i, head, tail, offset))
+-					break;
+-			}
+-		}
+-	}
+-	/*
+-	 * If all the rings has been checked, mean there are no more user
+-	 * interrupt instructions remain in the ring buffer, so switch to
+-	 * polling mode, otherwise return false and wait for next interrupt.
+-	 */
+-	return (i == pdev->max_engines) ? true : false;
+-}
+-
+-void vgt_check_pending_context_switch(struct vgt_device *vgt)
+-{
+-	struct pgt_device *pdev = vgt->pdev;
+-
+-	if (pdev->ctx_switch_pending) {
+-		if (vgt_rings_need_idle_notification(pdev)) {
+-			pdev->ctx_switch_pending = false;
+-			vgt_raise_request(pdev, VGT_REQUEST_CTX_SWITCH);
+-		}
+-	}
+-}
+-
+ bool idle_rendering_engines(struct pgt_device *pdev, int *id)
+ {
+ 	int i;
+@@ -523,41 +468,6 @@ static bool gen8_ring_switch(struct pgt_device *pdev,
+ 	return true;
+ }
+ 
+-bool vgt_do_render_sched(struct pgt_device *pdev)
+-{
+-	int threshold = 500; /* print every 500 times */
+-	int cpu;
+-	bool rc = true;
+-
+-	if (!(vgt_ctx_check(pdev) % threshold))
+-		vgt_dbg(VGT_DBG_RENDER, "vGT: %lldth checks, %lld switches\n",
+-			vgt_ctx_check(pdev), vgt_ctx_switch(pdev));
+-	vgt_ctx_check(pdev)++;
+-
+-	ASSERT(!vgt_runq_is_empty(pdev));
+-
+-	/*
+-	 * disable interrupt which is sufficient to prevent more
+-	 * cmds submitted by the current owner, when dom0 is UP.
+-	 * if the mmio handler for HVM is made into a thread,
+-	 * simply a spinlock is enough. IRQ handler is another
+-	 * race point
+-	 */
+-	vgt_lock_dev(pdev, cpu);
+-
+-	vgt_schedule(pdev);
+-
+-	if (ctx_switch_requested(pdev)) {
+-		if ((!irq_based_ctx_switch) || vgt_rings_need_idle_notification(pdev))
+-			vgt_raise_request(pdev, VGT_REQUEST_CTX_SWITCH);
+-		else
+-			pdev->ctx_switch_pending = true;
+-	}
+-
+-	vgt_unlock_dev(pdev, cpu);
+-	return rc;
+-}
+-
+ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ {
+ 	int i = 0;
+diff --git a/drivers/gpu/drm/i915/vgt/sched.c b/drivers/gpu/drm/i915/vgt/sched.c
+index fcc3bda..0eb5b51 100644
+--- a/drivers/gpu/drm/i915/vgt/sched.c
++++ b/drivers/gpu/drm/i915/vgt/sched.c
+@@ -881,3 +881,93 @@ void vgt_request_force_removal(struct vgt_device *vgt)
+ 	vgt_raise_request(vgt->pdev, VGT_REQUEST_CTX_SWITCH);
+ 	wmb();
+ }
++
++static bool vgt_ring_check_offset_passed(struct pgt_device *pdev, int ring_id,
++	u32 head, u32 tail, u32 offset)
++{
++	bool rc = true;
++	/*
++	 * Check if ring buffer is wrapped, otherwise there
++	 * are remaining instruction in ringbuffer, but no
++	 * interrupt anymore, so switch to polling mode.
++	 */
++	rc = (head > tail) ? false : true;
++
++	if (head > offset)
++		rc = (offset > tail) ? true : rc;
++	else
++		rc = (offset > tail) ? rc : false;
++
++	return rc;
++}
++
++static bool vgt_rings_need_idle_notification(struct pgt_device *pdev)
++{
++	int i;
++	u32 head, tail, offset;
++
++	for (i=0; i < pdev->max_engines; i++) {
++		if (pdev->ring_buffer[i].need_irq) {
++			head = VGT_MMIO_READ(pdev, RB_HEAD(pdev, i)) & RB_HEAD_OFF_MASK;
++			tail = VGT_MMIO_READ(pdev, RB_TAIL(pdev, i)) & RB_TAIL_OFF_MASK;
++			if (head != tail) {
++				offset = pdev->ring_buffer[i].ip_offset;
++				if (!vgt_ring_check_offset_passed(pdev, i, head, tail, offset))
++					break;
++			}
++		}
++	}
++	/*
++	 * If all the rings has been checked, mean there are no more user
++	 * interrupt instructions remain in the ring buffer, so switch to
++	 * polling mode, otherwise return false and wait for next interrupt.
++	 */
++	return (i == pdev->max_engines) ? true : false;
++}
++
++void vgt_check_pending_context_switch(struct vgt_device *vgt)
++{
++	struct pgt_device *pdev = vgt->pdev;
++
++	if (pdev->ctx_switch_pending) {
++		if (vgt_rings_need_idle_notification(pdev)) {
++			pdev->ctx_switch_pending = false;
++			vgt_raise_request(pdev, VGT_REQUEST_CTX_SWITCH);
++		}
++	}
++}
++
++bool vgt_do_render_sched(struct pgt_device *pdev)
++{
++	int threshold = 500; /* print every 500 times */
++	int cpu;
++	bool rc = true;
++
++	if (!(vgt_ctx_check(pdev) % threshold))
++		vgt_dbg(VGT_DBG_RENDER, "vGT: %lldth checks, %lld switches\n",
++			vgt_ctx_check(pdev), vgt_ctx_switch(pdev));
++	vgt_ctx_check(pdev)++;
++
++	ASSERT(!vgt_runq_is_empty(pdev));
++
++	/*
++	 * disable interrupt which is sufficient to prevent more
++	 * cmds submitted by the current owner, when dom0 is UP.
++	 * if the mmio handler for HVM is made into a thread,
++	 * simply a spinlock is enough. IRQ handler is another
++	 * race point
++	 */
++	vgt_lock_dev(pdev, cpu);
++
++	vgt_schedule(pdev);
++
++	if (ctx_switch_requested(pdev)) {
++		if ((!irq_based_ctx_switch) || vgt_rings_need_idle_notification(pdev))
++			vgt_raise_request(pdev, VGT_REQUEST_CTX_SWITCH);
++		else
++			pdev->ctx_switch_pending = true;
++	}
++
++	vgt_unlock_dev(pdev, cpu);
++	return rc;
++}
+-- 
+1.7.10.4
+

@@ -1,0 +1,118 @@
+From 80032760eb11932c967b6a2b9e0454601b1758dc Mon Sep 17 00:00:00 2001
+From: Yulei Zhang <yulei.zhang@intel.com>
+Date: Fri, 8 Jan 2016 16:49:20 +0800
+Subject: [PATCH 309/403] vgt: Fix miscalculation of shadow page table
+ reference count while updating shadow context.
+
+Change the approach to update the shadow ppgtt root point
+in shadow context in order to avoid unexpected reference
+count increase of shadow page table, which will cause failure
+in shadow page table destroy.
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |   22 +--------------------
+ drivers/gpu/drm/i915/vgt/gtt.c       |   36 ++++++++++++++++++++++++++++++++++
+ drivers/gpu/drm/i915/vgt/vgt.h       |    4 ++++
+ 3 files changed, 41 insertions(+), 21 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 213c431..825571a 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -588,26 +588,6 @@ static bool sctx_reg_state_wp_handler(void *gp, uint64_t pa, void *p_data, int b
+ 	return rc;
+ }
+ 
+-/* context shadow: context sync-up between guest/shadow */
+-
+-static inline bool ppgtt_update_shadow_ppgtt_for_ctx(struct vgt_device *vgt,
+-				struct execlist_context *el_ctx)
+-{
+-	bool rc = true;
+-	int i;
+-
+-	if (!vgt_require_shadow_context(vgt))
+-		return rc;
+-
+-	for (i = 0; i < el_ctx->ppgtt_mm->page_table_entry_cnt; ++ i) {
+-		vgt_dbg(VGT_DBG_EXECLIST, "Emulate the rootp[%d] change\n", i);
+-		rc = vgt_handle_guest_write_rootp_in_context(el_ctx, i);
+-		if (!rc)
+-			break;
+-	}
+-	return rc;
+-}
+-
+ #define CHECK_CTX_VAL(MMIO, GUEST, REF, SRC)				\
+ do {									\
+ 	if(GUEST->MMIO.val != REF->MMIO.val)				\
+@@ -1083,7 +1063,7 @@ static int vgt_el_destroy_shadow_context(struct vgt_device *vgt,
+ 	return 0;
+ }
+ 
+-static int vgt_el_create_shadow_ppgtt(struct vgt_device *vgt,
++int vgt_el_create_shadow_ppgtt(struct vgt_device *vgt,
+ 				enum vgt_ring_id ring_id,
+ 				struct execlist_context *el_ctx)
+ {
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index 0ee852a..7dde63d 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -2411,3 +2411,39 @@ bool vgt_handle_guest_write_rootp_in_context(struct execlist_context *el_ctx, in
+ 
+ 	return rc;
+ }
++
++/* ppgtt : ppgtt sync-up between guest/shadow */
++
++bool ppgtt_update_shadow_ppgtt_for_ctx(struct vgt_device *vgt,
++				struct execlist_context *el_ctx)
++{
++	bool rc = true;
++	struct reg_state_ctx_header *g_state;
++	struct vgt_mm *mm = el_ctx->ppgtt_mm;
++	gtt_entry_t ctx_rootp;
++	gtt_entry_t pt_ctx_rootp;
++	int i;
++
++	if (!vgt_require_shadow_context(vgt))
++		return rc;
++
++	g_state = (struct reg_state_ctx_header *)
++					el_ctx->ctx_pages[1].guest_page.vaddr;
++	/* compare the page table root pointer stored in guest context and
++	 * in shadow page table, update the mapping if it is not aligned
++	 */
++	for (i = 0; i < el_ctx->ppgtt_mm->page_table_entry_cnt; ++ i) {
++		ppgtt_get_rootp_from_ctx(g_state, &ctx_rootp, i);
++		ppgtt_get_guest_root_entry(mm, &pt_ctx_rootp, i);
++
++		if (ctx_rootp.val64 != pt_ctx_rootp.val64)
++			break;
++	}
++
++	if (i != el_ctx->ppgtt_mm->page_table_entry_cnt) {
++		if (vgt_el_create_shadow_ppgtt(vgt, el_ctx->ring_id, el_ctx))
++			rc = false;
++	}
++
++	return rc;
++}
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 4cfed5e..828eab5c 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -1866,6 +1866,10 @@ bool vgt_g2v_execlist_context_create(struct vgt_device *vgt);
+ bool vgt_g2v_execlist_context_destroy(struct vgt_device *vgt);
+ 
+ bool vgt_batch_ELSP_write(struct vgt_device *vgt, int ring_id);
++bool ppgtt_update_shadow_ppgtt_for_ctx(struct vgt_device *vgt,struct execlist_context *el_ctx);
++int vgt_el_create_shadow_ppgtt(struct vgt_device *vgt,
++				enum vgt_ring_id ring_id,
++				struct execlist_context *el_ctx);
+ 
+ static inline void reset_el_structure(struct pgt_device *pdev,
+ 				enum vgt_ring_id ring_id)
+-- 
+1.7.10.4
+

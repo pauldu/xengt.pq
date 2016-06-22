@@ -1,0 +1,115 @@
+From 604cf9eae60c5f799df92608aae0cb036aeb9100 Mon Sep 17 00:00:00 2001
+From: Pei Zhang <pei.zhang@intel.com>
+Date: Sun, 13 Mar 2016 00:07:34 +0800
+Subject: [PATCH 389/403] SBI read cache miss issue fix
+
+V2. change vgt_warn to vgt_dbg.
+
+vGT will cache guest's SBI data in a local array. This cache
+operation happens everytime when the SBI write occurs. So when
+there is a SBI read, vGT returns the cached data to guest.
+This is good if SBI read always happens after write. But it's
+not always true. The guest OS may first try read, default 0
+will returned, if 0 is not the value it wanted, it then write
+a new value. This will cause a warning print in the first time
+read.
+
+More terrible thing is that, if the default value 0 returned in the
+first time read could satisfy the guest's requirement, there won't
+be a SBI write followed and vGT won't find a chance to cache the SBI
+data for guest OS. For this special SBI addr, every following read
+will cause a waring print. In some condition, we can see huge SBI
+cache miss warning print (addr 0x60c is an example).
+
+So I change current logic and also cache SBI data in read time.
+
+Signed-off-by: Pei Zhang <pei.zhang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |   48 ++++++++++++++++++-----------------
+ 1 file changed, 25 insertions(+), 23 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 7faf390..bdb3de5 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -1889,52 +1889,54 @@ static bool err_int_w(struct vgt_device *vgt, unsigned int offset,
+ 	return rc;
+ }
+ 
+-static vgt_reg_t get_sbi_reg_cached_value(struct vgt_device *vgt,
+-	unsigned int sbi_offset)
++static void cache_sbi_reg_value(struct vgt_device *vgt, unsigned int sbi_offset,
++	vgt_reg_t value)
+ {
+ 	int i;
+ 	int num = vgt->sbi_regs.number;
+-	vgt_reg_t value = 0;
+ 
+ 	for (i = 0; i < num; ++ i) {
+ 		if (vgt->sbi_regs.registers[i].offset == sbi_offset)
+ 			break;
+ 	}
+ 
+-	if (i < num) {
+-		value = vgt->sbi_regs.registers[i].value;
+-	} else {
+-		vgt_warn("vGT(%d): SBI reading did not find the cached value"
+-			" for offset 0x%x. 0 will be returned!\n",
+-			vgt->vgt_id, sbi_offset);
++	if (i == num) {
++		if (num < SBI_REG_MAX) {
++			vgt->sbi_regs.number++;
++		} else {
++			vgt_warn("vGT(%d): SBI caching meets maximum limits!\n",
++				vgt->vgt_id);
++			return;
++		}
+ 	}
+ 
+-	return value;
++	vgt->sbi_regs.registers[i].offset = sbi_offset;
++	vgt->sbi_regs.registers[i].value = value;
+ }
+ 
+-static void cache_sbi_reg_value(struct vgt_device *vgt, unsigned int sbi_offset,
+-	vgt_reg_t value)
++static vgt_reg_t get_sbi_reg_cached_value(struct vgt_device *vgt,
++	unsigned int sbi_offset)
+ {
+ 	int i;
+ 	int num = vgt->sbi_regs.number;
++	vgt_reg_t value = 0;
+ 
+-	for (i = 0; i < num; ++ i) {
++	for (i = 0; i < num; ++i) {
+ 		if (vgt->sbi_regs.registers[i].offset == sbi_offset)
+ 			break;
+ 	}
+ 
+-	if (i == num) {
+-		if (num < SBI_REG_MAX) {
+-			vgt->sbi_regs.number ++;
+-		} else {
+-			vgt_warn("vGT(%d): SBI caching meets maximum limits!\n",
+-				vgt->vgt_id);
+-			return;
+-		}
++	if (i < num) {
++		value = vgt->sbi_regs.registers[i].value;
++	} else {
++		cache_sbi_reg_value(vgt, sbi_offset, 0);
++		vgt_dbg(VGT_DBG_DPY,
++			"vGT(%d): SBI reading did not find the cached value"
++			" for offset 0x%x. 0 will be returned!\n",
++			vgt->vgt_id, sbi_offset);
+ 	}
+ 
+-	vgt->sbi_regs.registers[i].offset = sbi_offset;
+-	vgt->sbi_regs.registers[i].value = value;
++	return value;
+ }
+ 
+ static bool sbi_mmio_data_read(struct vgt_device *vgt, unsigned int offset,
+-- 
+1.7.10.4
+

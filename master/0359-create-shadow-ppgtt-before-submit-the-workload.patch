@@ -1,0 +1,29 @@
+From 946aa71ebd0ba772e33782bfa191bb03ed2e91ea Mon Sep 17 00:00:00 2001
+From: Yulei Zhang <yulei.zhang@intel.com>
+Date: Fri, 26 Feb 2016 15:51:24 +0800
+Subject: [PATCH 359/403] create shadow ppgtt before submit the workload
+
+As shadow ppgtt creation has been removed from context creation,
+create the missing shadow ppgtt before the execlist context submit.
+This will fix bug#996 that turn off the shadow context.
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |    3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 9665717..a11794c 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -2117,6 +2117,9 @@ void vgt_submit_execlist(struct vgt_device *vgt, enum vgt_ring_id ring_id)
+ 		memcpy(&context_descs[i], &ctx->guest_context,
+ 				sizeof(struct ctx_desc_format));
+ 
++		if (!ctx->ppgtt_mm)
++			vgt_el_create_shadow_ppgtt(vgt, ctx->ring_id, ctx);
++
+ 		if (vgt->vm_id) {
+ 			if (vgt_manipulate_cmd_buf(vgt, ctx))
+ 				return;
+-- 
+1.7.10.4
+

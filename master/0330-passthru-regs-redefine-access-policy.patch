@@ -1,0 +1,201 @@
+From beb8d960f56c78993580963eb50386f00f1ca39a Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Thu, 28 Jan 2016 16:26:37 +0800
+Subject: [PATCH 330/403] passthru regs: redefine access policy
+
+{GEN7_CXT_SIZE, 4, F_PT, 0, D_ALL, NULL, NULL},
+Description: context sizes that save/restore,  allows software/BIOS to
+program the actual size, always keep the default value.
+Conclusion: take as F_VIRT.
+
+{GFX_FLSH_CNTL_GEN6, 4, F_PT, 0, D_ALL, NULL, NULL},
+Description: flash Gunit TLB, only used when map device as WC, XenGT
+map device as UC.
+Conclusion: take as F_VIRT and add handler to detect current cache mode
+to determine virtualized or go to HW.
+
+{ECOSKPD, 4, F_PT, 0, D_ALL, NULL, NULL},
+{0x121d0, 4, F_PT, 0, D_ALL, NULL, NULL},
+{0x1c1d0, 4, F_PT, 0, D_BDW_PLUS, NULL, NULL},
+{GEN6_BLITTER_ECOSKPD, 4, F_PT, 0, D_ALL, NULL, NULL},
+Description: no feature or function impact but still accessed by driver.
+Conclusion: take as F_VIRT.
+
+{GEN6_MBCUNIT_SNPCR, 4, F_PT, 0, D_BDW_PLUS, NULL, NULL},
+Description: snoop control register for LLC config, no runtime access in
+i915.
+Conclusion: take as F_DOM0 and initialize it with value from windows driver.
+
+{GEN7_MISCCPCTL, 4, F_PT, 0, D_BDW_PLUS, NULL, NULL},
+Description: Miscellaneous Clocking / Reset Control Registers, it will
+be read/write in parity error interrupt in i915.
+Conclusion: take as F_DOM0 and initialize it with value from windows driver.
+
+{0xb110, 4, F_PT, 0, D_BDW, NULL, NULL},
+Description: N/A
+Conclusion: take as F_DOM0 and initialize it with value from windows driver.
+
+{0x4dd4, 4, F_PT, 0, D_BDW, NULL, NULL},
+Description: N/A
+Conclusion: take as F_DOM0 and initialize it with value from windows driver
+
+{0x8430, 4, F_PT, 0, D_BDW, NULL, NULL},
+Description: N/A
+Conclusion: take as F_RDR.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |   42 ++++++++++++++++++++++++++---------
+ drivers/gpu/drm/i915/vgt/mmio.c     |   12 ++++++++++
+ drivers/gpu/drm/i915/vgt/vgt.c      |    1 +
+ drivers/gpu/drm/i915/vgt/vgt.h      |    4 ++++
+ 4 files changed, 48 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 863a459..c4f600b 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -2726,6 +2726,26 @@ static bool gen8_ppat_write(struct vgt_device *vgt, unsigned int offset,
+ 	return ret;
+ }
+ 
++static bool vgt_reg_write_flash_tlb_handler(struct vgt_device *vgt, unsigned int offset,
++			void *p_data, unsigned int bytes)
++{
++	struct pgt_device *pdev = vgt->pdev;
++	bool rc = false;
++
++	if ((bytes != 4) || ((offset & (bytes - 1)) != 0)) {
++		vgt_err("VM(%d) vgt_reg_write_flash_tlb_handler: invalid offset(%x) or bytes(%d)\n",
++				vgt->vm_id, offset, bytes);
++		return false;
++	}
++
++	rc = default_mmio_write(vgt, offset, p_data, bytes);
++
++	if (vgt->pdev->gen_cache_type == GEN_CACHE_WC)
++		VGT_MMIO_WRITE(pdev, offset, __vreg(vgt, offset));
++
++	return rc;
++}
++
+ /*
+  * Track policies of all captured registers
+  *
+@@ -2794,7 +2814,7 @@ reg_attr_t vgt_reg_info_general[] = {
+ {CCID, 4, F_RDR_ADRFIX, 0xFFFFF000, D_ALL, NULL, NULL},
+ {0x12198, 4, F_RDR_ADRFIX, 0xFFFFF000, D_ALL, NULL, NULL},
+ 
+-{GEN7_CXT_SIZE, 4, F_PT, 0, D_ALL, NULL, NULL},
++{GEN7_CXT_SIZE, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+ 
+ {_REG_RCS_TAIL, 4, F_RDR, 0, D_ALL, ring_mmio_read, ring_mmio_write},
+ {_REG_RCS_HEAD, 4, F_RDR, 0, D_ALL, ring_mmio_read, ring_mmio_write},
+@@ -3429,15 +3449,15 @@ reg_attr_t vgt_reg_info_general[] = {
+ {GEN7_ERR_INT, 4, F_VIRT, 0, D_ALL, err_int_r, err_int_w},
+ {0x120010, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+ {0x9008, 4, F_DOM0, 0, D_ALL, NULL, NULL},
+-{GFX_FLSH_CNTL_GEN6, 4, F_PT, 0, D_ALL, NULL, NULL},
++{GFX_FLSH_CNTL_GEN6, 4, F_VIRT, 0, D_ALL, NULL, vgt_reg_write_flash_tlb_handler},
+ 
+ 	/* -------un-categorized regs--------- */
+ {0x3c, 4, F_DOM0, 0, D_ALL, NULL, NULL},
+ {0x860, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+ /* no definition on this. from Linux */
+-{ECOSKPD, 4, F_PT, 0, D_ALL, NULL, NULL},
+-{0x121d0, 4, F_PT, 0, D_ALL, NULL, NULL},
+-{GEN6_BLITTER_ECOSKPD, 4, F_PT, 0, D_ALL, NULL, NULL},
++{ECOSKPD, 4, F_VIRT, 0, D_ALL, NULL, NULL},
++{0x121d0, 4, F_VIRT, 0, D_ALL, NULL, NULL},
++{GEN6_BLITTER_ECOSKPD, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+ {0x41d0, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+ {GAC_ECO_BITS, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+ {_REG_2D_CG_DIS, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+@@ -3694,9 +3714,9 @@ reg_attr_t vgt_reg_info_bdw[] = {
+ 
+ 	/* -------un-categorized regs--------- */
+ /* no definition on this. from Linux */
+-{0x1c1d0, 4, F_PT, 0, D_BDW_PLUS, NULL, NULL},
+-{GEN6_MBCUNIT_SNPCR, 4, F_PT, 0, D_BDW_PLUS, NULL, NULL},
+-{GEN7_MISCCPCTL, 4, F_PT, 0, D_BDW_PLUS, NULL, NULL},
++{0x1c1d0, 4, F_VIRT, 0, D_BDW_PLUS, NULL, NULL},
++{GEN6_MBCUNIT_SNPCR, 4, F_DOM0, 0, D_BDW_PLUS, NULL, NULL},
++{GEN7_MISCCPCTL, 4, F_DOM0, 0, D_BDW_PLUS, NULL, NULL},
+ 
+ {0x1C054, 4, F_DOM0, 0, D_BDW_PLUS, NULL, NULL},
+ /* BDW */
+@@ -3801,7 +3821,7 @@ reg_attr_t vgt_reg_info_bdw[] = {
+ {0xb118, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
+ {0xb100, 4, F_RDR, 0, D_BDW, NULL, NULL},
+ {0xb10c, 4, F_RDR, 0, D_BDW, NULL, NULL},
+-{0xb110, 4, F_PT, 0, D_BDW, NULL, NULL},
++{0xb110, 4, F_DOM0, 0, D_BDW, NULL, NULL},
+ 
+ /* NON-PRIV */
+ {0x24d0, 4, F_RDR, 0, D_BDW_PLUS, NULL, vgt_write_force_nonpriv},
+@@ -3810,10 +3830,10 @@ reg_attr_t vgt_reg_info_bdw[] = {
+ 
+ 
+ {0x83a4, 4, F_RDR, 0, D_BDW, NULL, NULL},
+-{0x4dd4, 4, F_PT, 0, D_BDW_PLUS, NULL, NULL},
++{0x4dd4, 4, F_DOM0, 0, D_BDW_PLUS, NULL, NULL},
+ 
+ /* UCG */
+-{0x8430, 4, F_PT, 0, D_BDW, NULL, NULL},
++{0x8430, 4, F_RDR, 0, D_BDW, NULL, NULL},
+ 
+ {0x110000, 4, F_VIRT, 0, D_BDW_PLUS, NULL, NULL},
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/mmio.c b/drivers/gpu/drm/i915/vgt/mmio.c
+index ac1fc90..e6c2f5f 100644
+--- a/drivers/gpu/drm/i915/vgt/mmio.c
++++ b/drivers/gpu/drm/i915/vgt/mmio.c
+@@ -819,6 +819,18 @@ bool vgt_initial_mmio_setup (struct pgt_device *pdev)
+ 	pdev->initial_mmio_state[REG_INDEX(WRPLL_CTL1)] &= ~(1 << 31);
+ 	pdev->initial_mmio_state[REG_INDEX(WRPLL_CTL2)] &= ~(1 << 31);
+ 
++	pdev->initial_mmio_state[REG_INDEX(GEN6_MBCUNIT_SNPCR)] = 0x201b40;
++	VGT_MMIO_WRITE(pdev, GEN6_MBCUNIT_SNPCR, 0x201b40);
++
++	pdev->initial_mmio_state[REG_INDEX(GEN7_MISCCPCTL)] = 0x2fd;
++	VGT_MMIO_WRITE(pdev, GEN7_MISCCPCTL, 0x2fd);
++
++	pdev->initial_mmio_state[REG_INDEX(0xb110)] = 0x40000000;
++	VGT_MMIO_WRITE(pdev, 0xb110, 0x40000000);
++
++	pdev->initial_mmio_state[REG_INDEX(0x4dd4)] = 0x67f1427f;
++	VGT_MMIO_WRITE(pdev, 0x4dd4, 0x67f1427f);
++
+ 	return true;
+ }
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index fa85a3b..9b3886e 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -498,6 +498,7 @@ bool initial_phys_states(struct pgt_device *pdev)
+ 	}
+ 	printk("gttmmio_base_va: 0x%llx\n", (uint64_t)pdev->gttmmio_base_va);
+ 
++	pdev->gen_cache_type = GEN_CACHE_UC;
+ 	/*
+ 	 * From now on, the vgt driver can invoke the
+ 	 * VGT_MMIO_READ()/VGT_MMIO_WRITE()hypercalls, and any access to the
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 70c24ef..256034f 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -464,6 +464,10 @@ struct pgt_device {
+ 
+ 	u8 gen_dev_type;
+ 
++#define GEN_CACHE_UC 0U
++#define GEN_CACHE_WC 1U
++	u8 gen_cache_type;
++
+ 	u8 enable_ppgtt : 1;
+ 	u8 in_ctx_switch : 1;
+ 	u8 enable_execlist : 1;
+-- 
+1.7.10.4
+

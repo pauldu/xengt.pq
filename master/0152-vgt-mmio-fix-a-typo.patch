@@ -1,0 +1,33 @@
+From c20aed99d0ac794f3b322364257c83e71a03734e Mon Sep 17 00:00:00 2001
+From: "Niu,Bing" <bing.niu@intel.com>
+Date: Mon, 31 Aug 2015 21:44:16 -0400
+Subject: [PATCH 152/403] vgt:mmio fix a typo
+
+The typo will cause dom0 booting failure.
+
+The typo was introduced while replacing vgt macro definitions with
+i915 ones.  In order to avoid similar bugs, the binary difference
+introduced by previous patch needs to be checked more carefully. In
+order not to block others' work, commit this fix first.
+
+Signed-off-by: Niu,Bing <bing.niu@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 7599364..7986fca 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -3059,7 +3059,7 @@ reg_attr_t vgt_base_reg_info[] = {
+ {_PCH_TRANSACONF, 4, F_DPY, 0, D_ALL, NULL, transaconf_mmio_write},
+ {_PCH_TRANSBCONF, 4, F_DPY, 0, D_ALL, NULL, transaconf_mmio_write},
+ {_FDI_RXA_IIR, 4, F_DPY, 0, D_ALL, NULL, fdi_rx_iir_mmio_write},
+-{_FDI_RXA_IIR, 4, F_DPY, 0, D_ALL, NULL, fdi_rx_iir_mmio_write},
++{_FDI_RXB_IIR, 4, F_DPY, 0, D_ALL, NULL, fdi_rx_iir_mmio_write},
+ {_REG_FDI_RXC_IIR, 4, F_DPY, 0, D_GEN7PLUS, NULL, fdi_rx_iir_mmio_write},
+ {_FDI_RXA_CTL, 4, F_DPY, 0, D_ALL, NULL, update_fdi_rx_iir_status},
+ {_FDI_RXB_CTL, 4, F_DPY, 0, D_ALL, NULL, update_fdi_rx_iir_status},
+-- 
+1.7.10.4
+

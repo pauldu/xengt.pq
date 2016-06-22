@@ -1,0 +1,25 @@
+From deae9569ca5f711e6adb4194e67f1c3acc8764eb Mon Sep 17 00:00:00 2001
+From: Jike Song <jike.song@intel.com>
+Date: Fri, 10 Jul 2015 10:51:07 +0800
+Subject: [PATCH 119/403] config: remove the long-disappeared XEN_INST_DECODER
+
+Signed-off-by: Jike Song <jike.song@intel.com>
+---
+ config-3.18.0-dom0 |    1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/config-3.18.0-dom0 b/config-3.18.0-dom0
+index 7060772..ee99ee5 100644
+--- a/config-3.18.0-dom0
++++ b/config-3.18.0-dom0
+@@ -377,7 +377,6 @@ CONFIG_XEN_MAX_DOMAIN_MEMORY=500
+ CONFIG_XEN_SAVE_RESTORE=y
+ # CONFIG_XEN_DEBUG_FS is not set
+ # CONFIG_XEN_PVH is not set
+-CONFIG_XEN_INST_DECODER=y
+ # CONFIG_KVM_GUEST is not set
+ # CONFIG_PARAVIRT_TIME_ACCOUNTING is not set
+ CONFIG_PARAVIRT_CLOCK=y
+-- 
+1.7.10.4
+

@@ -1,0 +1,194 @@
+From 6277bc12c394c073336aaf7e9bc97e32771201ab Mon Sep 17 00:00:00 2001
+From: Jike Song <jike.song@intel.com>
+Date: Mon, 27 Apr 2015 16:46:54 +0800
+Subject: [PATCH 106/403] build vgt into i915
+
+So vgt is now a feature of i915, can be configured as either Y or N.
+previsous vgt related kernel params, say "xen_vgt.hvm_boot_foreground",
+should be changed to "i915.hvm_boot_foreground".
+
+Besides, we have to drop the "-Werror" CC option from vgt, since
+we are now part of i915.
+
+also remove vgt module init and exit function, embeded those function
+into i915 driver load and unload.
+
+Signed-off-by: Jike Song <jike.song@intel.com>
+Signed-off-by: Niu Bing <bing.niu@intel.com>
+
+Conflicts:
+	drivers/gpu/drm/i915/Makefile
+	drivers/gpu/drm/i915/i915_dma.c
+---
+ drivers/gpu/drm/i915/Kconfig      |    2 +-
+ drivers/gpu/drm/i915/Makefile     |   27 +++++++++++++++++++++++++--
+ drivers/gpu/drm/i915/i915_dma.c   |    5 +++++
+ drivers/gpu/drm/i915/i915_vgt.h   |    1 +
+ drivers/gpu/drm/i915/vgt/Makefile |    8 --------
+ drivers/gpu/drm/i915/vgt/vgt.c    |   31 +++++++++++--------------------
+ 6 files changed, 43 insertions(+), 31 deletions(-)
+ delete mode 100644 drivers/gpu/drm/i915/vgt/Makefile
+
+diff --git a/drivers/gpu/drm/i915/Kconfig b/drivers/gpu/drm/i915/Kconfig
+index c3827be..2b5b90e 100644
+--- a/drivers/gpu/drm/i915/Kconfig
++++ b/drivers/gpu/drm/i915/Kconfig
+@@ -49,7 +49,7 @@ config DRM_I915_PRELIMINARY_HW_SUPPORT
+ 	  If in doubt, say "N".
+ 
+ config I915_VGT
+-	tristate "iGVT-g vGT driver of i915"
++	bool "iGVT-g vGT driver of i915"
+ 	depends on DRM_I915
+ 	select IRQ_WORK
+ 	default y
+diff --git a/drivers/gpu/drm/i915/Makefile b/drivers/gpu/drm/i915/Makefile
+index 9161129..00c059c 100644
+--- a/drivers/gpu/drm/i915/Makefile
++++ b/drivers/gpu/drm/i915/Makefile
+@@ -3,7 +3,6 @@
+ # Direct Rendering Infrastructure (DRI) in XFree86 4.1.0 and higher.
+ 
+ subdir-ccflags-$(CONFIG_DRM_I915_WERROR) := -Werror
+-ccflags-$(CONFIG_I915_VGT) += -I$(src)/vgt
+ 
+ # Please keep these build lists sorted!
+ 
+@@ -101,6 +100,30 @@ i915-y += i915_vgpu.o
+ i915-y += i915_dma.o
+ 
+ obj-$(CONFIG_DRM_I915)  += i915.o
+-obj-$(CONFIG_I915_VGT)  += vgt/
++
++VGT := vgt
++ccflags-$(CONFIG_I915_VGT) += -I$(src)/$(VGT) -I$(src) -Wall
++i915-$(CONFIG_I915_VGT)  += $(VGT)/vgt.o	\
++			   $(VGT)/render.o \
++			   $(VGT)/mmio.o \
++			   $(VGT)/handlers.o \
++			   $(VGT)/interrupt.o \
++			   $(VGT)/sysfs.o \
++			   $(VGT)/display.o \
++			   $(VGT)/debugfs.o \
++			   $(VGT)/edid.o \
++			   $(VGT)/gtt.o \
++			   $(VGT)/aperture_gm.o \
++			   $(VGT)/utility.o \
++			   $(VGT)/klog.o \
++			   $(VGT)/dev.o \
++			   $(VGT)/cmd_parser.o \
++			   $(VGT)/sched.o \
++			   $(VGT)/instance.o \
++			   $(VGT)/cfg_space.o \
++			   $(VGT)/fb_decoder.o \
++			   $(VGT)/vbios.o \
++			   $(VGT)/host.o \
++			   $(VGT)/execlists.o
+ 
+ CFLAGS_i915_trace_points.o := -I$(src)
+diff --git a/drivers/gpu/drm/i915/i915_dma.c b/drivers/gpu/drm/i915/i915_dma.c
+index 4bbb037..b813085 100644
+--- a/drivers/gpu/drm/i915/i915_dma.c
++++ b/drivers/gpu/drm/i915/i915_dma.c
+@@ -1173,6 +1173,11 @@ int i915_driver_unload(struct drm_device *dev)
+ 
+ 	intel_modeset_cleanup(dev);
+ 
++	if (i915_host_mediate) {
++		i915_stop_vgt();
++		i915_host_mediate = false;
++	}
++
+ 	/*
+ 	 * free the memory space allocated for the child device
+ 	 * config parsed from VBT
+diff --git a/drivers/gpu/drm/i915/i915_vgt.h b/drivers/gpu/drm/i915/i915_vgt.h
+index 7c2283c..6487d99 100644
+--- a/drivers/gpu/drm/i915/i915_vgt.h
++++ b/drivers/gpu/drm/i915/i915_vgt.h
+@@ -32,6 +32,7 @@ struct drm_i915_private;
+ #ifdef CONFIG_I915_VGT
+ 
+ bool i915_start_vgt(struct pci_dev *);
++void i915_stop_vgt(void);
+ void i915_vgt_record_priv(struct drm_i915_private *priv);
+ bool vgt_host_read(u32, void *, int, bool, bool);
+ bool vgt_host_write(u32, void *, int, bool, bool);
+diff --git a/drivers/gpu/drm/i915/vgt/Makefile b/drivers/gpu/drm/i915/vgt/Makefile
+deleted file mode 100644
+index d5ec8bb..0000000
+--- a/drivers/gpu/drm/i915/vgt/Makefile
++++ /dev/null
+@@ -1,8 +0,0 @@
+-VGT_SOURCE := vgt.o render.o mmio.o handlers.o interrupt.o  \
+-	sysfs.o display.o debugfs.o edid.o gtt.o aperture_gm.o utility.o \
+-	klog.o dev.o cmd_parser.o sched.o instance.o cfg_space.o \
+-	fb_decoder.o vbios.o host.o execlists.o
+-
+-ccflags-y				+= -I$(src) -I$(src)/.. -Wall -Werror
+-xen_vgt-y				:= $(VGT_SOURCE)
+-obj-$(CONFIG_I915_VGT)			+= xen_vgt.o
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index cce9d91..bf37d46 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -1191,19 +1191,6 @@ bool vgt_check_host(void)
+ 	return true;
+ }
+ 
+-bool i915_start_vgt(struct pci_dev *pdev)
+-{
+-	if (!vgt_check_host())
+-		return false;
+-
+-	if (vgt_xops.initialized) {
+-		vgt_info("VGT has been intialized?\n");
+-		return false;
+-	}
+-
+-	return vgt_initialize(pdev) == 0;
+-}
+-
+ static void vgt_param_check(void)
+ {
+ 	/* TODO: hvm_display/render_owner are broken */
+@@ -1233,20 +1220,25 @@ static void vgt_param_check(void)
+ 		dom0_fence_sz = VGT_MAX_NUM_FENCES;
+ }
+ 
+-static int __init vgt_init_module(void)
++bool i915_start_vgt(struct pci_dev *pdev)
+ {
+-	if (!hypervisor_check_host())
+-		return 0;
++	if (!vgt_check_host())
++		return false;
++
++	if (vgt_xops.initialized) {
++		vgt_info("VGT has been intialized?\n");
++		return false;
++	}
+ 
+ 	vgt_param_check();
+ 
+ 	vgt_klog_init();
+ 
+-	return 0;
++	return vgt_initialize(pdev) == 0;
+ }
+-module_init(vgt_init_module);
+ 
+-static void __exit vgt_exit_module(void)
++
++void i915_stop_vgt(void)
+ {
+ 	if (!hypervisor_check_host())
+ 		return;
+@@ -1256,4 +1248,3 @@ static void __exit vgt_exit_module(void)
+ 	vgt_klog_cleanup();
+ 	return;
+ }
+-module_exit(vgt_exit_module);
+-- 
+1.7.10.4
+

@@ -1,0 +1,40 @@
+From 500dfcde3b7f78a2de9f3642019606667850b853 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Mon, 10 Aug 2015 23:52:39 +0800
+Subject: [PATCH 215/403] vgt/skl: disable surface base range check for SKL
+ temporarily
+
+As the bit definition of plane registers has been heavily changed on SKL,
+we need a new calculation fomula to keek the surface base range check
+logic work.
+
+v2:
+
+Take Kevin's comment:
+- Add TODO in range check function.
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |    6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index df11ef7f..f95d0fe 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -756,6 +756,12 @@ vgt_reg_t vgt_surf_base_range_check (struct vgt_device *vgt,
+ 	struct vgt_sprite_plane_format  sprite_plane;
+ 	struct vgt_cursor_plane_format  cursor_plane;
+ 
++	/*
++	 * TODO: Enable range check on SKL.
++	 */
++	if (IS_SKL(vgt->pdev))
++		return surf_base;
++
+ 	if (!vgt_has_pipe_enabled(vgt, pipe)) {
+ 		return 0;
+ 	}
+-- 
+1.7.10.4
+

@@ -1,0 +1,136 @@
+From 31a32c5ba47c8fff7bfd8995b8bb623ee1f3d07a Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Tue, 25 Aug 2015 17:52:00 +0800
+Subject: [PATCH 158/403] Move global variables into structures in render.c
+
+There are some perf sample related global variable definitions in
+render.c. They should be in "struct pgt_statistics"
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/debugfs.c |   28 ++++++++++------------------
+ drivers/gpu/drm/i915/vgt/perf.h    |    5 +++++
+ drivers/gpu/drm/i915/vgt/render.c  |   15 +++++----------
+ 3 files changed, 20 insertions(+), 28 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/debugfs.c b/drivers/gpu/drm/i915/vgt/debugfs.c
+index 02c40ec..96744cb 100644
+--- a/drivers/gpu/drm/i915/vgt/debugfs.c
++++ b/drivers/gpu/drm/i915/vgt/debugfs.c
+@@ -107,15 +107,6 @@ enum vgt_debugfs_entry_t
+ 	VGT_DEBUGFS_ENTRY_MAX
+ };
+ 
+-static debug_statistics_t  stat_info [] = {
+-	{ "context_switch_cycles", &context_switch_cost },
+-	{ "context_switch_num", &context_switch_num },
+-	{ "ring_idle_wait", &ring_idle_wait },
+-	{ "ring_0_busy", &ring_0_busy },
+-	{ "ring_0_idle", &ring_0_idle },
+-	{ "", NULL}
+-};
+-
+ #define debugfs_create_u64_node(name, perm, parent, u64_ptr) \
+ 	do { \
+ 		struct dentry *__dentry = debugfs_create_u64( \
+@@ -1149,15 +1140,16 @@ struct dentry *vgt_init_debugfs(struct pgt_device *pdev)
+ 	if (!temp_d)
+ 		return NULL;
+ 
+-	for ( i = 0; stat_info[i].stat != NULL; i++ ) {
+-		temp_d = debugfs_create_u64(stat_info[i].node_name,
+-			0444,
+-			d_vgt_debug,
+-			stat_info[i].stat);
+-		if (!temp_d)
+-			printk(KERN_ERR "Failed to create debugfs node %s\n",
+-				stat_info[i].node_name);
+-	}
++	debugfs_create_u64_node("context_switch_cycles", 0440, d_vgt_debug,
++				&pdev->stat.context_switch_cost);
++	debugfs_create_u64_node("context_switch_num", 0440, d_vgt_debug,
++				&pdev->stat.context_switch_num);
++	debugfs_create_u64_node("ring_idle_wait", 0440, d_vgt_debug,
++				&pdev->stat.ring_idle_wait);
++	debugfs_create_u64_node("ring_0_busy", 0440, d_vgt_debug,
++				&pdev->stat.ring_0_busy);
++	debugfs_create_u64_node("ring_0_idle", 0440, d_vgt_debug,
++				&pdev->stat.ring_0_idle);
+ 
+ 	temp_d = debugfs_create_file("reginfo", 0444, d_vgt_debug,
+ 		pdev, &reginfo_fops);
+diff --git a/drivers/gpu/drm/i915/vgt/perf.h b/drivers/gpu/drm/i915/vgt/perf.h
+index d32c30e..dbca48c 100644
+--- a/drivers/gpu/drm/i915/vgt/perf.h
++++ b/drivers/gpu/drm/i915/vgt/perf.h
+@@ -96,6 +96,11 @@ struct pgt_statistics {
+ 	u64	oos_page_steal_cnt;
+ 	u64	oos_page_attach_cnt;
+ 	u64	oos_page_detach_cnt;
++	u64	context_switch_cost;
++	u64	context_switch_num;
++	u64	ring_idle_wait;
++	u64	ring_0_idle;
++	u64	ring_0_busy;
+ };
+ 
+ typedef struct {
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index d6e19ac..b730d49 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -36,9 +36,6 @@
+  *	- need consider cache related issues, e.g. Linux/Windows may have different
+  *	 TLB invalidation mode setting, which may impact vGT's context switch logic
+  */
+-u64	context_switch_cost = 0;
+-u64	context_switch_num = 0;
+-u64	ring_idle_wait = 0;
+ 
+ int vgt_ctx_switch = 1;
+ bool vgt_validate_ctx_switch = false;
+@@ -633,9 +630,9 @@ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ 	
+ 
+ 	/* variable exported by debugfs */
+-	context_switch_num ++;
++	pdev->stat.context_switch_num ++;
+ 	t1 = vgt_get_cycles();
+-	ring_idle_wait += t1 - t0;
++	pdev->stat.ring_idle_wait += t1 - t0;
+ 
+ 	vgt_sched_update_prev(prev, t0);
+ 
+@@ -697,7 +694,7 @@ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ 	vgt_sched_update_next(next);
+ 
+ 	t2 = vgt_get_cycles();
+-	context_switch_cost += (t2-t1);
++	pdev->stat.context_switch_cost += (t2-t1);
+ out:
+ 	vgt_unlock_dev(pdev, cpu);
+ 	return true;
+@@ -736,8 +733,6 @@ err:
+ 	return false;
+ }
+ 
+-u64	ring_0_idle = 0;
+-u64	ring_0_busy = 0;
+ struct pgt_device *perf_pgt = NULL;
+ 
+ void vgt_gpu_perf_sample(void)
+@@ -746,9 +741,9 @@ void vgt_gpu_perf_sample(void)
+ 
+ 	if ( perf_pgt ) {
+ 		if ( ring_is_empty(perf_pgt, ring_id) )
+-			ring_0_idle ++;
++			perf_pgt->stat.ring_0_idle ++;
+ 		else
+-			ring_0_busy ++;
++			perf_pgt->stat.ring_0_busy ++;
+ 	}
+ }
+ 
+-- 
+1.7.10.4
+

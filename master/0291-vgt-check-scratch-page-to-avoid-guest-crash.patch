@@ -1,0 +1,30 @@
+From 1ba28d1fe9110326e6ef43f0a13cd2f7dd835463 Mon Sep 17 00:00:00 2001
+From: Min He <min.he@intel.com>
+Date: Wed, 16 Dec 2015 22:37:09 +0800
+Subject: [PATCH 291/403] vgt: check scratch page to avoid guest crash
+
+Check the scratch page mfn in ppgtt_invalidate_shadow_page_by_shadow_entry,
+This patch is to fix bug 938.
+
+Signed-off-by: Min He <min.he@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/gtt.c |    3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index 35d48be..fe5bd48 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -751,6 +751,9 @@ static bool ppgtt_invalidate_shadow_page_by_shadow_entry(struct vgt_device *vgt,
+ 	if (!gtt_type_is_pt(get_next_pt_type(e->type)))
+ 		return false;
+ 
++	if (ops->get_pfn(e) == vgt->gtt.scratch_page_mfn)
++		return true;
++
+ 	s = ppgtt_find_shadow_page(vgt, ops->get_pfn(e));
+ 	if (!s) {
+ 		vgt_err("VM %d fail to find shadow page: mfn: 0x%lx.\n",
+-- 
+1.7.10.4
+

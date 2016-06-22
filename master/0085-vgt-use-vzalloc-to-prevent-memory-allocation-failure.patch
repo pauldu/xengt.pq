@@ -1,0 +1,54 @@
+From ddf82e87f36eb6ea2c60843fee2c78f15b53509e Mon Sep 17 00:00:00 2001
+From: Yuankai Guo <yuankai.guo@intel.com>
+Date: Mon, 1 Jun 2015 18:59:21 +0800
+Subject: [PATCH 085/403] vgt: use vzalloc() to prevent memory allocation
+ failure
+
+This patch can fix bug 806.
+
+Signed-off-by: Yuankai Guo <yuankai.guo@intel.com>
+---
+ drivers/xen/xengt.c |   12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/xen/xengt.c b/drivers/xen/xengt.c
+index 2cc22f7..682b640 100644
+--- a/drivers/xen/xengt.c
++++ b/drivers/xen/xengt.c
+@@ -498,9 +498,9 @@ static int vgt_hvm_vmem_init(struct vgt_device *vgt)
+ 	nr_high_4k_bkt = (info->vmem_sz >> PAGE_SHIFT);
+ 
+ 	info->vmem_vma_low_1mb =
+-		kmalloc(sizeof(*info->vmem_vma) * nr_low_1mb_bkt, GFP_KERNEL);
++		vzalloc(sizeof(*info->vmem_vma) * nr_low_1mb_bkt);
+ 	info->vmem_vma =
+-		kmalloc(sizeof(*info->vmem_vma) * nr_high_bkt, GFP_KERNEL);
++		vzalloc(sizeof(*info->vmem_vma) * nr_high_bkt);
+ 	info->vmem_vma_4k =
+ 		vzalloc(sizeof(*info->vmem_vma) * nr_high_4k_bkt);
+ 
+@@ -566,8 +566,8 @@ static int vgt_hvm_vmem_init(struct vgt_device *vgt)
+ 
+ 	return 0;
+ err:
+-	kfree(info->vmem_vma);
+-	kfree(info->vmem_vma_low_1mb);
++	vfree(info->vmem_vma);
++	vfree(info->vmem_vma_low_1mb);
+ 	vfree(info->vmem_vma_4k);
+ 	info->vmem_vma = info->vmem_vma_low_1mb = info->vmem_vma_4k = NULL;
+ 	return -ENOMEM;
+@@ -619,8 +619,8 @@ static void vgt_vmem_destroy(struct vgt_device *vgt)
+ 			vgt->vm_id);
+ 	}
+ 
+-	kfree(info->vmem_vma);
+-	kfree(info->vmem_vma_low_1mb);
++	vfree(info->vmem_vma);
++	vfree(info->vmem_vma_low_1mb);
+ 	vfree(info->vmem_vma_4k);
+ }
+ 
+-- 
+1.7.10.4
+

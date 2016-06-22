@@ -1,0 +1,261 @@
+From 16127b193c45aedec6c9ea127797deeb16a9e5d6 Mon Sep 17 00:00:00 2001
+From: Yi Sun <yi.sun@intel.com>
+Date: Mon, 19 Oct 2015 17:12:54 +0800
+Subject: [PATCH 252/403] vgt: Remove ASSERT in handlers.c
+
+Registers' handlers should not cause Kernel panic. We should handle
+invalid data got from a VM, and return true/false to the caller.
+
+v3. Handle vgt_dpy_stat_notify's return code immediately.
+    Bug fix: remove incorrect 'return false' for 4 functions;
+    dpy_plane_mmio_write
+    pri_surf_mmio_write
+    spr_surf_mmio_write
+    cur_surf_mmio_write
+
+v2. Fix some coding style issue.
+
+Signed-off-by: Yi Sun <yi.sun@intel.com>
+
+Conflicts:
+	drivers/gpu/drm/i915/vgt/vgt.h
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |   85 ++++++++++++++++++++++++++++-------
+ drivers/gpu/drm/i915/vgt/render.h   |    3 +-
+ 2 files changed, 72 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 2ec9f3b..b28e4e4 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -37,8 +37,7 @@ static bool vgt_error_handler(struct vgt_device *vgt, unsigned int offset,
+ 	void *p_data, unsigned int bytes)
+ {
+ 	printk("vGT: reg (%x) needs special handler\n", offset);
+-	ASSERT(0);
+-	return true;
++	return false;
+ }
+ 
+ static bool vgt_not_allowed_mmio_read(struct vgt_device *vgt, unsigned int offset,
+@@ -80,7 +79,12 @@ static bool fence_mmio_read(struct vgt_device *vgt, unsigned int off,
+ 	void *p_data, unsigned int bytes)
+ {
+ 	int id;
+-	ASSERT(bytes <= 8 && !(off & (bytes - 1)));
++	if (bytes > 8 || (off & (bytes - 1))) {
++		vgt_err("vGT(%d) fence_mmio_read: invalid offset(%x) or bytes(%d)\n",
++				vgt->vgt_id, off, bytes);
++		return false;
++	};
++
+ 	id = (off - _REG_FENCE_0_LOW) >> 3;
+ 
+ 	if (id >= vgt->fence_sz) {
+@@ -96,7 +100,12 @@ static bool fence_mmio_write(struct vgt_device *vgt, unsigned int off,
+ 	void *p_data, unsigned int bytes)
+ {
+ 	int id;
+-	ASSERT(bytes <= 8 && !(off & (bytes - 1)));
++	if (bytes > 8 || (off & (bytes - 1))) {
++		vgt_err("vGT(%d) fence_mmio_write: invalid offset(%x) or bytes(%d)\n",
++				vgt->vgt_id, off, bytes);
++		return false;
++	};
++
+ 	id = (off - _REG_FENCE_0_LOW) >> 3;
+ 
+ 	if (id >= vgt->fence_sz) {
+@@ -619,11 +628,10 @@ static int mmio_to_ring_id(unsigned int reg)
+ 		ring_id = RING_BUFFER_VCS2;
+ 		break;
+ 	default:
+-		ring_id = -1;
++		ring_id = RING_ID_INVALID;
+ 		break;
+ 	}
+ 
+-	ASSERT(ring_id != -1);
+ 	return ring_id;
+ }
+ 
+@@ -633,6 +641,12 @@ static bool pp_dir_base_read(struct vgt_device *vgt, unsigned int off,
+ 	int ring_id = mmio_to_ring_id(off);
+ 	vgt_ring_ppgtt_t *v_info = &vgt->rb[ring_id].vring_ppgtt_info;
+ 
++	if (ring_id == RING_ID_INVALID) {
++		vgt_err("vGT(%d) pp_dir_base_read: invalid ring_id(-1), offset(%x)\n",
++				vgt->vgt_id, off);
++		return false;
++	};
++
+ 	*(u32 *)p_data = v_info->base;
+ 
+ 	vgt_dbg(VGT_DBG_RENDER, "<ring-%d>PP_DIR_BASE read: 0x%x\n", ring_id, v_info->base);
+@@ -647,6 +661,12 @@ static bool pp_dir_base_write(struct vgt_device *vgt, unsigned int off,
+ 	vgt_ring_ppgtt_t *v_info = &vgt->rb[ring_id].vring_ppgtt_info;
+ 	vgt_ring_ppgtt_t *s_info = &vgt->rb[ring_id].sring_ppgtt_info;
+ 
++	if (ring_id == RING_ID_INVALID) {
++		vgt_err("vGT(%d) pp_dir_base_write: invalid ring_id(-1), offset(%x)\n",
++				vgt->vgt_id, off);
++		return false;
++	};
++
+ 	vgt_dbg(VGT_DBG_RENDER, "<ring-%d> PP_DIR_BASE write: 0x%x\n", ring_id, base);
+ 
+ 	/* convert base which is in form of bit 31-16 in 64bytes cachelines,
+@@ -693,6 +713,12 @@ static bool ring_pp_mode_read(struct vgt_device *vgt, unsigned int off,
+ 	int ring_id = mmio_to_ring_id(off);
+ 	vgt_ring_ppgtt_t *v_info = &vgt->rb[ring_id].vring_ppgtt_info;
+ 
++	if (ring_id == RING_ID_INVALID) {
++		vgt_err("vGT(%d) ring_pp_mode_read: invalid ring_id(-1), offset(%x)\n",
++				vgt->vgt_id, off);
++		return false;
++	};
++
+ 	*(u32 *)p_data = v_info->mode;
+ 	vgt_dbg(VGT_DBG_RENDER, "<ring-%d>GFX_MODE read: 0x%x\n", ring_id, v_info->mode);
+ 	return true;
+@@ -703,6 +729,11 @@ static bool ring_pp_mode_write(struct vgt_device *vgt, unsigned int off,
+ {
+ 	u32 mode = *(u32 *)p_data;
+ 	int ring_id = mmio_to_ring_id(off);
++	if (ring_id == RING_ID_INVALID) {
++		vgt_err("vGT(%d) ring_pp_mode_write: invalid ring_id(-1), offset(%x)\n",
++				vgt->vgt_id, off);
++		return false;
++	};
+ 
+ 	vgt_dbg(VGT_DBG_RENDER, "<ring-%d>GFX_MODE write: 0x%x\n", ring_id, mode);
+ 
+@@ -1228,7 +1259,7 @@ bool inline vgt_legacy_map_plane_reg(struct vgt_device *vgt, unsigned int reg, u
+ 
+ 	default:
+ 		vgt_warn("try to map mmio that is not plane related! reg = %x\n", reg);
+-		ASSERT(0);
++		return false;
+ 	}
+ 
+ 	if(real_pipe == I915_MAX_PIPES)
+@@ -1303,6 +1334,7 @@ static bool dpy_plane_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ 		vgt_map_plane_reg(vgt, offset, &real_offset)) {
+ 		VGT_MMIO_WRITE(vgt->pdev, real_offset, __sreg(vgt, offset));
+ 	}
++
+ 	return true;
+ }
+ 
+@@ -1636,8 +1668,11 @@ static bool dp_aux_ch_ctl_mmio_write(struct vgt_device *vgt, unsigned int offset
+ 	enum port port_idx = OFFSET_TO_DP_AUX_PORT(offset);
+ 	struct gt_port *port = NULL;
+ 
+-	ASSERT(bytes == 4);
+-	ASSERT((offset & (bytes - 1)) == 0);
++	if ((bytes != 4) || ((offset & (bytes - 1)) != 0)) {
++		vgt_err("vGT(%d) dp_aux_ch_ctl_mmio_write: invalid offset(%x) or bytes(%d)\n",
++			vgt->vgt_id, offset, bytes);
++		return false;
++	};
+ 
+ 	reg = offset & ~(bytes - 1);
+ 
+@@ -1800,15 +1835,20 @@ static bool dp_aux_ch_ctl_mmio_write(struct vgt_device *vgt, unsigned int offset
+ 	return true;
+ }
+ 
+-static void vgt_dpy_stat_notify(struct vgt_device *vgt,
++static bool vgt_dpy_stat_notify(struct vgt_device *vgt,
+ 	enum vgt_uevent_type event)
+ {
+ 	struct pgt_device *pdev = vgt->pdev;
+ 
+-	ASSERT(event >= VGT_ENABLE_VGA && event <= VGT_DISPLAY_UNREADY);
++	if (event < VGT_ENABLE_VGA || event > VGT_DISPLAY_UNREADY) {
++		vgt_err("vGT(%d) vgt_dpy_stat_notify: invalid event(%d)\n",
++				vgt->vgt_id, event);
++		return false;
++	}
+ 
+ 	vgt_set_uevent(vgt, event);
+ 	vgt_raise_request(pdev, VGT_REQUEST_UEVENT);
++	return true;
+ }
+ 
+ static bool vga_control_r(struct vgt_device *vgt, unsigned int offset,
+@@ -1833,7 +1873,8 @@ static bool vga_control_w (struct vgt_device *vgt, unsigned int offset,
+ 
+ 	event = vga_disable ? VGT_DISABLE_VGA : VGT_ENABLE_VGA;
+ 
+-	vgt_dpy_stat_notify(vgt, event);
++	if (!vgt_dpy_stat_notify(vgt, event))
++		return false;
+ 
+ 	return true;
+ }
+@@ -2065,8 +2106,11 @@ static bool pvinfo_write(struct vgt_device *vgt, unsigned int offset,
+ 				break;
+ 			}
+ 
+-			if (event != UEVENT_MAX)
+-				 vgt_dpy_stat_notify(vgt, event);
++			if (event != UEVENT_MAX){
++				rc = vgt_dpy_stat_notify(vgt, event);
++				if (rc < 0)
++					break;
++			}
+ 
+ 			if (vgt->vm_id && event == VGT_DISPLAY_READY
+ 				&& hvm_boot_foreground == true
+@@ -2252,7 +2296,8 @@ static bool ring_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ 			vgt_err("VM(%d): Workload submission with ringbuffer "
+ 			"mode is not allowed since system is in execlist mode. "
+ 			"VM will be killed!\n", vgt->vm_id);
+-			ASSERT_VM(0, vgt);
++
++			return false;
+ 		}
+ 		return default_mmio_write(vgt, offset, p_data, bytes);
+ 	} else {
+@@ -2407,6 +2452,11 @@ static bool vgt_write_submitport(struct vgt_device *vgt, unsigned int offset,
+ 	bool rc = true;
+ 	int ring_id = mmio_to_ring_id(offset);
+ 	struct vgt_elsp_store *elsp_store = &vgt->rb[ring_id].elsp_store;
++	if (ring_id == RING_ID_INVALID) {
++		vgt_err("vGT(%d) vgt_write_submitport: invalid ring_id(-1), offset(%x)\n",
++				vgt->vgt_id, offset);
++		return false;
++	};
+ 
+ 	ASSERT((bytes == 4) && ((offset & 3) == 0));
+ 	ASSERT(elsp_store->count < ELSP_BUNDLE_NUM);
+@@ -2428,6 +2478,11 @@ static bool vgt_read_ctx_status_ptr(struct vgt_device *vgt, unsigned int offset,
+ 	void *p_data, unsigned int bytes)
+ {
+ 	int ring_id = mmio_to_ring_id(offset);
++	if (ring_id == RING_ID_INVALID) {
++		vgt_err("vGT(%d) vgt_read_ctx_status_ptr: invalid ring_id(-1), offset(%x)\n",
++				vgt->vgt_id, offset);
++		return false;
++	};
+ 
+ 	if (vgt == current_render_owner(vgt->pdev)) {
+ 		/* update HW CSB status to guest if we are render owner
+diff --git a/drivers/gpu/drm/i915/vgt/render.h b/drivers/gpu/drm/i915/vgt/render.h
+index 698eed2..637028a 100644
+--- a/drivers/gpu/drm/i915/vgt/render.h
++++ b/drivers/gpu/drm/i915/vgt/render.h
+@@ -40,7 +40,8 @@ typedef struct {
+  * Ring ID definition.
+  */
+ enum vgt_ring_id {
+-	RING_BUFFER_RCS = 0,
++	RING_ID_INVALID = -1,
++	RING_BUFFER_RCS,
+ 	RING_BUFFER_VCS,
+ 	RING_BUFFER_BCS,
+ 	RING_BUFFER_VECS,
+-- 
+1.7.10.4
+

@@ -1,0 +1,32 @@
+From c7af25ac3a724bca7fb0668f40b564dba7f654b4 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Fri, 5 Jun 2015 00:45:06 +0800
+Subject: [PATCH 093/403] vgt: change int32_t to unsigned long in
+ get_gma_bb_from_cmd()
+
+This patch can fix the recent "command parser error" after changing
+all non-privileged batch buffer to privilege in OCL patch.
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Signed-off-by: Yulei Zhang <yulei.zhang@intel.com>
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index ca59833..4ba54e7 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -1276,7 +1276,7 @@ static int vgt_handle_mi_wait_for_event(struct parser_exec_state *s)
+ static unsigned long get_gma_bb_from_cmd(struct parser_exec_state *s, int index)
+ {
+ 	unsigned long addr;
+-	int32_t gma_high, gma_low;
++	unsigned long gma_high, gma_low;
+ 	int gmadr_bytes = s->vgt->pdev->device_info.gmadr_bytes_in_cmd;
+ 
+ 	ASSERT(gmadr_bytes == 4 || gmadr_bytes == 8);
+-- 
+1.7.10.4
+

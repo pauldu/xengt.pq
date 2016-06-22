@@ -1,0 +1,300 @@
+From fd86e53f6df4e8d6af10ad7549f54f5ad0e5922f Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Tue, 22 Dec 2015 19:21:39 +0800
+Subject: [PATCH 304/403] Refactor gem vgtbuffer
+
+The gem vgtbuffer implementation was refactored including:
+1, create two sub-functions for fb decoding and gem object creation;
+2, more error checking
+3, elimilate some compile warnings
+4, copyright change (add 2015)
+---
+ drivers/gpu/drm/i915/i915_gem_vgtbuffer.c      |  198 ++++++++++--------------
+ drivers/gpu/drm/i915/vgt/legacy/handlers_hsw.c |    2 +-
+ 2 files changed, 83 insertions(+), 117 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
+index f641ef4..9f194ec 100644
+--- a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
++++ b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright © 2012 Intel Corporation
++ * Copyright © 2012 - 2015 Intel Corporation
+  *
+  * Permission is hereby granted, free of charge, to any person obtaining a
+  * copy of this software and associated documentation files (the "Software"),
+@@ -26,6 +26,8 @@
+ #include "i915_trace.h"
+ #include "intel_drv.h"
+ #include <linux/swap.h>
++
++struct vgt_device;
+ #include "fb_decoder.h"
+ 
+ static int i915_gem_vgtbuffer_get_pages(struct drm_i915_gem_object *obj)
+@@ -42,62 +44,49 @@ static const struct drm_i915_gem_object_ops i915_gem_vgtbuffer_ops = {
+ 	.put_pages = i915_gem_vgtbuffer_put_pages,
+ };
+ 
+-/**
+- * Creates a new mm object that wraps some user memory.
+- */
+-int
+-i915_gem_vgtbuffer_ioctl(struct drm_device *dev, void *data,
+-			 struct drm_file *file)
++struct drm_i915_gem_object *
++i915_gem_object_create_vgtbuffer(struct drm_device *dev,
++				 u32 start, u32 num_pages)
+ {
+-	struct drm_i915_private *dev_priv = dev->dev_private;
+-	struct drm_i915_gem_vgtbuffer *args = data;
+ 	struct drm_i915_gem_object *obj;
+-	struct vgt_primary_plane_format *p;
+-	struct vgt_cursor_plane_format *c;
+-	struct vgt_fb_format fb;
+-	struct vgt_pipe_format *pipe;
+-
+-	int ret;
+-
+-	int num_pages = 0;
+-
+-	u32 vmid;
+-	u32 handle;
++	obj = i915_gem_object_alloc(dev);
++	if (obj == NULL)
++		return NULL;
+ 
+-	uint32_t __iomem *gtt_base = dev_priv->gtt.gsm;	/* mappable_base; */
+-	uint32_t gtt_fbstart;
+-	uint32_t gtt_pte;
+-	uint32_t gtt_offset = 0;
++	drm_gem_private_object_init(dev, &obj->base, num_pages << PAGE_SHIFT);
+ 
+-	/* Allocate the new object */
+-	DRM_DEBUG_DRIVER("VGT: gem_vgtbuffer_ioctl\n");
++	i915_gem_object_init(obj, &i915_gem_vgtbuffer_ops);
++	obj->cache_level = I915_CACHE_L3_LLC;
++	obj->pages = NULL;
+ 
+-	if (!vgt_check_host())
+-		return -EPERM;
++	DRM_DEBUG_DRIVER("VGT_GEM: backing store base = 0x%x pages = 0x%x\n",
++			 start, num_pages);
++	return obj;
++}
+ 
+-	obj = i915_gem_object_alloc(dev);
+-	if (obj == NULL)
+-		return -ENOMEM;
++static int vgt_decode_information(struct drm_device *dev,
++				  struct drm_i915_gem_vgtbuffer *args)
++{
++	struct drm_i915_private *dev_priv = dev->dev_private;
++	u32 vmid = args->vmid;
++	struct vgt_fb_format fb;
++	struct vgt_primary_plane_format *p;
++	struct vgt_cursor_plane_format *c;
++	struct vgt_pipe_format *pipe;
+ 
+-	vmid = args->vmid;
+-	DRM_DEBUG_DRIVER("VGT: calling decode\n");
+-	if (vgt_decode_fb_format(vmid, &fb)) {
+-		kfree(obj);
++	if (vgt_decode_fb_format(vmid, &fb))
+ 		return -EINVAL;
+-	}
+ 
+ 	pipe = ((args->pipe_id >= I915_MAX_PIPES) ?
+ 		NULL : &fb.pipes[args->pipe_id]);
+ 
+-	/* If plane is not enabled, bail */
+ 	if (!pipe || !pipe->primary.enabled) {
+-		kfree(obj);
+-		return -ENOENT;
++		DRM_DEBUG_DRIVER("VGT_GEM: Invalid pipe_id: %d\n",
++				 args->pipe_id);
++		return -EINVAL;
+ 	}
+ 
+-	DRM_DEBUG_DRIVER("VGT: pipe = %d\n", args->pipe_id);
+ 	if ((args->plane_id) == I915_VGT_PLANE_PRIMARY) {
+-		DRM_DEBUG_DRIVER("VGT: &pipe=0x%x\n", (&pipe));
+ 		p = &pipe->primary;
+ 		args->enabled = p->enabled;
+ 		args->x_offset = p->x_offset;
+@@ -110,33 +99,7 @@ i915_gem_vgtbuffer_ioctl(struct drm_device *dev, void *data,
+ 		args->hw_format = p->hw_format;
+ 		args->drm_format = p->drm_format;
+ 		args->tiled = p->tiled;
+-		args->size = (((p->width * p->height * p->bpp) / 8) +
+-			      (PAGE_SIZE - 1)) >> PAGE_SHIFT;
+-
+-		uint64_t range = p->base >> PAGE_SHIFT;
+-		range += args->size;
+-
+-		if (range > gtt_total_entries(dev_priv->gtt)) {
+-			DRM_DEBUG_DRIVER("VGT: Invalid GTT offset or size\n");
+-			kfree(obj);
+-			return -EINVAL;
+-		}
+-
+-		if (args->flags & I915_VGTBUFFER_QUERY_ONLY) {
+-			DRM_DEBUG_DRIVER("VGT: query only: primary");
+-			kfree(obj);
+-			return 0;
+-		}
+-
+-		gtt_offset = p->base;
+-		num_pages = args->size;
+-
+-		DRM_DEBUG_DRIVER("VGT GEM: Surface GTT Offset = %x\n", p->base);
+-		obj->tiling_mode = p->tiled ? I915_TILING_X : 0;
+-		obj->stride = p->tiled ? args->stride : 0;
+-	}
+-
+-	if ((args->plane_id) == I915_VGT_PLANE_CURSOR) {
++	} else if ((args->plane_id) == I915_VGT_PLANE_CURSOR) {
+ 		c = &pipe->cursor;
+ 		args->enabled = c->enabled;
+ 		args->x_offset = c->x_hot;
+@@ -149,71 +112,74 @@ i915_gem_vgtbuffer_ioctl(struct drm_device *dev, void *data,
+ 		args->stride = c->width * (c->bpp / 8);
+ 		args->bpp = c->bpp;
+ 		args->tiled = 0;
+-		args->size = (((c->width * c->height * c->bpp) / 8) +
+-			      (PAGE_SIZE - 1)) >> PAGE_SHIFT;
+-
+-		uint64_t range = c->base >> PAGE_SHIFT;
+-		range += args->size;
+-
+-		if (range > gtt_total_entries(dev_priv->gtt)) {
+-			DRM_DEBUG_DRIVER("VGT: Invalid GTT offset or size\n");
+-			kfree(obj);
+-			return -EINVAL;
+-		}
+-
+-		if (args->flags & I915_VGTBUFFER_QUERY_ONLY) {
+-			DRM_DEBUG_DRIVER("VGT: query only: cursor");
+-			kfree(obj);
+-			return 0;
+-		}
+-
+-		gtt_offset = c->base;
+-		num_pages = args->size;
+-
+-		DRM_DEBUG_DRIVER("VGT GEM: Surface GTT Offset = %x\n", c->base);
+-		obj->tiling_mode = I915_TILING_NONE;
++	} else {
++		DRM_DEBUG_DRIVER("VGT_GEM: Invalid plaine_id: %d\n",
++				 args->plane_id);
++		return -EINVAL;
+ 	}
+ 
+-	DRM_DEBUG_DRIVER("VGT GEM: Surface size = %d\n",
+-			 (int)(num_pages * PAGE_SIZE));
+-
+-	gtt_fbstart = gtt_offset >> PAGE_SHIFT;
++	args->size = (((args->width * args->height * args->bpp) / 8) +
++		      (PAGE_SIZE - 1)) >> PAGE_SHIFT;
+ 
+-	DRM_DEBUG_DRIVER("VGT GEM: gtt start addr %x\n",
+-			 (unsigned int)gtt_base);
+-	DRM_DEBUG_DRIVER("VGT GEM: fb start %x\n", (unsigned int)gtt_fbstart);
++	if (args->start & (PAGE_SIZE - 1)) {
++		DRM_DEBUG_DRIVER("VGT_GEM: Not aligned fb start address: "
++				 "0x%x\n", args->start);
++		return -EINVAL;
++	}
+ 
+-	gtt_base += gtt_fbstart;
++	if (((args->start >> PAGE_SHIFT) + args->size) >
++	    gtt_total_entries(dev_priv->gtt)) {
++		DRM_DEBUG_DRIVER("VGT: Invalid GTT offset or size\n");
++		return -EINVAL;
++	}
++	return 0;
++}
+ 
+-	DRM_DEBUG_DRIVER("VGT GEM: gtt + fb start  %x\n", (uint32_t) gtt_base);
++/**
++ * Creates a new mm object that wraps some user memory.
++ */
++int
++i915_gem_vgtbuffer_ioctl(struct drm_device *dev, void *data,
++			 struct drm_file *file)
++{
++	struct drm_i915_gem_vgtbuffer *args = data;
++	struct drm_i915_gem_object *obj;
++	u32 handle;
++	int ret;
+ 
+-	DRM_DEBUG_DRIVER("VGT: gtt_base=0x%x\n", gtt_base);
++	if (INTEL_INFO(dev)->gen < 7)
++		return -EPERM;
+ 
+-	gtt_pte = readl(gtt_base);
++	if (!vgt_check_host())
++		return -EPERM;
+ 
+-	DRM_DEBUG_DRIVER("VGT GEM: pte  %x\n", (uint32_t) gtt_pte);
+-	DRM_DEBUG_DRIVER("VGT GEM: num_pages from fb decode=%d  \n",
+-			 (uint32_t) num_pages);
++	ret = vgt_decode_information(dev, args);
++	if (ret)
++		return ret;
+ 
+-	drm_gem_private_object_init(dev, &obj->base, num_pages * PAGE_SIZE);
++	if (args->flags & I915_VGTBUFFER_QUERY_ONLY)
++		return 0;
+ 
+-	i915_gem_object_init(obj, &i915_gem_vgtbuffer_ops);
+-	obj->cache_level = I915_CACHE_L3_LLC;
+-	obj->pages = NULL;
++	obj = i915_gem_object_create_vgtbuffer(dev, args->start, args->size);
++	if (!obj) {
++		DRM_DEBUG_DRIVER("VGT_GEM: Failed to create gem object"
++					" for VM FB!\n");
++		return -EINVAL;
++	}
+ 
+-	struct i915_address_space *ggtt_vm = &dev_priv->gtt.base;
+-	struct i915_vma *vma = i915_gem_obj_lookup_or_create_vma(obj, ggtt_vm);
+-	vma->node.start = gtt_offset;
++	obj->tiling_mode = args->tiled ? I915_TILING_X : I915_TILING_NONE;
++	obj->stride = args->tiled ? args->stride : 0;
+ 
+ 	ret = drm_gem_handle_create(file, &obj->base, &handle);
+-	/* drop reference from allocate - handle holds it now */
+-	drm_gem_object_unreference(&obj->base);
+ 	if (ret) {
+-		kfree(obj);
+-		i915_gem_vma_destroy(vma);
++		/* TODO: Double confirm the error handling path */
++		i915_gem_object_free(obj);
+ 		return ret;
+ 	}
+ 
++	/* drop reference from allocate - handle holds it now */
++	drm_gem_object_unreference(&obj->base);
++
+ 	args->handle = handle;
+ 	return 0;
+ }
+diff --git a/drivers/gpu/drm/i915/vgt/legacy/handlers_hsw.c b/drivers/gpu/drm/i915/vgt/legacy/handlers_hsw.c
+index d8d3e19..35062e7 100644
+--- a/drivers/gpu/drm/i915/vgt/legacy/handlers_hsw.c
++++ b/drivers/gpu/drm/i915/vgt/legacy/handlers_hsw.c
+@@ -25,8 +25,8 @@
+ #include <linux/delay.h>
+ #include <linux/acpi.h>
+ 
+-#include "fb_decoder.h"
+ #include "vgt.h"
++#include "fb_decoder.h"
+ 
+ static bool dpy_plane_mmio_read(struct vgt_device *vgt, unsigned int offset,
+ 			void *p_data, unsigned int bytes)
+-- 
+1.7.10.4
+

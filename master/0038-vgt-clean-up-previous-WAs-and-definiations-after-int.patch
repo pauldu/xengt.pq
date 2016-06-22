@@ -1,0 +1,65 @@
+From 1213e19f4f61b20efb51529339be82acfffd1f54 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Mon, 13 Apr 2015 22:30:50 +0800
+Subject: [PATCH 038/403] vgt: clean up previous WAs and definiations after
+ introducing i915 WAs.
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/intel_pm.c     |    8 --------
+ drivers/gpu/drm/i915/vgt/handlers.c |    2 +-
+ drivers/gpu/drm/i915/vgt/render.c   |    3 ---
+ 3 files changed, 1 insertion(+), 12 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/intel_pm.c b/drivers/gpu/drm/i915/intel_pm.c
+index ac26036..78d40d4 100644
+--- a/drivers/gpu/drm/i915/intel_pm.c
++++ b/drivers/gpu/drm/i915/intel_pm.c
+@@ -6513,14 +6513,6 @@ static void broadwell_init_clock_gating(struct drm_device *dev)
+ 	 */
+ 	I915_WRITE(HSW_GTT_CACHE_EN, GTT_CACHE_EN_ALL);
+ 
+-	I915_WRITE(GEN7_ROW_CHICKEN2,
+-			_MASKED_BIT_ENABLE(DOP_CLOCK_GATING_DISABLE));
+-
+-	I915_WRITE(GEN6_UCGCTL1, I915_READ(GEN6_UCGCTL1) |
+-			GEN6_EU_TCUNIT_CLOCK_GATE_DISABLE);
+-
+-	I915_WRITE(0x20e4, _MASKED_BIT_ENABLE(0x2));
+-
+ 	lpt_init_clock_gating(dev);
+ }
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 0f91755..f2fc5bf 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -3523,7 +3523,7 @@ reg_attr_t vgt_base_reg_info[] = {
+ {0x66c00, 4, F_VIRT, 0, D_BDW_PLUS, NULL, NULL},
+ {0x66c04, 4, F_VIRT, 0, D_BDW, NULL, NULL},
+ 
+-{0x4024, 4, F_VIRT, 0, D_BDW, NULL, NULL},
++{0x4024, 4, F_DOM0, 0, D_BDW, NULL, NULL},
+ 
+ {0x9134, 4, F_VIRT, 0, D_BDW, NULL, NULL},
+ {0x9138, 4, F_VIRT, 0, D_BDW, NULL, NULL},
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index 5668e2a..c07496b 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -1699,12 +1699,9 @@ static struct reg_mask_t gen8_rcs_reset_mmio[] = {
+ 	{0x7008, 1},
+ 
+ 	{0x7000, 1},
+-	{0x20e4, 1},
+ 
+ 	{0x7010, 1},
+ 
+-	{0xb118, 0},
+-	{0xb100, 0},
+ 	{0xb110, 0},
+ 	{0xb10c, 0},
+ 
+-- 
+1.7.10.4
+

@@ -1,0 +1,137 @@
+From 4e92927d539323bb62b37f9968603f2d0258c4da Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Tue, 25 Aug 2015 17:55:47 +0800
+Subject: [PATCH 159/403] Move perf sample from render.c to utility.c
+
+No functional changes
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/debugfs.c |    1 -
+ drivers/gpu/drm/i915/vgt/render.c  |   25 -------------------------
+ drivers/gpu/drm/i915/vgt/utility.c |   16 ++++++++++++++++
+ drivers/gpu/drm/i915/vgt/vgt.h     |   18 ++++++++++++++----
+ 4 files changed, 30 insertions(+), 30 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/debugfs.c b/drivers/gpu/drm/i915/vgt/debugfs.c
+index 96744cb..9da14a6 100644
+--- a/drivers/gpu/drm/i915/vgt/debugfs.c
++++ b/drivers/gpu/drm/i915/vgt/debugfs.c
+@@ -1104,7 +1104,6 @@ static const struct file_operations vgt_el_context_fops = {
+ struct dentry *vgt_init_debugfs(struct pgt_device *pdev)
+ {
+ 	struct dentry *temp_d;
+-	int   i;
+ 
+ 	if (!d_vgt_debug) {
+ 		d_vgt_debug = debugfs_create_dir("vgt", NULL);
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index b730d49..9ee409d 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -52,15 +52,6 @@ void vgt_toggle_ctx_switch(bool enable)
+ 		vgt_ctx_switch = 0;
+ }
+ 
+-static bool ring_is_empty(struct pgt_device *pdev,
+-	int id)
+-{
+-	if ( is_ring_enabled(pdev, id) && !is_ring_empty(pdev, id) )
+-		return false;
+-
+-	return true;
+-}
+-
+ static bool ring_is_xxx(struct pgt_device *pdev,
+ 	int id)
+ {
+@@ -732,19 +723,3 @@ err:
+ 
+ 	return false;
+ }
+-
+-struct pgt_device *perf_pgt = NULL;
+-
+-void vgt_gpu_perf_sample(void)
+-{
+-	int	ring_id = 0;
+-
+-	if ( perf_pgt ) {
+-		if ( ring_is_empty(perf_pgt, ring_id) )
+-			perf_pgt->stat.ring_0_idle ++;
+-		else
+-			perf_pgt->stat.ring_0_busy ++;
+-	}
+-}
+-
+-EXPORT_SYMBOL_GPL(vgt_gpu_perf_sample);
+diff --git a/drivers/gpu/drm/i915/vgt/utility.c b/drivers/gpu/drm/i915/vgt/utility.c
+index 06d5379..f40e780 100644
+--- a/drivers/gpu/drm/i915/vgt/utility.c
++++ b/drivers/gpu/drm/i915/vgt/utility.c
+@@ -1323,3 +1323,19 @@ void dump_el_status(struct pgt_device *pdev)
+ 		}
+ 	}
+ }
++
++struct pgt_device *perf_pgt = NULL;
++
++void vgt_gpu_perf_sample(void)
++{
++	int	ring_id = 0;
++
++	if ( perf_pgt ) {
++		if ( ring_is_empty(perf_pgt, ring_id) )
++			perf_pgt->stat.ring_0_idle ++;
++		else
++			perf_pgt->stat.ring_0_busy ++;
++	}
++}
++
++EXPORT_SYMBOL_GPL(vgt_gpu_perf_sample);
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 6eeef27..0111291 100755
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -1392,6 +1392,11 @@ static inline enum vgt_event_type vgt_ring_id_to_ctx_event(enum vgt_ring_id ring
+ 	return event;
+ }
+ 
++static inline bool is_ring_enabled (struct pgt_device *pdev, int ring_id)
++{
++	return (VGT_MMIO_READ(pdev, RB_CTL(pdev, ring_id)) & 1);	/* bit 0: enable/disable RB */
++}
++
+ static inline bool is_ring_empty(struct pgt_device *pdev, int ring_id)
+ {
+ 	if (pdev->enable_execlist) {
+@@ -1417,6 +1422,15 @@ static inline bool is_ring_empty(struct pgt_device *pdev, int ring_id)
+ 	}
+ }
+ 
++static inline bool ring_is_empty(struct pgt_device *pdev,
++	int id)
++{
++	if ( is_ring_enabled(pdev, id) && !is_ring_empty(pdev, id) )
++		return false;
++
++	return true;
++}
++
+ #define VGT_POST_READ(pdev, reg)		\
+ 	do {					\
+ 		vgt_reg_t val;			\
+@@ -1439,10 +1453,6 @@ static inline bool is_ring_empty(struct pgt_device *pdev, int ring_id)
+ #define VGT_WRITE_START(pdev, id, val) VGT_MMIO_WRITE(pdev, RB_START(pdev, id), val)
+ #define VGT_POST_READ_START(pdev, id)	VGT_POST_READ(pdev, RB_START(pdev,id))
+ 
+-static inline bool is_ring_enabled (struct pgt_device *pdev, int ring_id)
+-{
+-	return (VGT_MMIO_READ(pdev, RB_CTL(pdev, ring_id)) & 1);	/* bit 0: enable/disable RB */
+-}
+ extern void vgt_ring_init(struct pgt_device *pdev, int id);
+ 
+ static inline u32 vgt_read_gtt(struct pgt_device *pdev, u32 index)
+-- 
+1.7.10.4
+

@@ -1,0 +1,35 @@
+From bd5bb3dd7db48df3d2ee857d0c15be0d9ea305c4 Mon Sep 17 00:00:00 2001
+From: Yi Sun <yi.sun@intel.com>
+Date: Wed, 2 Mar 2016 10:45:35 +0800
+Subject: [PATCH 372/403] Replace drm_gem_object_unreference with the unlocked
+ one
+
+Function i915_gem_vgtbuffer_ioctl called drm_gem_object_unreference which
+need hold lock dev->struct_mutex. It always dumps warning message each
+time we call this ioctl.
+Since it's not necessary to hold this lock, we replace it with
+drm_gem_object_unreference_unlocked.
+
+This can fix bug #990
+
+Signed-off-by: Yi Sun <yi.sun@intel.com>
+---
+ drivers/gpu/drm/i915/i915_gem_vgtbuffer.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
+index 37e7296..207c9ac 100644
+--- a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
++++ b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
+@@ -252,7 +252,7 @@ i915_gem_vgtbuffer_ioctl(struct drm_device *dev, void *data,
+ 	}
+ 
+ 	/* drop reference from allocate - handle holds it now */
+-	drm_gem_object_unreference(&obj->base);
++	drm_gem_object_unreference_unlocked(&obj->base);
+ 
+ 	args->handle = handle;
+ 	return 0;
+-- 
+1.7.10.4
+

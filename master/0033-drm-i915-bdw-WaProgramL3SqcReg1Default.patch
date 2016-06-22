@@ -1,0 +1,36 @@
+From 353d259207d877a72f90c69bf528569e89b123c5 Mon Sep 17 00:00:00 2001
+From: Rodrigo Vivi <rodrigo.vivi@intel.com>
+Date: Tue, 30 Sep 2014 08:11:17 -0700
+Subject: [PATCH 033/403] drm/i915/bdw: WaProgramL3SqcReg1Default
+
+Program the default initial value of the L3SqcReg1 on BDW for performance
+
+v2: Default confirmed and using intel_ring_emit_wa as Mika pointed out.
+
+v3: Spec shows now a different value. It tells us to set to 0x784000
+    instead the 0x610000 that is there already.
+    Also rebased after a long time so using WA_WRITE now.
+
+Cc: Mika Kuoppala <mika.kuoppala@intel.com>
+Signed-off-by: Rodrigo Vivi <rodrigo.vivi@intel.com>
+---
+ drivers/gpu/drm/i915/intel_ringbuffer.c |    3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/intel_ringbuffer.c b/drivers/gpu/drm/i915/intel_ringbuffer.c
+index d9daca0..cbb3538 100644
+--- a/drivers/gpu/drm/i915/intel_ringbuffer.c
++++ b/drivers/gpu/drm/i915/intel_ringbuffer.c
+@@ -853,6 +853,9 @@ static int gen8_init_workarounds(struct intel_engine_cs *ring)
+ 			    GEN6_WIZ_HASHING_MASK,
+ 			    GEN6_WIZ_HASHING_16x4);
+ 
++	/* WaProgramL3SqcReg1Default:bdw */
++	WA_WRITE(GEN8_L3SQCREG1, BDW_WA_L3SQCREG1_DEFAULT);
++
+ 	return 0;
+ }
+ 
+-- 
+1.7.10.4
+

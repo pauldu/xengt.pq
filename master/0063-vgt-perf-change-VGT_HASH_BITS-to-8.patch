@@ -1,0 +1,26 @@
+From 359c29aa7ea691480234a7d0305e64fb8beb8dcc Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Wed, 29 Apr 2015 22:24:50 +0800
+Subject: [PATCH 063/403] vgt: perf: change VGT_HASH_BITS to 8
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/vgt.h |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 13ff45c..acc4ba9 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -429,7 +429,7 @@ struct vgt_mmio_entry {
+ 	vgt_mmio_write	write;
+ };
+ 
+-#define	VGT_HASH_BITS	6
++#define	VGT_HASH_BITS	8
+ 
+ /*
+  * Ring ID definition.
+-- 
+1.7.10.4
+

@@ -1,0 +1,32 @@
+From e93dc27081771ddec82c9c5e4165501b05152cda Mon Sep 17 00:00:00 2001
+From: Jike Song <jike.song@intel.com>
+Date: Thu, 21 Jan 2016 23:10:27 +0800
+Subject: [PATCH 317/403] config: turn vfio on
+
+Signed-off-by: Jike Song <jike.song@intel.com>
+---
+ config-4.3.0-host |    8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/config-4.3.0-host b/config-4.3.0-host
+index 009a811..b64d335 100644
+--- a/config-4.3.0-host
++++ b/config-4.3.0-host
+@@ -3450,7 +3450,13 @@ CONFIG_UIO_CIF=m
+ # CONFIG_UIO_NETX is not set
+ # CONFIG_UIO_PRUSS is not set
+ # CONFIG_UIO_MF624 is not set
+-# CONFIG_VFIO is not set
++CONFIG_VFIO_IOMMU_TYPE1=m
++CONFIG_VFIO_VIRQFD=m
++CONFIG_VFIO=m
++CONFIG_VFIO_PCI=m
++# CONFIG_VFIO_PCI_VGA is not set
++CONFIG_VFIO_PCI_MMAP=y
++CONFIG_VFIO_PCI_INTX=y
+ # CONFIG_VIRT_DRIVERS is not set
+ 
+ #
+-- 
+1.7.10.4
+

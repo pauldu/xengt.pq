@@ -1,0 +1,84 @@
+From d8117077eca9b30877a5b9728da7a50867f6165c Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Mon, 16 Nov 2015 09:01:52 +0800
+Subject: [PATCH 277/403] send cs interrupts only to the render owner
+
+Pei found that redundant PIPE_CONTROL interrupt may cause problems, if the
+guest driver assumes that new interrupt always means new workload execution
+progress.
+
+V2:
+ - Add some missing irqs (from kevin)
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/interrupt.c |   18 ++++++++++++++++++
+ drivers/gpu/drm/i915/vgt/interrupt.h |    1 +
+ 2 files changed, 19 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/interrupt.c b/drivers/gpu/drm/i915/vgt/interrupt.c
+index f00d84f..f5de788 100644
+--- a/drivers/gpu/drm/i915/vgt/interrupt.c
++++ b/drivers/gpu/drm/i915/vgt/interrupt.c
+@@ -1833,6 +1833,9 @@ void vgt_forward_events(struct pgt_device *pdev)
+ 			virtual_event = translate_physical_event(vgt_dom0, event);
+ 			handler(hstate, virtual_event, vgt_dom0);
+ 			break;
++		case EVENT_FW_RDR:
++			handler(hstate, event, current_render_owner(pdev));
++			break;
+ 		case EVENT_FW_NONE:
+ 		default:
+ 			break;
+@@ -1997,6 +2000,8 @@ static void vgt_init_events(
+ 	((h)->events[e].policy = EVENT_FW_DOM0)
+ #define SET_POLICY_NONE(h, e)	\
+ 	((h)->events[e].policy = EVENT_FW_NONE)
++#define SET_POLICY_RDR(h, e)	\
++	((h)->events[e].policy = EVENT_FW_RDR)
+ #define SET_P_HANDLER(s, e, h)	\
+ 	((s)->events[e].p_handler = h)
+ #define SET_V_HANDLER(s, e, h)	\
+@@ -2042,6 +2047,7 @@ static void vgt_init_events(
+ 	SET_V_HANDLER(hstate, RCS_PIPE_CONTROL, vgt_handle_ring_empty_notify_virt);
+ 	SET_V_HANDLER(hstate, VCS_MI_FLUSH_DW, vgt_handle_ring_empty_notify_virt);
+ 	SET_V_HANDLER(hstate, VECS_MI_FLUSH_DW, vgt_handle_ring_empty_notify_virt);
++
+ 	/*for render related*/
+ 	SET_POLICY_ALL(hstate,RCS_MI_USER_INTERRUPT);
+ 	SET_POLICY_ALL(hstate,RCS_PIPE_CONTROL);
+@@ -2062,7 +2068,19 @@ static void vgt_init_events(
+ 	SET_POLICY_ALL(hstate,VECS_MI_USER_INTERRUPT);
+ 	SET_POLICY_ALL(hstate,VECS_MI_FLUSH_DW);
+ 	SET_POLICY_ALL(hstate,VECS_AS_CONTEXT_SWITCH);
++
++	if (IS_BDW(hstate->pdev) || IS_SKL(hstate->pdev)) {
++		SET_POLICY_RDR(hstate, RCS_MI_USER_INTERRUPT);
++		SET_POLICY_RDR(hstate, VCS_MI_USER_INTERRUPT);
++		SET_POLICY_RDR(hstate, BCS_MI_USER_INTERRUPT);
++		SET_POLICY_RDR(hstate, VECS_MI_USER_INTERRUPT);
++		SET_POLICY_RDR(hstate, RCS_PIPE_CONTROL);
++		SET_POLICY_RDR(hstate, BCS_MI_FLUSH_DW);
++		SET_POLICY_RDR(hstate, VCS_MI_FLUSH_DW);
++		SET_POLICY_RDR(hstate, VECS_MI_FLUSH_DW);
++	}
+ }
++
+ static enum hrtimer_restart vgt_dpy_timer_fn(struct hrtimer *data)
+ {
+ 	struct vgt_emul_timer *dpy_timer;
+diff --git a/drivers/gpu/drm/i915/vgt/interrupt.h b/drivers/gpu/drm/i915/vgt/interrupt.h
+index b39ff87..c1c190d 100644
+--- a/drivers/gpu/drm/i915/vgt/interrupt.h
++++ b/drivers/gpu/drm/i915/vgt/interrupt.h
+@@ -203,6 +203,7 @@ struct vgt_irq_info {
+ #define	EVENT_FW_ALL 0	/* event forwarded to all instances */
+ #define	EVENT_FW_DOM0 1	/* event forwarded to dom0 only */
+ #define	EVENT_FW_NONE 2	/* no forward */
++#define	EVENT_FW_RDR  3	/* event forward to render owner only */
+ 
+ /* the handoff state from p-event to v-event */
+ union vgt_event_state {
+-- 
+1.7.10.4
+

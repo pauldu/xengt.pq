@@ -1,0 +1,31 @@
+From bb372b985cbfa975f7be5cd4327bd653220013ad Mon Sep 17 00:00:00 2001
+From: Rodrigo Vivi <rodrigo.vivi@intel.com>
+Date: Wed, 1 Apr 2015 15:29:59 -0700
+Subject: [PATCH 037/403] drm/i915/bdw: Remove
+ WaSwitchSolVfFArbitrationPriority
+
+Nothing suggest we still need this W/a. So let's remove it.
+
+Signed-off-by: Rodrigo Vivi <rodrigo.vivi@intel.com>
+---
+ drivers/gpu/drm/i915/intel_pm.c |    4 +---
+ 1 file changed, 1 insertion(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/intel_pm.c b/drivers/gpu/drm/i915/intel_pm.c
+index 4f12510..ac26036 100644
+--- a/drivers/gpu/drm/i915/intel_pm.c
++++ b/drivers/gpu/drm/i915/intel_pm.c
+@@ -6471,9 +6471,7 @@ static void broadwell_init_clock_gating(struct drm_device *dev)
+ 
+ 	ilk_init_lp_watermarks(dev);
+ 
+-	/* WaSwitchSolVfFArbitrationPriority:bdw */
+-	I915_WRITE(GAM_ECOCHK, I915_READ(GAM_ECOCHK) | HSW_ECOCHK_ARB_PRIO_SOL |
+-		   ECOCHK_PPGTT_WB_HSW);
++	I915_WRITE(GAM_ECOCHK, I915_READ(GAM_ECOCHK) | ECOCHK_PPGTT_WB_HSW);
+ 
+ 	/* WaPsrDPAMaskVBlankInSRD:bdw */
+ 	I915_WRITE(CHICKEN_PAR1_1,
+-- 
+1.7.10.4
+

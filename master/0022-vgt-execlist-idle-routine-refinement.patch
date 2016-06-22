@@ -1,0 +1,84 @@
+From c8624cf78efb25937079046888bab8cd80e27c14 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Tue, 24 Mar 2015 23:55:19 +0800
+Subject: [PATCH 022/403] vgt: execlist idle routine refinement.
+
+GPU doesn't always treat same context descriptor write as lite restore
+due to the timing of ELSP write. And it can be observed that sometimes
+GPU will generate only one "context-completed and active-to-idle" CSB
+after writing same context descriptor instead of two CSB: "preempted and
+lite-restore", "contex-completed and active-to-idle". This will only
+retire one VGT execlist slot and leave another submitted slot unhandled,
+which will block context switch sequence in execlist idle routine.
+While at this time, new workload from current render owner will not be
+submitted, as context switch is requested. So a TDR happened.
+
+We refine the execlist idle routine according to HW state now. And
+also clear the vgt execlist slot if HW is truly idle and there is
+no pending CSBs need to be emulated.
+
+This patch can fix bug# 717 and bug# 729.
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |   21 +++++++++++----------
+ drivers/gpu/drm/i915/vgt/render.c    |    1 +
+ 2 files changed, 12 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 1c868b4..7e48327 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -1481,11 +1481,11 @@ void vgt_kick_off_execlists(struct vgt_device *vgt)
+ 
+ bool vgt_idle_execlist(struct pgt_device *pdev, enum vgt_ring_id ring_id)
+ {
+-	int i;
+ 	uint32_t el_ring_base;
+ 	uint32_t el_status_reg;
+ 	struct execlist_status_format el_status;
+-	struct vgt_device *vgt = current_render_owner(pdev);
++	uint32_t ctx_ptr_reg;
++	struct ctx_st_ptr_format ctx_st_ptr;
+ 
+ 	el_ring_base = vgt_ring_id_to_EL_base(ring_id);
+ 	el_status_reg = el_ring_base + _EL_OFFSET_STATUS;
+@@ -1495,14 +1495,15 @@ bool vgt_idle_execlist(struct pgt_device *pdev, enum vgt_ring_id ring_id)
+ 		return false;
+ 	}
+ 
+-	for (i = 0; i < EL_QUEUE_SLOT_NUM; ++ i) {
+-		struct vgt_exec_list *el_slot = &vgt_el_queue_slot(vgt, ring_id, i);
+-		if (el_slot->status == EL_SUBMITTED) {
+-			vgt_dbg(VGT_DBG_RENDER, "VM-%d: EL_SLOT[%d] is still running!\n",
+-				vgt->vm_id, i);
+-			return false;
+-		}
+-	}
++	ctx_ptr_reg = el_ring_mmio(ring_id, _EL_OFFSET_STATUS_PTR);
++	ctx_st_ptr.dw = VGT_MMIO_READ(pdev, ctx_ptr_reg);
++
++	if (ctx_st_ptr.status_buf_write_ptr == DEFAULT_INV_SR_PTR
++			|| ctx_st_ptr.status_buf_read_ptr == DEFAULT_INV_SR_PTR)
++		return true;
++
++	if (ctx_st_ptr.status_buf_read_ptr != ctx_st_ptr.status_buf_write_ptr)
++		return false;
+ 
+ 	return true;
+ }
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index 4db5600..11396be 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -1891,6 +1891,7 @@ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ 				vgt_force_wake_put();
+ 				goto out;
+ 			}
++			vgt_clear_submitted_el_record(pdev, ring_id);
+ 		}
+ 	}
+ 
+-- 
+1.7.10.4
+

@@ -1,0 +1,20 @@
+diff --git a/drivers/gpu/drm/Makefile b/drivers/gpu/drm/Makefile
+index ced3779..ca26f3b 100644
+--- a/drivers/gpu/drm/Makefile
++++ b/drivers/gpu/drm/Makefile
+@@ -23,6 +23,7 @@ drm-$(CONFIG_PCI) += ati_pcigart.o
+ drm-$(CONFIG_DRM_PANEL) += drm_panel.o
+ drm-$(CONFIG_OF) += drm_of.o
+ drm-$(CONFIG_AGP) += drm_agpsupport.o
++drm-$(CONFIG_I915_VGT)	+= i915/vgt/ops.o
+ 
+ drm-y += $(drm-m)
+ 
+@@ -47,7 +48,6 @@ obj-$(CONFIG_DRM_AMDGPU)+= amd/amdgpu/
+ obj-$(CONFIG_DRM_MGA)	+= mga/
+ obj-$(CONFIG_DRM_I810)	+= i810/
+ obj-$(CONFIG_DRM_I915)  += i915/
+-obj-$(CONFIG_I915_VGT)	+= i915/vgt/ops.o
+ obj-$(CONFIG_DRM_MGAG200) += mgag200/
+ obj-$(CONFIG_DRM_VC4)  += vc4/
+ obj-$(CONFIG_DRM_CIRRUS_QEMU) += cirrus/

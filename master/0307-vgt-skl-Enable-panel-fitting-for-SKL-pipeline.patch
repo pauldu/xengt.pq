@@ -1,0 +1,142 @@
+From 512297e04c9d2e08741c1b04e7d735fd4ed0b5fd Mon Sep 17 00:00:00 2001
+From: "Zheng, Xiao" <xiao.zheng@intel.com>
+Date: Mon, 4 Jan 2016 16:54:46 +0800
+Subject: [PATCH 307/403] vgt/skl: Enable panel fitting for SKL pipeline
+
+Panel fitting for SKL is by default enabled.
+Scaler[0] is used and be configured for PIPE instead of PRI_PLANE
+
+Signed-off-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/display.c  |   35 ++++++++++++++++++++++++------
+ drivers/gpu/drm/i915/vgt/handlers.c |   40 +++++++++++++++++------------------
+ drivers/gpu/drm/i915/vgt/vgt.c      |    1 -
+ 3 files changed, 48 insertions(+), 28 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/display.c b/drivers/gpu/drm/i915/vgt/display.c
+index 18e6f3b..b79e0e9 100644
+--- a/drivers/gpu/drm/i915/vgt/display.c
++++ b/drivers/gpu/drm/i915/vgt/display.c
+@@ -731,8 +731,14 @@ bool set_panel_fitting(struct vgt_device *vgt, enum pipe pipe)
+ 		when the pipe horizontal source size is greater than 2048 pixels*/
+ 	if (IS_HSW(vgt->pdev))
+ 		pf_ctl =  PF_FILTER_MED_3x3 | PF_PIPE_SEL_IVB(real_pipe);
+-	else /*after BDW the panel fitter is on the pipe, no need to assign.*/
++	else if (IS_BDW(vgt->pdev)) /*after BDW the panel fitter is on the pipe, no need to assign.*/
+ 		pf_ctl =  PF_FILTER_MED_3x3;
++	else {/* SKL+ */
++		pf_ctl = PS_SCALER_MODE_DYN | PS_FILTER_MEDIUM;
++		/* enable pipe scaler, disable plane scaler */
++		pf_ctl &= ~PS_PLANE_SEL_MASK;
++	}
++
+ 
+ 	/*enable panel fitting only when the source mode does not eqaul to the target mode*/
+ 	if (src_width != target_width || src_height != target_height ) {
+@@ -745,6 +751,7 @@ bool set_panel_fitting(struct vgt_device *vgt, enum pipe pipe)
+ 
+ 	/* we need to increase Water Mark in down scaling case */
+ 	if (src_width > target_width || src_height > target_height) {
++		/* Test shows SKL look do not need re-calc WM for pipe during down-scaling */
+ 		wm_reg = real_pipe == PIPE_A ? WM0_PIPEA_ILK :
+ 			(real_pipe == PIPE_B ? WM0_PIPEB_ILK : WM0_PIPEC_IVB);
+ 		plane_wm = (__vreg(vgt_dom0, wm_reg) & _REGBIT_WM0_PIPE_PLANE_MASK)
+@@ -765,12 +772,26 @@ bool set_panel_fitting(struct vgt_device *vgt, enum pipe pipe)
+ 		VGT_MMIO_WRITE(vgt->pdev, wm_reg, wm_value);
+ 	}
+ 
+-	VGT_MMIO_WRITE(vgt->pdev, VGT_PIPESRC(real_pipe),  ((src_width -1) << 16) | (src_height - 1));
+-	VGT_MMIO_WRITE(vgt->pdev, PF_WIN_POS(real_pipe), 0);
+-	VGT_MMIO_WRITE(vgt->pdev, PF_CTL(real_pipe), pf_ctl);
+-	/* PF ctrl is a double buffered registers and gets updated when window
+-	 size registered is updated*/
+-	VGT_MMIO_WRITE(vgt->pdev, PF_WIN_SZ(real_pipe),  (target_width << 16) | target_height);
++	if (IS_SKLPLUS(vgt->pdev)) {
++		VGT_MMIO_WRITE(vgt->pdev, VGT_PIPESRC(real_pipe),  ((src_width -1) << 16) | (src_height - 1));
++		VGT_MMIO_WRITE(vgt->pdev, PLANE_SIZE(real_pipe, 0), ((src_height-1) << 16) | (src_width-1));
++		VGT_MMIO_WRITE(vgt->pdev, PS_WIN_POS(real_pipe), 0);
++		VGT_MMIO_WRITE(vgt->pdev, PS_CTL(real_pipe), pf_ctl);
++		/* PS_CTL ctrl is a double buffered registers and gets updated when window
++		 size registered is updated*/
++		VGT_MMIO_WRITE(vgt->pdev, PS_WIN_SZ(real_pipe),  (target_width << 16) | target_height);
++
++		/* trigger pipe refresh */
++		VGT_MMIO_WRITE(vgt->pdev, VGT_DSPSURF(real_pipe), VGT_MMIO_READ(vgt->pdev, VGT_DSPSURF(real_pipe)));
++	}
++	else {
++		VGT_MMIO_WRITE(vgt->pdev, VGT_PIPESRC(real_pipe),  ((src_width -1) << 16) | (src_height - 1));
++		VGT_MMIO_WRITE(vgt->pdev, PF_WIN_POS(real_pipe), 0);
++		VGT_MMIO_WRITE(vgt->pdev, PF_CTL(real_pipe), pf_ctl);
++		/* PF ctrl is a double buffered registers and gets updated when window
++		 size registered is updated*/
++		VGT_MMIO_WRITE(vgt->pdev, PF_WIN_SZ(real_pipe),  (target_width << 16) | target_height);
++	}
+ 	return true;
+ }
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index b71886f..eeef3d8 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -3725,26 +3725,26 @@ reg_attr_t vgt_reg_info_skl[] = {
+ {0x6c05c, 4, F_DPY, 0, D_SKL, NULL, NULL},
+ {0X6c060, 4, F_DPY, 0, D_SKL, dpll_status_read, NULL},
+ 
+-{SKL_PS_WIN_POS(PIPE_A, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
+-{SKL_PS_WIN_POS(PIPE_A, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
+-{SKL_PS_WIN_POS(PIPE_B, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
+-{SKL_PS_WIN_POS(PIPE_B, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
+-{SKL_PS_WIN_POS(PIPE_C, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
+-{SKL_PS_WIN_POS(PIPE_C, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
+-
+-{SKL_PS_WIN_SZ(PIPE_A, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
+-{SKL_PS_WIN_SZ(PIPE_A, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
+-{SKL_PS_WIN_SZ(PIPE_B, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
+-{SKL_PS_WIN_SZ(PIPE_B, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
+-{SKL_PS_WIN_SZ(PIPE_C, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
+-{SKL_PS_WIN_SZ(PIPE_C, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
+-
+-{SKL_PS_CTRL(PIPE_A, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
+-{SKL_PS_CTRL(PIPE_A, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
+-{SKL_PS_CTRL(PIPE_B, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
+-{SKL_PS_CTRL(PIPE_B, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
+-{SKL_PS_CTRL(PIPE_C, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
+-{SKL_PS_CTRL(PIPE_C, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SKL_PS_WIN_POS(PIPE_A, 0), 4, F_DPY, 0, D_SKL, pf_read, pf_write},
++{SKL_PS_WIN_POS(PIPE_A, 1), 4, F_DPY, 0, D_SKL, pf_read, pf_write},
++{SKL_PS_WIN_POS(PIPE_B, 0), 4, F_DPY, 0, D_SKL, pf_read, pf_write},
++{SKL_PS_WIN_POS(PIPE_B, 1), 4, F_DPY, 0, D_SKL, pf_read, pf_write},
++{SKL_PS_WIN_POS(PIPE_C, 0), 4, F_DPY, 0, D_SKL, pf_read, pf_write},
++{SKL_PS_WIN_POS(PIPE_C, 1), 4, F_DPY, 0, D_SKL, pf_read, pf_write},
++
++{SKL_PS_WIN_SZ(PIPE_A, 0), 4, F_DPY, 0, D_SKL, pf_read, pf_write},
++{SKL_PS_WIN_SZ(PIPE_A, 1), 4, F_DPY, 0, D_SKL, pf_read, pf_write},
++{SKL_PS_WIN_SZ(PIPE_B, 0), 4, F_DPY, 0, D_SKL, pf_read, pf_write},
++{SKL_PS_WIN_SZ(PIPE_B, 1), 4, F_DPY, 0, D_SKL, pf_read, pf_write},
++{SKL_PS_WIN_SZ(PIPE_C, 0), 4, F_DPY, 0, D_SKL, pf_read, pf_write},
++{SKL_PS_WIN_SZ(PIPE_C, 1), 4, F_DPY, 0, D_SKL, pf_read, pf_write},
++
++{SKL_PS_CTRL(PIPE_A, 0), 4, F_DPY, 0, D_SKL, pf_read, pf_write},
++{SKL_PS_CTRL(PIPE_A, 1), 4, F_DPY, 0, D_SKL, pf_read, pf_write},
++{SKL_PS_CTRL(PIPE_B, 0), 4, F_DPY, 0, D_SKL, pf_read, pf_write},
++{SKL_PS_CTRL(PIPE_B, 1), 4, F_DPY, 0, D_SKL, pf_read, pf_write},
++{SKL_PS_CTRL(PIPE_C, 0), 4, F_DPY, 0, D_SKL, pf_read, pf_write},
++{SKL_PS_CTRL(PIPE_C, 1), 4, F_DPY, 0, D_SKL, pf_read, pf_write},
+ 
+ {PLANE_BUF_CFG(PIPE_A, 0), 4, F_DPY, 0, D_SKL, NULL, dpy_plane_mmio_write},
+ {PLANE_BUF_CFG(PIPE_A, 1), 4, F_DPY, 0, D_SKL, NULL, dpy_plane_mmio_write},
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 8d4bd6cb..422af08 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -733,7 +733,6 @@ static bool vgt_initialize_platform(struct pgt_device *pdev)
+ 		}
+ 
+ 		if (IS_SKL(pdev)) {
+-			enable_panel_fitting = false;
+ 			vgt_get_memory_latency(pdev);
+ 			VGT_MMIO_WRITE(pdev, 0x4dfc, 0x1);
+ 		}
+-- 
+1.7.10.4
+

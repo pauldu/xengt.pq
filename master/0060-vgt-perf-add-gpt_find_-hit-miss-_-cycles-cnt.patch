@@ -1,0 +1,106 @@
+From 56b8fe7cca7e56b9cfc5f19f7c05b3b6b87eeedd Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Mon, 27 Apr 2015 08:08:45 +0800
+Subject: [PATCH 060/403] vgt: perf: add gpt_find_{hit,miss}_{cycles,cnt}
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/debugfs.c |    4 ++++
+ drivers/gpu/drm/i915/vgt/gtt.c     |   17 +++++++++++++++--
+ drivers/gpu/drm/i915/vgt/vgt.h     |    4 ++++
+ tools/vgt/vgt_perf                 |   12 ++++++++++++
+ 4 files changed, 35 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/debugfs.c b/drivers/gpu/drm/i915/vgt/debugfs.c
+index a3ffc47..92f9644 100644
+--- a/drivers/gpu/drm/i915/vgt/debugfs.c
++++ b/drivers/gpu/drm/i915/vgt/debugfs.c
+@@ -1124,6 +1124,10 @@ int vgt_create_debugfs(struct vgt_device *vgt)
+ 		debugfs_create_u64_node ("spt_find_hit_cycles", 0444, perf_dir_entry, &(vgt->stat.spt_find_hit_cycles));
+ 		debugfs_create_u64_node ("spt_find_miss_cnt", 0444, perf_dir_entry, &(vgt->stat.spt_find_miss_cnt));
+ 		debugfs_create_u64_node ("spt_find_miss_cycles", 0444, perf_dir_entry, &(vgt->stat.spt_find_miss_cycles));
++		debugfs_create_u64_node ("gpt_find_hit_cnt", 0444, perf_dir_entry, &(vgt->stat.gpt_find_hit_cnt));
++		debugfs_create_u64_node ("gpt_find_hit_cycles", 0444, perf_dir_entry, &(vgt->stat.gpt_find_hit_cycles));
++		debugfs_create_u64_node ("gpt_find_miss_cnt", 0444, perf_dir_entry, &(vgt->stat.gpt_find_miss_cnt));
++		debugfs_create_u64_node ("gpt_find_miss_cycles", 0444, perf_dir_entry, &(vgt->stat.gpt_find_miss_cycles));
+ 		debugfs_create_u64_node ("skip_bb_cnt", 0444, perf_dir_entry, &(vgt->stat.skip_bb_cnt));
+ 
+ 		/* cmd statistics for ring/batch buffers */
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index 6698d1d..5a9c5ff 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -529,10 +529,23 @@ void vgt_clean_guest_page(struct vgt_device *vgt, guest_page_t *guest_page)
+ guest_page_t *vgt_find_guest_page(struct vgt_device *vgt, unsigned long gfn)
+ {
+ 	guest_page_t *guest_page;
++	struct vgt_statistics *stat = &vgt->stat;
++	cycles_t t0, t1;
+ 
+-	hash_for_each_possible(vgt->gtt.guest_page_hash_table, guest_page, node, gfn)
+-		if (guest_page->gfn == gfn)
++	t0 = get_cycles();
++
++	hash_for_each_possible(vgt->gtt.guest_page_hash_table, guest_page, node, gfn) {
++		if (guest_page->gfn == gfn) {
++			t1 = get_cycles();
++			stat->gpt_find_hit_cnt++;
++			stat->gpt_find_hit_cycles += t1 - t0;
+ 			return guest_page;
++		}
++	}
++
++	t1 = get_cycles();
++	stat->gpt_find_miss_cnt++;
++	stat->gpt_find_miss_cycles += t1 - t0;
+ 
+ 	return NULL;
+ }
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 873c6ba..5c1ab25 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -767,6 +767,10 @@ struct vgt_statistics {
+ 	u64	spt_find_hit_cycles;
+ 	u64	spt_find_miss_cnt;
+ 	u64	spt_find_miss_cycles;
++	u64	gpt_find_hit_cnt;
++	u64	gpt_find_hit_cycles;
++	u64	gpt_find_miss_cnt;
++	u64	gpt_find_miss_cycles;
+ 	u64	skip_bb_cnt;
+ };
+ 
+diff --git a/tools/vgt/vgt_perf b/tools/vgt/vgt_perf
+index ec35739..7162bff 100755
+--- a/tools/vgt/vgt_perf
++++ b/tools/vgt/vgt_perf
+@@ -182,6 +182,16 @@ state_nodes = {
+ 		"count" : 1,
+ 		"cycles": 1,
+ 	},
++	"PPGTT guest page find hit" : {
++		"node"	: "gpt_find_hit_",
++		"count" : 1,
++		"cycles": 1,
++	},
++	"PPGTT guest page find miss" : {
++		"node"	: "gpt_find_miss_",
++		"count" : 1,
++		"cycles": 1,
++	},
+ 	"PPGTT shadow page find hit" : {
+ 		"node"	: "spt_find_hit_",
+ 		"count" : 1,
+@@ -394,6 +404,8 @@ def show_result(e, s, r, time):
+ 		print_param2(e, vs, "GTT writes", bias)
+ 		print_param2(e, vs, "WP writes", bias)
+ 		print_param2(e, vs, "PPGTT WP writes", bias)
++		print_param2(e, vs, "PPGTT guest page find hit", bias)
++		print_param2(e, vs, "PPGTT guest page find miss", bias)
+ 		print_param2(e, vs, "PPGTT shadow page find hit", bias)
+ 		print_param2(e, vs, "PPGTT shadow page find miss", bias)
+ 		#print_param2(e, vs, "PM accesses", bias)
+-- 
+1.7.10.4
+

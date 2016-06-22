@@ -1,0 +1,25 @@
+From 9a3cc7ebdc8d8af34a14f89203d7f9de2c88fd88 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Thu, 23 Apr 2015 16:44:01 +0800
+Subject: [PATCH 052/403] vgt: add untracked register 0x4dd4
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |    1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index c77dd31..7b889ea 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -3552,6 +3552,7 @@ reg_attr_t vgt_base_reg_info[] = {
+ {0x24dc, 4, F_RDR, 0, D_BDW, NULL, NULL},
+ 
+ {0x83a4, 4, F_RDR, 0, D_BDW, NULL, NULL},
++{0x4dd4, 4, F_RDR, 0, D_BDW, NULL, NULL},
+ 
+ /* UCG */
+ {0x8430, 4, F_PT, 0, D_BDW, NULL, NULL},
+-- 
+1.7.10.4
+

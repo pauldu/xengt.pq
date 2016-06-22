@@ -1,0 +1,50 @@
+From 3203d80dad295b84d05dd9b54ae5481d091a30e0 Mon Sep 17 00:00:00 2001
+From: Weinan Li <weinan.z.li@intel.com>
+Date: Thu, 19 Nov 2015 14:19:11 +0800
+Subject: [PATCH 202/403] Refine parser_exec_state_dump to dump the correct
+ cmd scan buffer.
+
+It just dump the 8 cmds start at the failed command in scan buffer.
+Refine to dump the correct cmd buffer around the failed cmd.
+
+Signed-off-by: Weinan Li <weinan.z.li@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |    8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index e1b610a..69583b6 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -569,6 +569,11 @@ static void parser_exec_state_dump(struct parser_exec_state *s)
+ 	} else {
+ 		int cnt = 0;
+ 		/* print the whole page to trace */
++		if (s->ip_buf) {
++			kfree(s->ip_buf);
++			s->ip_buf = s->ip_buf_va = NULL;
++		}
++
+ 		vgt_err("  ip_va=%p: %08x %08x %08x %08x \n",
+ 				s->ip_va, cmd_val(s, 0), cmd_val(s, 1), cmd_val(s, 2), cmd_val(s, 3));
+ 
+@@ -1620,7 +1625,7 @@ static int vgt_cmd_handler_mi_noop(struct parser_exec_state* s)
+ 		} else {
+ 			vgt_err("VM %d: Guest reuse cmd buffer that is not handled!\n",
+ 					s->vgt->vm_id);
+-			parser_exec_state_dump(s);
++			return -EFAULT;
+ 		}
+ 	}
+ 
+@@ -2468,6 +2473,7 @@ static int vgt_cmd_parser_exec(struct parser_exec_state *s)
+ 
+ 		if (rc < 0) {
+ 			vgt_err("%s handler error", info->name);
++			parser_exec_state_dump(s);
+ 			return rc;
+ 		}
+ 	}
+-- 
+1.7.10.4
+

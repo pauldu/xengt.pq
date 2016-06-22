@@ -1,0 +1,65 @@
+From b3fe22e818b4937c2a83d52e294e86843eb5a976 Mon Sep 17 00:00:00 2001
+From: "Zheng, Xiao" <xiao.zheng@intel.com>
+Date: Tue, 18 Aug 2015 19:10:42 +0800
+Subject: [PATCH 207/403] vgt/skl: update PCI cfg MSI registers address for
+ SKL
+
+The offset of MSI CAP on SKL has been changed as:
+
+        Capabilities: [ac] MSI: Enable+ Count=1/1 Maskable- 64bit-
+                Address: fee00018  Data: 0000
+
+Which is different from the PRE-SKL platform.
+
+Signed-off-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cfg_space.c |    6 +++++-
+ drivers/gpu/drm/i915/vgt/mpt.h       |    9 +++++----
+ 2 files changed, 10 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cfg_space.c b/drivers/gpu/drm/i915/vgt/cfg_space.c
+index f80ac98..eaa3cdc 100644
+--- a/drivers/gpu/drm/i915/vgt/cfg_space.c
++++ b/drivers/gpu/drm/i915/vgt/cfg_space.c
+@@ -370,10 +370,14 @@ bool vgt_emulate_cfg_write(struct vgt_device *vgt, unsigned int off,
+ 					vgt_hvm_set_trap_area(vgt, 1);
+ 			}
+ 			break;
+-
++		/* HSW/BDW */
+ 		case 0x90:
+ 		case 0x94:
+ 		case 0x98:
++		/* SKL */
++		case 0xAC:
++		case 0xB0:
++		case 0xB4:
+ 			printk("vGT: write to MSI capa(%x) with val (%x)\n", off, *(uint32_t *)p_data);
+ 		default:
+ 			memcpy (&vgt->state.cfg_space[off], p_data, bytes);
+diff --git a/drivers/gpu/drm/i915/vgt/mpt.h b/drivers/gpu/drm/i915/vgt/mpt.h
+index 8695455..99b1d5a 100644
+--- a/drivers/gpu/drm/i915/vgt/mpt.h
++++ b/drivers/gpu/drm/i915/vgt/mpt.h
+@@ -86,13 +86,14 @@ static inline void *hypervisor_mfn_to_virt(int mfn)
+ 
+ static inline void hypervisor_inject_msi(struct vgt_device *vgt)
+ {
+-#define MSI_CAP_OFFSET 0x90	/* FIXME. need to get from cfg emulation */
+-#define MSI_CAP_CONTROL (MSI_CAP_OFFSET + 2)
+-#define MSI_CAP_ADDRESS (MSI_CAP_OFFSET + 4)
+-#define MSI_CAP_DATA	(MSI_CAP_OFFSET + 8)
++#define MSI_CAP_CONTROL (msi_cap_offset + 2)
++#define MSI_CAP_ADDRESS (msi_cap_offset + 4)
++#define MSI_CAP_DATA	(msi_cap_offset + 8)
+ #define MSI_CAP_EN 0x1
+ 
+ 	char *cfg_space = &vgt->state.cfg_space[0];
++	u32 msi_cap_offset = IS_SKLPLUS(vgt->pdev) ? 0xAC : 0x90;
++
+ 	u16 control = *(u16 *)(cfg_space + MSI_CAP_CONTROL);
+ 	u32 addr = *(u32 *)(cfg_space + MSI_CAP_ADDRESS);
+ 	u16 data = *(u16 *)(cfg_space + MSI_CAP_DATA);
+-- 
+1.7.10.4
+

@@ -1,0 +1,29 @@
+From 6f07d4d529bf8ef4ed31a5097f497ebb78bef657 Mon Sep 17 00:00:00 2001
+From: "Zheng, Xiao" <xiao.zheng@intel.com>
+Date: Mon, 4 Jan 2016 17:05:28 +0800
+Subject: [PATCH 302/403] vgt: fix /sys/kernel/vgt/control/igd_mmio write
+ error
+
+fix one more error when write igd_mmio node.
+
+Signed-off-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/sysfs.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/sysfs.c b/drivers/gpu/drm/i915/vgt/sysfs.c
+index df86c87..5180428 100644
+--- a/drivers/gpu/drm/i915/vgt/sysfs.c
++++ b/drivers/gpu/drm/i915/vgt/sysfs.c
+@@ -984,7 +984,7 @@ igd_mmio_write(struct file* filp, struct kobject *kobj,
+ 				count;
+ 
+ 		memcpy(&data, buf, len);
+-		if (vgt_native_mmio_read(off, &data, len, false) != true) {
++		if (vgt_native_mmio_write(off, &data, len, false) != true) {
+ 			vgt_unlock_dev(pdev, cpu);
+ 			return -EIO;
+ 		}
+-- 
+1.7.10.4
+

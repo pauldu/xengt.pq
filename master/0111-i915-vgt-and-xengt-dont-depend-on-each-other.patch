@@ -1,0 +1,587 @@
+From ae20ff061eeba70b90cb1b5d47e89efcb6827978 Mon Sep 17 00:00:00 2001
+From: Jike Song <jike.song@intel.com>
+Date: Wed, 13 May 2015 09:27:59 +0800
+Subject: [PATCH 111/403] i915/vgt and xengt: dont' depend on each other
+
+Signed-off-by: Jike Song <jike.song@intel.com>
+Signed-off-by: Niu,Bing <bing.niu@intel.com>
+---
+ drivers/gpu/drm/Makefile              |    1 +
+ drivers/gpu/drm/i915/i915_vgpu.h      |   14 ++++++
+ drivers/gpu/drm/i915/i915_vgt.h       |    2 +
+ drivers/gpu/drm/i915/vgt/fb_decoder.c |    4 --
+ drivers/gpu/drm/i915/vgt/host.c       |    5 ++-
+ drivers/gpu/drm/i915/vgt/host.h       |    9 ----
+ drivers/gpu/drm/i915/vgt/klog.c       |    2 -
+ drivers/gpu/drm/i915/vgt/ops.c        |   30 +++++++++++++
+ drivers/gpu/drm/i915/vgt/vgt.c        |   58 +++++++++++++++---------
+ drivers/gpu/drm/i915/vgt/vgt.h        |   21 ++-------
+ drivers/xen/xengt.c                   |   80 ++++++++++++++++++++++++---------
+ 11 files changed, 149 insertions(+), 77 deletions(-)
+ create mode 100644 drivers/gpu/drm/i915/vgt/ops.c
+
+diff --git a/drivers/gpu/drm/Makefile b/drivers/gpu/drm/Makefile
+index 1e9ff4c..ef69115e 100644
+--- a/drivers/gpu/drm/Makefile
++++ b/drivers/gpu/drm/Makefile
+@@ -44,6 +44,7 @@ obj-$(CONFIG_DRM_AMDGPU)+= amd/amdgpu/
+ obj-$(CONFIG_DRM_MGA)	+= mga/
+ obj-$(CONFIG_DRM_I810)	+= i810/
+ obj-$(CONFIG_DRM_I915)  += i915/
++obj-$(CONFIG_I915_VGT)	+= i915/vgt/ops.o
+ obj-$(CONFIG_DRM_MGAG200) += mgag200/
+ obj-$(CONFIG_DRM_VC4)  += vc4/
+ obj-$(CONFIG_DRM_CIRRUS_QEMU) += cirrus/
+diff --git a/drivers/gpu/drm/i915/i915_vgpu.h b/drivers/gpu/drm/i915/i915_vgpu.h
+index 56eca38..de27bee 100644
+--- a/drivers/gpu/drm/i915/i915_vgpu.h
++++ b/drivers/gpu/drm/i915/i915_vgpu.h
+@@ -177,11 +177,25 @@ struct vgt_if {
+ #define VGT_GET_BIT(data, bit)		VGT_GET_BITS(data, bit, bit)
+ 
+ struct vgt_device;
++struct pgt_device;
++struct kernel_dm;
+ bool vgt_emulate_write(struct vgt_device *vgt, uint64_t pa, void *p_data, int bytes);
+ bool vgt_emulate_read(struct vgt_device *vgt, uint64_t pa, void *p_data, int bytes);
+ bool vgt_emulate_cfg_write(struct vgt_device *vgt, unsigned int off, void *p_data, int bytes);
+ bool vgt_emulate_cfg_read(struct vgt_device *vgt, unsigned int off, void *p_data, int bytes);
+ 
++struct vgt_ops {
++	bool (*emulate_read)(struct vgt_device *, uint64_t, void *, int);
++	bool (*emulate_write)(struct vgt_device *, uint64_t, void *, int);
++	bool (*emulate_cfg_read)(struct vgt_device *, unsigned int, void *, int);
++	bool (*emulate_cfg_write)(struct vgt_device *, unsigned int, void *, int);
++	/* misc symbols needed by MPT module */
++	void (*panic)(void);
++	unsigned int (*pa_to_mmio_offset)(struct vgt_device *, uint64_t);
++	bool (*expand_shadow_page_mempool)(struct pgt_device *);
++};
++extern struct vgt_ops *vgt_ops;
++
+ /* save the fixed/translated guest address
+  * restore the address after the command is executed
+ */
+diff --git a/drivers/gpu/drm/i915/i915_vgt.h b/drivers/gpu/drm/i915/i915_vgt.h
+index 6487d99..4284e1f 100644
+--- a/drivers/gpu/drm/i915/i915_vgt.h
++++ b/drivers/gpu/drm/i915/i915_vgt.h
+@@ -51,6 +51,8 @@ static inline bool i915_start_vgt(struct pci_dev *pdev)
+ 	return false;
+ }
+ 
++static inline void i915_stop_vgt(void) {};
++
+ static inline void i915_vgt_record_priv(struct drm_i915_private *priv)
+ {
+ }
+diff --git a/drivers/gpu/drm/i915/vgt/fb_decoder.c b/drivers/gpu/drm/i915/vgt/fb_decoder.c
+index 5777b3e..6ce1e74 100644
+--- a/drivers/gpu/drm/i915/vgt/fb_decoder.c
++++ b/drivers/gpu/drm/i915/vgt/fb_decoder.c
+@@ -446,7 +446,6 @@ int vgt_decode_fb_format(int vmid, struct vgt_fb_format *fb)
+ 	  vgt_show_fb_format(vmid, fb);
+ 	return ret;
+ }
+-EXPORT_SYMBOL_GPL(vgt_decode_fb_format);
+ 
+ static ATOMIC_NOTIFIER_HEAD(vgt_fb_notifier_list);
+ 
+@@ -454,19 +453,16 @@ int vgt_register_fb_notifier(struct notifier_block *nb)
+ {
+ 	return atomic_notifier_chain_register(&vgt_fb_notifier_list, nb);
+ }
+-EXPORT_SYMBOL_GPL(vgt_register_fb_notifier);
+ 
+ int vgt_unregister_fb_notifier(struct notifier_block *nb)
+ {
+ 	return atomic_notifier_chain_unregister(&vgt_fb_notifier_list, nb);
+ }
+-EXPORT_SYMBOL_GPL(vgt_unregister_fb_notifier);
+ 
+ int vgt_fb_notifier_call_chain(unsigned long val, void *data)
+ {
+ 	return atomic_notifier_call_chain(&vgt_fb_notifier_list, val, data);
+ }
+-EXPORT_SYMBOL_GPL(vgt_fb_notifier_call_chain);
+ 
+ static int vgt_plane_to_i915_plane(unsigned vgt_plane)
+ {
+diff --git a/drivers/gpu/drm/i915/vgt/host.c b/drivers/gpu/drm/i915/vgt/host.c
+index 5fbe841..0acdd66 100644
+--- a/drivers/gpu/drm/i915/vgt/host.c
++++ b/drivers/gpu/drm/i915/vgt/host.c
+@@ -24,6 +24,7 @@
+ #include <linux/io.h>
+ #include <drm/drmP.h>
+ 
++#include <../i915_vgpu.h>
+ #include "i915_drv.h"
+ #include "host.h"
+ 
+@@ -131,7 +132,7 @@ bool vgt_host_read(u32 reg, void *val, int len, bool is_gtt, bool trace)
+ 	pa = is_gtt ?
+ 		vgt_gttmmio_pa(pdev_default, reg + gtt_offset) :
+ 		vgt_gttmmio_pa(pdev_default, reg);
+-	return vgt_ops->mem_read(vgt_dom0, pa, val, len);
++	return vgt_ops->emulate_read(vgt_dom0, pa, val, len);
+ }
+ 
+ bool vgt_host_write(u32 reg, void *val, int len, bool is_gtt, bool trace)
+@@ -143,7 +144,7 @@ bool vgt_host_write(u32 reg, void *val, int len, bool is_gtt, bool trace)
+ 	pa = is_gtt ?
+ 		vgt_gttmmio_pa(pdev_default, reg + gtt_offset) :
+ 		vgt_gttmmio_pa(pdev_default, reg);
+-	return vgt_ops->mem_write(vgt_dom0, pa, val, len);
++	return vgt_ops->emulate_write(vgt_dom0, pa, val, len);
+ }
+ 
+ void vgt_host_irq_sync(void)
+diff --git a/drivers/gpu/drm/i915/vgt/host.h b/drivers/gpu/drm/i915/vgt/host.h
+index 24bb4f6..33df2f2 100644
+--- a/drivers/gpu/drm/i915/vgt/host.h
++++ b/drivers/gpu/drm/i915/vgt/host.h
+@@ -35,17 +35,8 @@
+ 
+ struct pgt_device;
+ struct vgt_device;
+-struct vgt_ops;
+-typedef struct {
+-    bool (*mem_read)(struct vgt_device *vgt, uint64_t pa, void *p_data, int bytes);
+-    bool (*mem_write)(struct vgt_device *vgt, uint64_t pa, void *p_data, int bytes);
+-    bool (*cfg_read)(struct vgt_device *vgt, unsigned int off, void *p_data, int bytes);
+-    bool (*cfg_write)(struct vgt_device *vgt, unsigned int off, void *p_data, int bytes);
+-    bool initialized;	/* whether vgt_ops can be referenced */
+-} vgt_ops_t;
+ extern struct pgt_device *pdev_default;
+ extern struct vgt_device *vgt_dom0;
+-extern vgt_ops_t *vgt_ops;
+ 
+ bool vgt_native_mmio_read(u32 reg, void *val, int len, bool trace);
+ bool vgt_native_mmio_write(u32 reg, void *val, int len, bool trace);
+diff --git a/drivers/gpu/drm/i915/vgt/klog.c b/drivers/gpu/drm/i915/vgt/klog.c
+index 9b94f57a..412bc1c 100644
+--- a/drivers/gpu/drm/i915/vgt/klog.c
++++ b/drivers/gpu/drm/i915/vgt/klog.c
+@@ -695,8 +695,6 @@ void klog_printk(const char *fmt, ...)
+ 	local_irq_restore(flags);
+ }
+ 
+-EXPORT_SYMBOL_GPL(klog_printk);
+-
+ /*
+  * 'consumed' file operations - r/w, binary
+  *
+diff --git a/drivers/gpu/drm/i915/vgt/ops.c b/drivers/gpu/drm/i915/vgt/ops.c
+new file mode 100644
+index 0000000..6840c58
+--- /dev/null
++++ b/drivers/gpu/drm/i915/vgt/ops.c
+@@ -0,0 +1,30 @@
++/*
++ * vGT builtin symbol
++ *
++ * Copyright(c) 2011-2013 Intel Corporation. All rights reserved.
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a
++ * copy of this software and associated documentation files (the "Software"),
++ * to deal in the Software without restriction, including without limitation
++ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
++ * and/or sell copies of the Software, and to permit persons to whom the
++ * Software is furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice (including the next
++ * paragraph) shall be included in all copies or substantial portions of the
++ * Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
++ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++ * SOFTWARE.
++ */
++#include <linux/kernel.h>
++#include "vgt.h"
++
++struct vgt_ops *vgt_ops = NULL;
++EXPORT_SYMBOL(vgt_ops);
++
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index d273873..7e2ce7f 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -35,6 +35,9 @@ MODULE_DESCRIPTION("Virtual GPU device model for Intel Processor Graphics");
+ MODULE_LICENSE("GPL and additional rights");
+ MODULE_VERSION("0.1");
+ 
++extern struct kernel_dm xengt_kdm;
++struct kernel_dm *vgt_pkdm = NULL;
++
+ bool hvm_render_owner = false;
+ module_param_named(hvm_render_owner, hvm_render_owner, bool, 0600);
+ MODULE_PARM_DESC(hvm_render_owner, "Make HVM to be render owner after create (default: false)");
+@@ -174,16 +177,15 @@ module_param_named(shadow_execlist_context, shadow_execlist_context, int, 0400);
+ bool wp_submitted_ctx = false;
+ module_param_named(wp_submitted_ctx, wp_submitted_ctx, bool, 0400);
+ 
+-struct kernel_dm *vgt_pkdm __weak = NULL;
+-
+-static vgt_ops_t vgt_xops = {
+-	.mem_read = vgt_emulate_read,
+-	.mem_write = vgt_emulate_write,
+-	.cfg_read = vgt_emulate_cfg_read,
+-	.cfg_write = vgt_emulate_cfg_write,
+-	.initialized = false,
++static struct vgt_ops __vgt_ops = {
++	.emulate_read = vgt_emulate_read,
++	.emulate_write = vgt_emulate_write,
++	.emulate_cfg_read = vgt_emulate_cfg_read,
++	.emulate_cfg_write = vgt_emulate_cfg_write,
++	.panic = vgt_panic,
++	.pa_to_mmio_offset = vgt_pa_to_mmio_offset,
++	.expand_shadow_page_mempool = vgt_expand_shadow_page_mempool,
+ };
+-vgt_ops_t *vgt_ops = NULL;
+ 
+ LIST_HEAD(pgt_devices);
+ struct pgt_device default_device = {
+@@ -819,9 +821,6 @@ static int vgt_initialize(struct pci_dev *dev)
+ 	if (setup_gtt(pdev))
+ 		goto err;
+ 
+-	vgt_ops = &vgt_xops;
+-	vgt_ops->initialized = true;
+-
+ 	if (!hvm_render_owner)
+ 		current_render_owner(pdev) = vgt_dom0;
+ 	else
+@@ -993,6 +992,22 @@ int vgt_resume(struct pci_dev *pdev)
+ 	return 0;
+ }
+ 
++/*
++ * Kernel BUG() doesn't work, because bust_spinlocks try to unblank screen
++ * which may call into i915 and thus cause undesired more errors on the
++ * screen
++ */
++void vgt_panic(void)
++{
++        struct pgt_device *pdev = &default_device;
++ 
++        show_debug(pdev);
++ 
++        dump_stack();
++        printk("________end of stack dump_________\n");
++        panic("FATAL VGT ERROR\n");
++}
++
+ static void do_device_reset(struct pgt_device *pdev)
+ {
+ 	struct drm_device *drm_dev = pci_get_drvdata(pdev->pdev);
+@@ -1217,24 +1232,25 @@ bool vgt_check_host(void)
+ 
+ void i915_stop_vgt(void)
+ {
+-	if (!hypervisor_check_host())
+-		return;
+-
+-	// fill other exit works here
+ 	vgt_destroy();
+ 	vgt_klog_cleanup();
+-	return;
++	symbol_put(xengt_kdm);
++	vgt_pkdm = NULL;
++	vgt_ops = NULL;
+ }
+ 
+ bool i915_start_vgt(struct pci_dev *pdev)
+ {
+-	if (!vgt_check_host())
++	vgt_ops = &__vgt_ops;
++
++	vgt_pkdm = try_then_request_module(symbol_get(xengt_kdm), "xengt");
++	if (vgt_pkdm == NULL) {
++		printk("vgt: Could not load xengt MPT service\n");
+ 		return false;
++	} //TODO: request kvmgt here!
+ 
+-	if (vgt_xops.initialized) {
+-		vgt_info("VGT has been intialized?\n");
++	if (!vgt_check_host())
+ 		return false;
+-	}
+ 
+ 	vgt_param_check();
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 9a20647..8b32e7e 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -61,6 +61,7 @@ extern void show_ring_debug(struct pgt_device *pdev, int ring_id);
+ extern void show_debug(struct pgt_device *pdev);
+ void show_virtual_interrupt_regs(struct vgt_device *vgt, struct seq_file *seq);
+ extern void show_interrupt_regs(struct pgt_device *pdev, struct seq_file *seq);
++void vgt_panic(void);
+ 
+ extern bool ignore_hvm_forcewake_req;
+ extern bool hvm_render_owner;
+@@ -740,7 +741,6 @@ extern bool idle_rendering_engines(struct pgt_device *pdev, int *id);
+ extern bool idle_render_engine(struct pgt_device *pdev, int id);
+ extern bool vgt_do_render_context_switch(struct pgt_device *pdev);
+ extern bool vgt_do_render_sched(struct pgt_device *pdev);
+-extern void vgt_destroy(void);
+ extern void vgt_destroy_debugfs(struct vgt_device *vgt);
+ extern void vgt_release_debugfs(void);
+ extern bool vgt_register_mmio_handler(unsigned int start, int bytes,
+@@ -1395,27 +1395,12 @@ extern void do_vgt_fast_display_switch(struct pgt_device *pdev);
+ #define el_read_ptr(pdev, ring_id) ((pdev)->el_read_ptr[ring_id])
+ #define el_write_ptr(pdev, ring_id) ((pdev)->el_cache_write_ptr[ring_id])
+ 
+-/*
+- * Kernel BUG() doesn't work, because bust_spinlocks try to unblank screen
+- * which may call into i915 and thus cause undesired more errors on the
+- * screen
+- */
+-static inline void vgt_panic(void)
+-{
+-	struct pgt_device *pdev = &default_device;
+-
+-	show_debug(pdev);
+-
+-	dump_stack();
+-	printk("________end of stack dump_________\n");
+-	panic("FATAL VGT ERROR\n");
+-}
+ #define ASSERT(x)							\
+ 	do {								\
+ 		if (!(x)) {						\
+ 			printk("Assert at %s line %d\n",		\
+ 				__FILE__, __LINE__);			\
+-			vgt_panic();					\
++			vgt_ops->panic();				\
+ 		}							\
+ 	} while (0);
+ #define ASSERT_NUM(x, y)						\
+@@ -1423,7 +1408,7 @@ static inline void vgt_panic(void)
+ 		if (!(x)) {						\
+ 			printk("Assert at %s line %d para 0x%llx\n",	\
+ 				__FILE__, __LINE__, (u64)y);		\
+-			vgt_panic();					\
++			vgt_ops->panic();				\
+ 		}							\
+ 	} while (0);
+ 
+diff --git a/drivers/xen/xengt.c b/drivers/xen/xengt.c
+index 49fbbff..96dfa5b 100644
+--- a/drivers/xen/xengt.c
++++ b/drivers/xen/xengt.c
+@@ -83,6 +83,23 @@ struct vgt_hvm_info {
+ 	struct vm_struct **vmem_vma_4k;
+ };
+ 
++static int xen_pause_domain(int vm_id);
++static int xen_shutdown_domain(int vm_id);
++static void *xen_gpa_to_va(struct vgt_device *vgt, unsigned long gpa);
++
++#define XEN_ASSERT_VM(x, vgt)						\
++	do {								\
++		if (!(x)) {						\
++			printk("Assert at %s line %d\n",		\
++				__FILE__, __LINE__);			\
++			if (atomic_cmpxchg(&(vgt)->crashing, 0, 1))	\
++				break;					\
++			vgt_warn("Killing VM%d\n", (vgt)->vm_id);	\
++			if (!xen_pause_domain((vgt->vm_id)))		\
++				xen_shutdown_domain((vgt->vm_id));	\
++		}							\
++	} while (0)
++
+ /* Translate from VM's guest pfn to machine pfn */
+ static unsigned long xen_g2m_pfn(int vm_id, unsigned long g_pfn)
+ {
+@@ -521,7 +538,7 @@ static int vgt_hvm_vmem_init(struct vgt_device *vgt)
+ 
+ 		/* Don't warn on [0xa0000, 0x100000): a known non-RAM hole */
+ 		if (i < (0xa0000 >> PAGE_SHIFT))
+-			vgt_dbg(VGT_DBG_GENERIC, "vGT: VM%d: can't map GPFN %ld!\n",
++			printk(KERN_ERR "vGT: VM%d: can't map GPFN %ld!\n",
+ 				vgt->vm_id, i);
+ 	}
+ 
+@@ -550,7 +567,7 @@ static int vgt_hvm_vmem_init(struct vgt_device *vgt)
+ 
+ 			if (info->vmem_vma_4k[j]) {
+ 				count++;
+-				vgt_dbg(VGT_DBG_GENERIC, "map 4k gpa (%lx)\n", j << PAGE_SHIFT);
++				printk(KERN_ERR "map 4k gpa (%lx)\n", j << PAGE_SHIFT);
+ 			}
+ 		}
+ 
+@@ -559,7 +576,7 @@ static int vgt_hvm_vmem_init(struct vgt_device *vgt)
+ 		 * message if it's at every 64MB boundary or >4GB memory.
+ 		 */
+ 		if ((i % 64 == 0) || (i >= (1ULL << (32 - VMEM_BUCK_SHIFT))))
+-			vgt_dbg(VGT_DBG_GENERIC, "vGT: VM%d: can't map %ldKB\n",
++			printk(KERN_ERR "vGT: VM%d: can't map %ldKB\n",
+ 				vgt->vm_id, i);
+ 	}
+ 	printk("end vmem_map (%ld 4k mappings)\n", count);
+@@ -635,7 +652,7 @@ static int _hvm_mmio_emulation(struct vgt_device *vgt, struct ioreq *req)
+ 	struct vgt_hvm_info *info = vgt->hvm_info;
+ 
+ 	if (info->vmem_vma == NULL) {
+-		tmp = vgt_pa_to_mmio_offset(vgt, req->addr);
++		tmp = vgt_ops->pa_to_mmio_offset(vgt, req->addr);
+ 		pvinfo_page = (tmp >= VGT_PVINFO_PAGE
+ 				&& tmp < (VGT_PVINFO_PAGE + VGT_PVINFO_SIZE));
+ 		/*
+@@ -644,7 +661,7 @@ static int _hvm_mmio_emulation(struct vgt_device *vgt, struct ioreq *req)
+ 		 */
+ 		if (!pvinfo_page && vgt_hvm_vmem_init(vgt) < 0) {
+ 			vgt_err("can not map the memory of VM%d!!!\n", vgt->vm_id);
+-			ASSERT_VM(info->vmem_vma != NULL, vgt);
++			XEN_ASSERT_VM(info->vmem_vma != NULL, vgt);
+ 			return -EINVAL;
+ 		}
+ 	}
+@@ -659,7 +676,7 @@ static int _hvm_mmio_emulation(struct vgt_device *vgt, struct ioreq *req)
+ 
+ 			//vgt_dbg(VGT_DBG_GENERIC,"HVM_MMIO_read: target register (%lx).\n",
+ 			//	(unsigned long)req->addr);
+-			if (!vgt_emulate_read(vgt, req->addr, &req->data, req->size))
++			if (!vgt_ops->emulate_read(vgt, req->addr, &req->data, req->size))
+ 				return -EINVAL;
+ 		}
+ 		else {
+@@ -671,11 +688,14 @@ static int _hvm_mmio_emulation(struct vgt_device *vgt, struct ioreq *req)
+ 			//	req->count, (unsigned long)req->addr);
+ 
+ 			for (i = 0; i < req->count; i++) {
+-				if (!vgt_emulate_read(vgt, req->addr + sign * i * req->size,
++				if (!vgt_ops->emulate_read(vgt, req->addr + sign * i * req->size,
+ 					&tmp, req->size))
+ 					return -EINVAL;
+ 				gpa = req->data + sign * i * req->size;
+-				gva = hypervisor_gpa_to_va(vgt, gpa);
++				if(!vgt->vm_id)
++					gva = (char *)xen_mfn_to_virt(gpa >> PAGE_SHIFT) + offset_in_page(gpa);
++				else
++					gva = xen_gpa_to_va(vgt, gpa);
+ 				if (gva) {
+ 					if (!IS_SNB(vgt->pdev))
+ 						memcpy(gva, &tmp, req->size);
+@@ -694,7 +714,7 @@ static int _hvm_mmio_emulation(struct vgt_device *vgt, struct ioreq *req)
+ 			if (req->count != 1)
+ 				goto err_ioreq_count;
+ 			//vgt_dbg(VGT_DBG_GENERIC,"HVM_MMIO_write: target register (%lx).\n", (unsigned long)req->addr);
+-			if (!vgt_emulate_write(vgt, req->addr, &req->data, req->size))
++			if (!vgt_ops->emulate_write(vgt, req->addr, &req->data, req->size))
+ 				return -EINVAL;
+ 		}
+ 		else {
+@@ -707,14 +727,18 @@ static int _hvm_mmio_emulation(struct vgt_device *vgt, struct ioreq *req)
+ 
+ 			for (i = 0; i < req->count; i++) {
+ 				gpa = req->data + sign * i * req->size;
+-				gva = hypervisor_gpa_to_va(vgt, gpa);
++				if(!vgt->vm_id)
++					gva = (char *)xen_mfn_to_virt(gpa >> PAGE_SHIFT) + offset_in_page(gpa);
++				else
++					gva = xen_gpa_to_va(vgt, gpa);
++
+ 				if (gva != NULL)
+ 					memcpy(&tmp, gva, req->size);
+ 				else {
+ 					tmp = 0;
+-					vgt_dbg(VGT_DBG_GENERIC, "vGT: can not read gpa = 0x%lx!!!\n", gpa);
++					printk(KERN_ERR "vGT: can not read gpa = 0x%lx!!!\n", gpa);
+ 				}
+-				if (!vgt_emulate_write(vgt, req->addr + sign * i * req->size, &tmp, req->size))
++				if (!vgt_ops->emulate_write(vgt, req->addr + sign * i * req->size, &tmp, req->size))
+ 					return -EINVAL;
+ 			}
+ 		}
+@@ -744,7 +768,6 @@ static bool vgt_hvm_write_cfg_space(struct vgt_device *vgt,
+ 	ASSERT(((bytes == 4) && ((port & 3) == 0)) ||
+ 		((bytes == 2) && ((port & 1) == 0)) || (bytes == 1));
+ 	vgt_ops->emulate_cfg_write(vgt, port, &val, bytes);
+-
+ 	return true;
+ }
+ 
+@@ -777,7 +800,7 @@ static int _hvm_pio_emulation(struct vgt_device *vgt, struct ioreq *ioreq)
+ 				(unsigned long*)&ioreq->data))
+ 				return -EINVAL;
+ 		} else {
+-			vgt_dbg(VGT_DBG_GENERIC,"VGT: _hvm_pio_emulation read data_ptr %lx\n",
++			printk(KERN_ERR "VGT: _hvm_pio_emulation read data_ptr %lx\n",
+ 			(long)ioreq->data);
+ 			goto err_data_ptr;
+ 		}
+@@ -790,7 +813,7 @@ static int _hvm_pio_emulation(struct vgt_device *vgt, struct ioreq *ioreq)
+ 				(unsigned long)ioreq->data))
+ 				return -EINVAL;
+ 		} else {
+-			vgt_dbg(VGT_DBG_GENERIC,"VGT: _hvm_pio_emulation write data_ptr %lx\n",
++			printk(KERN_ERR "VGT: _hvm_pio_emulation write data_ptr %lx\n",
+ 			(long)ioreq->data);
+ 			goto err_data_ptr;
+ 		}
+@@ -886,9 +909,9 @@ static int vgt_emulation_thread(void *priv)
+ 			ioreq = vgt_get_hvm_ioreq(vgt, vcpu);
+ 
+ 			if (vgt_hvm_do_ioreq(vgt, ioreq) ||
+-					!vgt_expand_shadow_page_mempool(vgt->pdev)) {
+-				hypervisor_pause_domain(vgt);
+-				hypervisor_shutdown_domain(vgt);
++					!vgt_ops->expand_shadow_page_mempool(vgt->pdev)) {
++				xen_pause_domain(vgt->vm_id);
++				xen_shutdown_domain(vgt->vm_id);
+ 			}
+ 
+ 			if (vgt->force_removal)
+@@ -1047,7 +1070,7 @@ static void *xen_gpa_to_va(struct vgt_device *vgt, unsigned long gpa)
+ 	struct vgt_hvm_info *info = vgt->hvm_info;
+ 
+ 	if (!vgt->vm_id)
+-		return (char*)hypervisor_mfn_to_virt(gpa>>PAGE_SHIFT) + (gpa & (PAGE_SIZE-1));
++		return (char*)xen_mfn_to_virt(gpa>>PAGE_SHIFT) + (gpa & (PAGE_SIZE-1));
+ 	/*
+ 	 * At the beginning of _hvm_mmio_emulation(), we already initialize
+ 	 * info->vmem_vma and info->vmem_vma_low_1mb.
+@@ -1099,7 +1122,7 @@ static bool xen_write_va(struct vgt_device *vgt, void *va, void *val,
+ 	return true;
+ }
+ 
+-static struct kernel_dm xen_kdm = {
++static struct kernel_dm xengt_kdm = {
+ 	.g2m_pfn = xen_g2m_pfn,
+ 	.pause_domain = xen_pause_domain,
+ 	.shutdown_domain = xen_shutdown_domain,
+@@ -1117,5 +1140,20 @@ static struct kernel_dm xen_kdm = {
+ 	.read_va = xen_read_va,
+ 	.write_va = xen_write_va,
+ };
++EXPORT_SYMBOL(xengt_kdm);
++
++static int __init xengt_init(void)
++{
++       if (!xen_initial_domain())
++               return -EINVAL;
++       printk(KERN_INFO "xengt: loaded\n");
++       return 0;
++}
++
++static void __exit xengt_exit(void)
++{
++	printk(KERN_INFO "xengt: unloaded\n");
++}
+ 
+-struct kernel_dm *vgt_pkdm = &xen_kdm;
++module_init(xengt_init);
++module_exit(xengt_exit);
+-- 
+1.7.10.4
+

@@ -1,0 +1,562 @@
+From 786319417870588e869558617970c03ef5ddc80c Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Thu, 15 Oct 2015 23:41:59 +0800
+Subject: [PATCH 259/403] vgt: security: take use the new command address
+ audit framework
+
+audit PIPE_CONTROL and all the MI_* commands that could used as privileged.
+if the MI_* command was not used, check it's unexpected usage to simplify.
+Error return will make the malicious VM been killed.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |  294 +++++++++++++++++++++++++--------
+ drivers/gpu/drm/i915/vgt/debugfs.c    |    2 +-
+ drivers/gpu/drm/i915/vgt/fb_decoder.h |    7 +-
+ drivers/gpu/drm/i915/vgt/handlers.c   |    9 +-
+ drivers/gpu/drm/i915/vgt/reg.h        |    1 +
+ 5 files changed, 236 insertions(+), 77 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index 8ac1e0f..71a7948 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -698,18 +698,16 @@ static inline int cmd_length(struct parser_exec_state *s)
+ 	}
+ }
+ 
+-static bool addr_audit_32(struct parser_exec_state *s, int index)
+-{
+-	/* TODO:
+-	 * Add the address audit implementation here. Right now do nothing
+-	 */
+-	return true;
+-}
+-
+ static int vgt_cmd_handler_mi_set_context(struct parser_exec_state* s)
+ {
+ 	struct vgt_device *vgt = s->vgt;
+-	addr_audit_32(s, 1);
++	struct pgt_device *pdev = vgt->pdev;
++
++	if (!IS_HSW(pdev)) {
++		vgt_err("Unexpectted %s in VM%d command buffer!\n", s->info->name, vgt->vm_id);
++		return -1;
++	}
++
+ 	if (!vgt->has_context) {
+ 		printk("VM %d activate context\n", vgt->vm_id);
+ 		vgt->has_context = 1;
+@@ -851,12 +849,22 @@ static int vgt_cmd_handler_lrr(struct parser_exec_state *s)
+ 
+ static int vgt_cmd_handler_lrm(struct parser_exec_state *s)
+ {
++	int gmadr_bytes = s->vgt->pdev->device_info.gmadr_bytes_in_cmd;
++	unsigned long gma;
+ 	int i, rc = 0;
+ 	int cmd_len = cmd_length(s);
+ 
+ 	for (i = 1; i < cmd_len;) {
+ 		rc |= cmd_reg_handler(s,
+ 			cmd_val(s, i) & BIT_RANGE_MASK(22, 2), i, "lrm");
++
++		if (cmd_val(s, 0) & (1 << 22)) {
++			gma = cmd_val(s, i + 1) & BIT_RANGE_MASK(31, 2);
++			if (gmadr_bytes == 8)
++				gma |= (cmd_val(s, i + 2) & BIT_RANGE_MASK(15, 0)) << 32;
++			rc |= cmd_address_audit(s, gma, sizeof(uint32_t), false);
++		}
++
+ 		i += gmadr_dw_number(s) + 1;
+ 	}
+ 
+@@ -865,12 +873,22 @@ static int vgt_cmd_handler_lrm(struct parser_exec_state *s)
+ 
+ static int vgt_cmd_handler_srm(struct parser_exec_state *s)
+ {
++	int gmadr_bytes = s->vgt->pdev->device_info.gmadr_bytes_in_cmd;
++	unsigned long gma;
+ 	int i, rc = 0;
+ 	int cmd_len = cmd_length(s);
+ 
+ 	for (i = 1; i < cmd_len;) {
+ 		rc |= cmd_reg_handler(s,
+ 			cmd_val(s, i) & BIT_RANGE_MASK(22, 2), i, "srm");
++
++		if (cmd_val(s, 0) & (1 << 22)) {
++			gma = cmd_val(s, i + 1) & BIT_RANGE_MASK(31, 2);
++			if (gmadr_bytes == 8)
++				gma |= (cmd_val(s, i + 2) & BIT_RANGE_MASK(15, 0)) << 32;
++			rc |= cmd_address_audit(s, gma, sizeof(uint32_t), false);
++		}
++
+ 		i += gmadr_dw_number(s) + 1;
+ 	}
+ 
+@@ -879,25 +897,37 @@ static int vgt_cmd_handler_srm(struct parser_exec_state *s)
+ 
+ static int vgt_cmd_handler_pipe_control(struct parser_exec_state *s)
+ {
+-	int i, rc = 0;
+-	int cmd_len = cmd_length(s);
+-
+-
+-	for (i = 1; i < cmd_len;) {
+-		if (cmd_val(s, i) & PIPE_CONTROL_MMIO_WRITE)
+-			rc |= cmd_reg_handler(s,
+-				cmd_val(s, i+1) & BIT_RANGE_MASK(22, 2), i, "pipe_ctrl");
+-		else if (cmd_val(s, i) & (2 << 14))
+-			rc |= cmd_reg_handler(s, 0x2350, i, "pipe_ctrl");
+-		else if (cmd_val(s, i) & (3 << 14))
+-			rc |= cmd_reg_handler(s, _REG_RCS_TIMESTAMP, i, "pipe_ctrl");
+-
+-		if (!rc)
+-			s->cmd_issue_irq |= (cmd_val(s, i) & PIPE_CONTROL_NOTIFY) ? true : false;
++	int gmadr_bytes = s->vgt->pdev->device_info.gmadr_bytes_in_cmd;
++	unsigned long gma;
++	bool index_mode = false;
++	int rc = 0;
+ 
+-		i += gmadr_dw_number(s) + 3;
++	/* LRI post sync */
++	if (cmd_val(s, 1) & PIPE_CONTROL_LRI_POST_SYNC)
++		rc = cmd_reg_handler(s,
++			cmd_val(s, 2) & BIT_RANGE_MASK(22, 2), 1, "pipe_ctrl");
++	/* post sync */
++	else if ((cmd_val(s, 1) & BIT_RANGE_MASK(15, 14))) {
++		if ((cmd_val(s, 1) & (2 << 14)) == (2 << 14))
++			rc = cmd_reg_handler(s, 0x2350, 1, "pipe_ctrl");
++		else if ((cmd_val(s, 1) & (3 << 14)) == (3 << 14))
++			rc = cmd_reg_handler(s, _REG_RCS_TIMESTAMP, 1, "pipe_ctrl");
++		/* check ggtt*/
++		if ((cmd_val(s, 2) & (1 << 2))) {
++			gma = cmd_val(s, 2) & BIT_RANGE_MASK(31, 3);
++			if (gmadr_bytes == 8)
++				gma |= (cmd_val(s, 3) & BIT_RANGE_MASK(15, 0)) << 32;
++			/* Store Data Index */
++			if (cmd_val(s, 1) & (1 << 21))
++				index_mode = true;
++
++			rc |= cmd_address_audit(s, gma, sizeof(uint64_t), index_mode);
++		}
+ 	}
+ 
++	if (!rc)
++		s->cmd_issue_irq = (cmd_val(s, 1) & PIPE_CONTROL_NOTIFY) ? true : false;
++
+ 	return rc;
+ }
+ 
+@@ -1109,6 +1139,7 @@ static bool vgt_flip_parameter_check(struct parser_exec_state *s,
+ 
+ static int vgt_handle_mi_display_flip(struct parser_exec_state *s, bool resubmitted)
+ {
++	struct vgt_device *vgt = s->vgt;
+ 	uint32_t surf_reg, surf_val, ctrl_reg;
+ 	uint32_t stride_reg, stride_val, stride_mask;
+ 	uint32_t tile_para;
+@@ -1119,6 +1150,7 @@ static int vgt_handle_mi_display_flip(struct parser_exec_state *s, bool resubmit
+ 	int i, length, rc = 0;
+ 	struct fb_notify_msg msg;
+ 	uint32_t value;
++	int surf_size = 0;
+ 
+ 	opcode = cmd_val(s, 0);
+ 	stride_val = cmd_val(s, 1);
+@@ -1165,6 +1197,23 @@ static int vgt_handle_mi_display_flip(struct parser_exec_state *s, bool resubmit
+ 		__sreg(s->vgt, stride_reg) = __vreg(s->vgt, stride_reg);
+ 		__sreg(s->vgt, ctrl_reg) = __vreg(s->vgt, ctrl_reg);
+ 		__sreg(s->vgt, surf_reg) = __vreg(s->vgt, surf_reg);
++
++		if (plane == PRIMARY_PLANE) {
++			struct vgt_primary_plane_format pri_fmt;
++			if (!vgt_decode_primary_plane_format(vgt, real_pipe, &pri_fmt))
++				surf_size = pri_fmt.height * pri_fmt.stride;
++			else
++				return -1;
++		} else {
++			struct vgt_sprite_plane_format spr_fmt;
++			if (!vgt_decode_sprite_plane_format(vgt, real_pipe, &spr_fmt))
++				surf_size = spr_fmt.height * spr_fmt.width * spr_fmt.bpp / 8 ;
++			else
++				return -1;
++		}
++		rc = cmd_address_audit(s, surf_val & BIT_RANGE_MASK(31, 12), surf_size, false);
++		if (rc < 0)
++			return rc;
+ 	}
+ 
+ 	__vreg(s->vgt, VGT_PIPE_FLIPCOUNT(pipe))++;
+@@ -1214,7 +1263,6 @@ wrong_command:
+ 
+ static int vgt_cmd_handler_mi_display_flip(struct parser_exec_state *s)
+ {
+-	addr_audit_32(s, 2);
+ 	return vgt_handle_mi_display_flip(s, false);
+ }
+ static bool is_wait_for_flip_pending(uint32_t cmd)
+@@ -1301,8 +1349,6 @@ static unsigned long get_gma_bb_from_cmd(struct parser_exec_state *s, int index)
+ 	unsigned long gma_high, gma_low;
+ 	int gmadr_bytes = s->vgt->pdev->device_info.gmadr_bytes_in_cmd;
+ 
+-	ASSERT(gmadr_bytes == 4 || gmadr_bytes == 8);
+-
+ 	gma_low = cmd_val(s, index) & BATCH_BUFFER_ADDR_MASK;
+ 
+ 	if (gmadr_bytes == 4) {
+@@ -1315,18 +1361,6 @@ static unsigned long get_gma_bb_from_cmd(struct parser_exec_state *s, int index)
+ 	return addr;
+ }
+ 
+-static inline bool address_audit(struct parser_exec_state *s, int index)
+-{
+-	int gmadr_bytes = s->vgt->pdev->device_info.gmadr_bytes_in_cmd;
+-
+-	/* TODO:
+-	 * Add the address audit implementation here. Right now do nothing
+-	 */
+-	ASSERT(gmadr_bytes == 4 || gmadr_bytes == 8);
+-
+-	return true;
+-}
+-
+ static inline int cmd_address_audit(struct parser_exec_state *s, unsigned long g_addr,
+ 	int op_size, bool index_mode)
+ {
+@@ -1367,6 +1401,116 @@ static inline int cmd_address_audit(struct parser_exec_state *s, unsigned long g
+ 	return rc;
+ }
+ 
++static int vgt_cmd_handler_mi_store_data_imm(struct parser_exec_state *s)
++{
++	int gmadr_bytes = s->vgt->pdev->device_info.gmadr_bytes_in_cmd;
++	int op_size = (cmd_length(s) - 3) * sizeof(uint32_t);
++	int core_id = (cmd_val(s, 2) & (1 << 0)) ? 1 : 0;
++	unsigned long gma, gma_low, gma_high;
++	int rc = 0;
++
++	/* check ppggt */
++	if (!(cmd_val(s, 0) & (1 << 22)))
++		return rc;
++
++	gma = cmd_val(s, 2) & BIT_RANGE_MASK(31, 2);
++
++	if (gmadr_bytes == 8) {
++		gma_low = cmd_val(s, 1) & BIT_RANGE_MASK(31, 2);
++		gma_high = cmd_val(s, 2) & BIT_RANGE_MASK(15, 0);
++		gma = (gma_high << 32) | gma_low;
++		core_id = (cmd_val(s, 1) & (1 << 0)) ? 1 : 0;
++	}
++
++	rc = cmd_address_audit(s, gma + op_size * core_id, op_size, false);
++
++	return rc;
++}
++
++static int vgt_cmd_handler_mi_semaphore_wait(struct parser_exec_state *s)
++{
++	struct vgt_device *vgt = s->vgt;
++	struct pgt_device *pdev = vgt->pdev;
++
++	if (IS_HSW(pdev))
++		return 0;
++
++	vgt_err("Unexpected %s in VM%d command buffer!\n", s->info->name, vgt->vm_id);
++	return -1;
++}
++
++static int vgt_cmd_handler_mi_report_perf_count(struct parser_exec_state *s)
++{
++	struct vgt_device *vgt = s->vgt;
++	struct pgt_device *pdev = vgt->pdev;
++
++	if (IS_HSW(pdev))
++		return 0;
++
++	vgt_err("Unexpected %s in VM%d command buffer!\n", s->info->name, vgt->vm_id);
++	return -1;
++}
++
++static int vgt_cmd_handler_mi_op_2e(struct parser_exec_state *s)
++{
++	struct vgt_device *vgt = s->vgt;
++	struct pgt_device *pdev = vgt->pdev;
++
++	if (IS_HSW(pdev))
++		return 0;
++
++	vgt_err("Unexpected %s in VM%d command buffer!\n", s->info->name, vgt->vm_id);
++	return -1;
++}
++
++static int vgt_cmd_handler_mi_op_2f(struct parser_exec_state *s)
++{
++	struct vgt_device *vgt = s->vgt;
++	struct pgt_device *pdev = vgt->pdev;
++
++	if (IS_HSW(pdev))
++		return 0;
++
++	vgt_err("Unexpected %s in VM%d command buffer!\n", s->info->name, vgt->vm_id);
++	return -1;
++}
++
++static int vgt_cmd_handler_mi_store_data_index(struct parser_exec_state *s)
++{
++	struct vgt_device *vgt = s->vgt;
++	struct pgt_device *pdev = vgt->pdev;
++
++	if (IS_HSW(pdev))
++		return 0;
++
++	vgt_err("Unexpected %s in VM%d command buffer!\n", s->info->name, vgt->vm_id);
++	return -1;
++}
++
++static int vgt_cmd_handler_mi_clflush(struct parser_exec_state *s)
++{
++	struct vgt_device *vgt = s->vgt;
++	struct pgt_device *pdev = vgt->pdev;
++
++	if (IS_HSW(pdev))
++		return 0;
++
++	vgt_err("Unexpected %s in VM%d command buffer!\n", s->info->name, vgt->vm_id);
++	return -1;
++}
++
++static int vgt_cmd_handler_mi_conditional_batch_buffer_end(struct parser_exec_state *s)
++{
++	struct vgt_device *vgt = s->vgt;
++	struct pgt_device *pdev = vgt->pdev;
++
++	if (IS_HSW(pdev))
++		return 0;
++
++	vgt_err("Unexpected %s in VM%d command buffer!\n", s->info->name, vgt->vm_id);
++	return -1;
++}
++
+ static int vgt_cmd_handler_mi_update_gtt(struct parser_exec_state *s)
+ {
+ 	vgt_err("Unexpectted mi_update_gtt in VM command buffer\n");
+@@ -1375,24 +1519,28 @@ static int vgt_cmd_handler_mi_update_gtt(struct parser_exec_state *s)
+ 
+ static int vgt_cmd_handler_mi_flush_dw(struct parser_exec_state* s)
+ {
+-	int i, len;
+-	int offset = 1;
++	int gmadr_bytes = s->vgt->pdev->device_info.gmadr_bytes_in_cmd;
++	unsigned long gma;
++	bool index_mode = false;
++	int rc = 0;
+ 
+-	/* Check post-sync bit */
+-	if ((cmd_val(s, 0) >> 14) & 0x3)
+-		address_audit(s, offset);
+-	offset += gmadr_dw_number(s);
++	/* Check post-sync and ppgtt bit */
++	if (((cmd_val(s, 0) >> 14) & 0x3) && (cmd_val(s, 1) & (1 << 2))) {
+ 
+-	/* Check notify bit */
+-	s->cmd_issue_irq = ( cmd_val(s,0) & (1 << 8)) ? true : false;
++		gma = cmd_val(s, 1) & BIT_RANGE_MASK(31, 3);
++		if (gmadr_bytes == 8)
++			gma |= (cmd_val(s, 2) & BIT_RANGE_MASK(15, 0)) << 32;
++		/* Store Data Index */
++		if (cmd_val(s, 0) & (1 << 21))
++			index_mode = true;
+ 
+-	len = cmd_length(s);
+-	for (i=2; i<len; i++) {
+-		address_audit(s, offset);
+-		offset += gmadr_dw_number(s);
++		rc = cmd_address_audit(s, gma, sizeof(uint64_t), index_mode);
+ 	}
++	/* Check notify bit */
++	if (!rc)
++		s->cmd_issue_irq = (cmd_val(s, 0) & (1 << 8)) ? true : false;
+ 
+-	return 0;
++	return rc;
+ }
+ 
+ static void addr_type_update_snb(struct parser_exec_state* s)
+@@ -1417,9 +1565,14 @@ static int batch_buffer_needs_scan(struct parser_exec_state *s)
+ 		if (cmd_val(s, 0) & (1 << 8))
+ 			return 0;
+ 	} else if (IS_HSW(pdev)) {
+-		/* pre-BDW has dedicated privilege bit */
+-		if (cmd_val(s, 0) & (1 << 13))
+-			return 0;
++		/* only RCS on HSW has dedicated privilege bit */
++		if (s->ring_id == 0) {
++			if (cmd_val(s, 0) & (1 << 13))
++				return 0;
++		} else {
++			if (cmd_val(s, 0) & (1 << 8))
++				return 0;
++		}
+ 	}
+ 
+ 	return 1;
+@@ -1440,6 +1593,14 @@ static int vgt_cmd_handler_mi_batch_buffer_start(struct parser_exec_state *s)
+ 		vgt_err("Jumping to 2nd level batch buffer from ring buffer is not allowd\n");
+ 		return -EINVAL;
+ 	}
++	/* check ggtt  */
++	if (!(cmd_val(s, 0) & (1 << 8))) {
++		/* assume guest driver use 4k page, need confirm */
++		/*TODO: get the length of the privileged BB from shadow BB*/
++		rc = cmd_address_audit(s, get_gma_bb_from_cmd(s, 1), PAGE_SIZE, false);
++		if (rc < 0)
++			return rc;
++	}
+ 
+ 	s->saved_buf_addr_type = s->buf_addr_type;
+ 
+@@ -1454,8 +1615,6 @@ static int vgt_cmd_handler_mi_batch_buffer_start(struct parser_exec_state *s)
+ 		s->ret_ip_gma_bb = s->ip_gma + cmd_length(s) * sizeof(uint32_t);
+ 	}
+ 
+-	address_audit(s, 1);
+-
+ 	if (batch_buffer_needs_scan(s)) {
+ 		rc = ip_gma_set(s, get_gma_bb_from_cmd(s, 1));
+ 		if (rc < 0)
+@@ -1502,7 +1661,7 @@ static struct cmd_info cmd_info[] = {
+ 	{"MI_WAIT_FOR_EVENT", OP_MI_WAIT_FOR_EVENT, F_LEN_CONST | F_POST_HANDLE, R_RCS | R_BCS,
+ 		D_ALL, 0, 1, vgt_handle_mi_wait_for_event},
+ 
+-	{"MI_FLUSH", OP_MI_FLUSH, F_LEN_CONST, R_ALL, D_ALL, 0, 1, NULL},
++	{"MI_FLUSH", OP_MI_FLUSH, F_LEN_CONST, R_RCS, D_PRE_BDW, 0, 1, NULL},
+ 
+ 	{"MI_ARB_CHECK", OP_MI_ARB_CHECK, F_LEN_CONST, R_ALL, D_ALL, 0, 1, NULL},
+ 
+@@ -1543,16 +1702,17 @@ static struct cmd_info cmd_info[] = {
+ 
+ 	{"ME_SEMAPHORE_SIGNAL", OP_MI_SEMAPHORE_SIGNAL, F_LEN_VAR, R_ALL, D_BDW_PLUS, 0, 8, NULL},
+ 
+-	{"ME_SEMAPHORE_WAIT", OP_MI_SEMAPHORE_WAIT, F_LEN_VAR, R_ALL, D_BDW_PLUS, ADDR_FIX_1(2), 8, NULL},
++	{"ME_SEMAPHORE_WAIT", OP_MI_SEMAPHORE_WAIT, F_LEN_VAR, R_ALL, D_BDW_PLUS,
++		ADDR_FIX_1(2), 8, vgt_cmd_handler_mi_semaphore_wait},
+ 
+ 	{"MI_STORE_DWORD_IMM", OP_MI_STORE_DWORD_IMM, F_LEN_VAR, R_ALL, D_HSW,
+ 		ADDR_FIX_1(2), 10, NULL},
+ 
+ 	{"MI_STORE_DWORD_IMM", OP_MI_STORE_DWORD_IMM, F_LEN_VAR, R_ALL, D_BDW_PLUS,
+-		ADDR_FIX_1(1), 10, NULL},
++		ADDR_FIX_1(1), 10, vgt_cmd_handler_mi_store_data_imm},
+ 
+ 	{"MI_STORE_DATA_INDEX", OP_MI_STORE_DATA_INDEX, F_LEN_VAR, R_ALL, D_ALL,
+-		0, 8, NULL},
++		0, 8, vgt_cmd_handler_mi_store_data_index},
+ 
+ 	{"MI_LOAD_REGISTER_IMM", OP_MI_LRI_CMD, F_LEN_VAR, R_ALL, D_ALL, 0, 8, vgt_cmd_handler_lri},
+ 
+@@ -1572,10 +1732,10 @@ static struct cmd_info cmd_info[] = {
+ 		0, 6, vgt_cmd_handler_mi_flush_dw},
+ 
+ 	{"MI_CLFLUSH", OP_MI_CLFLUSH, F_LEN_VAR, R_ALL, D_ALL,
+-		ADDR_FIX_1(1), 10, NULL},
++		ADDR_FIX_1(1), 10, vgt_cmd_handler_mi_clflush},
+ 
+ 	{"MI_REPORT_PERF_COUNT", OP_MI_REPORT_PERF_COUNT, F_LEN_VAR, R_ALL, D_ALL,
+-		ADDR_FIX_1(1), 6, NULL},
++		ADDR_FIX_1(1), 6, vgt_cmd_handler_mi_report_perf_count},
+ 
+ 	{"MI_LOAD_REGISTER_MEM", OP_MI_LOAD_REGISTER_MEM, F_LEN_VAR, R_ALL, D_GEN7PLUS,
+ 		ADDR_FIX_1(2), 8, vgt_cmd_handler_lrm},
+@@ -1592,15 +1752,15 @@ static struct cmd_info cmd_info[] = {
+ 	{"MI_STORE_URM_MEM", OP_MI_STORE_URM_MEM, F_LEN_VAR, R_RCS, D_HSW_PLUS,
+ 		ADDR_FIX_1(2), 8, NULL},
+ 
+-	{"MI_OP_2E", OP_MI_2E, F_LEN_VAR, R_ALL, D_BDW_PLUS, ADDR_FIX_2(1, 2), 8, NULL},
++	{"MI_OP_2E", OP_MI_2E, F_LEN_VAR, R_ALL, D_BDW_PLUS, ADDR_FIX_2(1, 2), 8, vgt_cmd_handler_mi_op_2e},
+ 
+-	{"MI_OP_2F", OP_MI_2F, F_LEN_VAR, R_ALL, D_BDW_PLUS, ADDR_FIX_1(1), 8, NULL},
++	{"MI_OP_2F", OP_MI_2F, F_LEN_VAR, R_ALL, D_BDW_PLUS, ADDR_FIX_1(1), 8, vgt_cmd_handler_mi_op_2f},
+ 
+ 	{"MI_BATCH_BUFFER_START", OP_MI_BATCH_BUFFER_START, F_IP_ADVANCE_CUSTOM,
+ 		R_ALL, D_ALL, 0, 8, vgt_cmd_handler_mi_batch_buffer_start},
+ 
+ 	{"MI_CONDITIONAL_BATCH_BUFFER_END", OP_MI_CONDITIONAL_BATCH_BUFFER_END,
+-		F_LEN_VAR, R_ALL, D_ALL, ADDR_FIX_1(2), 8, NULL},
++		F_LEN_VAR, R_ALL, D_ALL, ADDR_FIX_1(2), 8, vgt_cmd_handler_mi_conditional_batch_buffer_end},
+ 
+ 	{"MI_LOAD_SCAN_LINES_INCL", OP_MI_LOAD_SCAN_LINES_INCL, F_LEN_CONST, R_RCS | R_BCS, D_HSW_PLUS,
+ 		0, 2, NULL},
+diff --git a/drivers/gpu/drm/i915/vgt/debugfs.c b/drivers/gpu/drm/i915/vgt/debugfs.c
+index 37aa738..0aa4631 100644
+--- a/drivers/gpu/drm/i915/vgt/debugfs.c
++++ b/drivers/gpu/drm/i915/vgt/debugfs.c
+@@ -23,9 +23,9 @@
+ #include <linux/module.h>
+ #include <linux/pci.h>
+ #include <linux/debugfs.h>
+-#include "fb_decoder.h"
+ 
+ #include "vgt.h"
++#include "fb_decoder.h"
+ 
+ /*
+  * Dump buffer
+diff --git a/drivers/gpu/drm/i915/vgt/fb_decoder.h b/drivers/gpu/drm/i915/vgt/fb_decoder.h
+index cb640ab..bd59dae 100644
+--- a/drivers/gpu/drm/i915/vgt/fb_decoder.h
++++ b/drivers/gpu/drm/i915/vgt/fb_decoder.h
+@@ -135,5 +135,10 @@ int vgt_register_fb_notifier(struct notifier_block *nb);
+  * Unregister the callback for notification
+  */
+ int vgt_unregister_fb_notifier(struct notifier_block *nb);
+-
++int vgt_decode_primary_plane_format(struct vgt_device *vgt,
++			   int pipe, struct vgt_primary_plane_format *plane);
++int vgt_decode_cursor_plane_format(struct vgt_device *vgt,
++			   int pipe, struct vgt_cursor_plane_format *plane);
++int vgt_decode_sprite_plane_format(struct vgt_device *vgt,
++			   int pipe, struct vgt_sprite_plane_format *plane);
+ #endif
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index b28e4e4..c39d333 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -26,8 +26,8 @@
+ #include <linux/delay.h>
+ #include <linux/acpi.h>
+ 
+-#include "fb_decoder.h"
+ #include "vgt.h"
++#include "fb_decoder.h"
+ 
+ /* working for both HSW/BDW and SKL+ */
+ #define OFFSET_TO_DP_AUX_PORT(offset) (((offset) & 0xF00) >> 8)
+@@ -803,13 +803,6 @@ static bool dpy_trans_ddi_ctl_write(struct vgt_device *vgt, unsigned int offset,
+ 	return true;
+ }
+ 
+-extern int vgt_decode_primary_plane_format(struct vgt_device *vgt,
+-	int pipe, struct vgt_primary_plane_format *plane);
+-extern int vgt_decode_cursor_plane_format(struct vgt_device *vgt,
+-	int pipe, struct vgt_cursor_plane_format *plane);
+-extern int vgt_decode_sprite_plane_format(struct vgt_device *vgt,
+-	int pipe, struct vgt_sprite_plane_format *plane);
+-
+ int vgt_surf_base_range_check(struct vgt_device *vgt,
+ 	enum pipe pipe, enum vgt_plane_type plane, vgt_reg_t *surf_base)
+ {
+diff --git a/drivers/gpu/drm/i915/vgt/reg.h b/drivers/gpu/drm/i915/vgt/reg.h
+index 7b4c7e1..859c4af 100644
+--- a/drivers/gpu/drm/i915/vgt/reg.h
++++ b/drivers/gpu/drm/i915/vgt/reg.h
+@@ -419,6 +419,7 @@ static inline uint32_t __RING_REG(int32_t ring_id, uint32_t rcs_reg)
+ #define   MI_WAIT_FOR_SPRITE_A_FLIP_PENDING      (1<<2)
+ 
+ #define	PIPE_CONTROL_DC_FLUSH_ENABLE			(1<<5)
++#define PIPE_CONTROL_LRI_POST_SYNC			(1<<23)
+ #define DUMMY_3D		(0x6d800005)
+ #define PRIM_TRILIST		(0x4)
+ /*
+-- 
+1.7.10.4
+

@@ -1,0 +1,85 @@
+From 2d17f2b4304db91f076f074707194dfaa0299e80 Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Fri, 15 Apr 2016 15:38:58 +0800
+Subject: [PATCH 401/403] vgt debug: print schedule and blank time
+
+print schedule and vblank time when show_debug, would be useful
+when guest TDR happen.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/interrupt.c |    2 ++
+ drivers/gpu/drm/i915/vgt/perf.h      |    2 ++
+ drivers/gpu/drm/i915/vgt/render.c    |    1 +
+ drivers/gpu/drm/i915/vgt/utility.c   |   17 +++++++++++++----
+ 4 files changed, 18 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/interrupt.c b/drivers/gpu/drm/i915/vgt/interrupt.c
+index 210ff2f..8a17197 100644
+--- a/drivers/gpu/drm/i915/vgt/interrupt.c
++++ b/drivers/gpu/drm/i915/vgt/interrupt.c
+@@ -1920,6 +1920,8 @@ void vgt_emulate_dpy_events(struct pgt_device *pdev)
+ 		vgt_emulate_vblank(vgt, PIPE_A);
+ 		vgt_emulate_vblank(vgt, PIPE_B);
+ 		vgt_emulate_vblank(vgt, PIPE_C);
++
++		vgt->stat.last_vblank_time = vgt_get_cycles();
+ 	}
+ }
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/perf.h b/drivers/gpu/drm/i915/vgt/perf.h
+index 1fabb73..34e029e 100644
+--- a/drivers/gpu/drm/i915/vgt/perf.h
++++ b/drivers/gpu/drm/i915/vgt/perf.h
+@@ -35,6 +35,8 @@ struct vgt_mmio_accounting_reg_stat {
+ 
+ struct vgt_statistics {
+ 	u64	schedule_in_time;	/* TSC time when it is last scheduled in */
++	u64	schedule_out_time;
++	u64	last_vblank_time;
+ 	u64	allocated_cycles;
+ 	u64	used_cycles;
+ 	u64	irq_num;
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index 0caa6a7..f0e96f4 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -639,6 +639,7 @@ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ 	pdev->stat.context_switch_num ++;
+ 	t1 = vgt_get_cycles();
+ 	pdev->stat.ring_idle_wait += t1 - t0;
++	prev->stat.schedule_out_time = t1;
+ 
+ 	vgt_sched_update_prev(prev, t0);
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/utility.c b/drivers/gpu/drm/i915/vgt/utility.c
+index acba19c..bf33feb 100644
+--- a/drivers/gpu/drm/i915/vgt/utility.c
++++ b/drivers/gpu/drm/i915/vgt/utility.c
+@@ -136,10 +136,19 @@ void execlist_show_ring_debug(struct pgt_device *pdev, int ring_id)
+ 
+ 		vgt = pdev->device[i];
+ 
+-		if (vgt == current_render_owner(pdev))
+-			printk("VM%d(*):", vgt->vm_id);
+-		else
+-			printk("VM%d   :", vgt->vm_id);
++		if (vgt == current_render_owner(pdev)) {
++			printk("VM%d(*):\n", vgt->vm_id);
++			printk("stat(us): sche_in %lld, sche_out %lld, last_vblank %lld\n",
++				vgt->stat.schedule_in_time/(cpu_khz/1000),
++				vgt->stat.schedule_out_time/(cpu_khz/1000),
++				vgt->stat.last_vblank_time/(cpu_khz/1000));
++		} else {
++			printk("VM%d   :\n", vgt->vm_id);
++			printk("stat(us): sche_in %lld, sche_out %lld, last_vblank %lld\n",
++				vgt->stat.schedule_in_time/(cpu_khz/1000),
++				vgt->stat.schedule_out_time/(cpu_khz/1000),
++				vgt->stat.last_vblank_time/(cpu_khz/1000));
++		}
+ 	}
+ 
+ 	common_show_ring_debug(pdev, ring_id);
+-- 
+1.7.10.4
+

@@ -1,0 +1,38 @@
+From 6707d9cedae390b6e143f09ec003c346c5809b0a Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Thu, 8 Oct 2015 16:42:29 +0800
+Subject: [PATCH 249/403] add license header for vgt_mgr
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ vgt_mgr |   15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/vgt_mgr b/vgt_mgr
+index afc26fe..ab346cb 100755
+--- a/vgt_mgr
++++ b/vgt_mgr
+@@ -1,5 +1,20 @@
+ #!/bin/bash
+ 
++#Copyright (c) 2013, Intel Corporation.
++#
++#This program is free software; you can redistribute it and/or modify it
++#under the terms and conditions of the GNU General Public License,
++#version 2, as published by the Free Software Foundation.
++#
++#This program is distributed in the hope it will be useful, but WITHOUT
++#ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++#FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++#more details.
++#
++#You should have received a copy of the GNU General Public License along with
++#this program; if not, write to the Free Software Foundation, Inc.
++#51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++
+ get_port_name() {
+ 	type=`echo $1|cut -c7-`
+ 	port_name=`cat $i915_debugfs_dir/i915_display_info|sed -n '/Connector info/,$p'|grep $type|awk '{print $6}'|sed 's/,//g'`
+-- 
+1.7.10.4
+

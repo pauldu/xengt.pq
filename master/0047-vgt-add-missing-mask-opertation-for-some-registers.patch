@@ -1,0 +1,33 @@
+From caf82fe831857bf1921803fcaf3b155eb9b32080 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Tue, 21 Apr 2015 08:33:24 +0800
+Subject: [PATCH 047/403] vgt: add missing mask opertation for some registers.
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/render.c |    8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index 99fd8b7..0f36d50 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -1690,11 +1690,11 @@ static struct reg_mask_t gen8_rcs_reset_mmio[] = {
+ 	{0x24d8, 0},
+ 	{0x24dc, 0},
+ 
+-	{0xe4f0, 0},
+-	{0xe4f4, 0},
++	{0xe4f0, 1},
++	{0xe4f4, 1},
+ 
+-	{0xe184, 0},
+-	{0x7300, 0},
++	{0xe184, 1},
++	{0x7300, 1},
+ 	{0x7004, 1},
+ 	{0x7008, 1},
+ 
+-- 
+1.7.10.4
+

@@ -1,0 +1,29 @@
+From 395903817ef92074af073631fa1458afc56d6169 Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Thu, 4 Feb 2016 12:38:07 +0800
+Subject: [PATCH 345/403] enable shadow and audit privileged BB in BLT ring
+
+BLT ring is the same as other engine rings, there is no special
+reason to skip shadow and audit priv-bb in it.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |    2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index a313ae5..0be4b46 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -1772,8 +1772,6 @@ static int batch_buffer_needs_scan(struct parser_exec_state *s)
+ 	struct pgt_device *pdev = s->vgt->pdev;
+ 
+ 	if (IS_BDW(pdev) || IS_SKL(pdev)) {
+-		if (s->ring_id == RING_BUFFER_BCS)
+-			return 0;
+ 		/* BDW decides privilege based on address space */
+ 		if (cmd_val(s, 0) & (1 << 8))
+ 			return 0;
+-- 
+1.7.10.4
+

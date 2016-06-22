@@ -1,0 +1,57 @@
+From 83e5cac7320545045bd60c9191eae96a048e2b83 Mon Sep 17 00:00:00 2001
+From: Yi Sun <yi.sun@intel.com>
+Date: Wed, 23 Sep 2015 13:24:04 +0800
+Subject: [PATCH 250/403] vgt: remove unnecessary ASSERT from aperture_gm.c
+
+We should handle invalid aperture/fence size for a VM as an error instead of panic.
+
+v5, Fix some coding style issue.
+
+v4, Revert change of free_vm_aperture_gm_and_fence's return type, which
+is omitted in v3.
+
+v3, Refine comments.
+    Remove error check in free_vm_aperture_gm_and_fence, since it has
+    been hanlded when VMs allocated.
+
+v2, Bug fix: modify type of return value from void to int, for both defination and declaration.
+
+Signed-off-by: Yi Sun <yi.sun@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/aperture_gm.c |   13 +++++++++----
+ 1 file changed, 9 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/aperture_gm.c b/drivers/gpu/drm/i915/vgt/aperture_gm.c
+index 2f44938..7b1a3d8 100644
+--- a/drivers/gpu/drm/i915/vgt/aperture_gm.c
++++ b/drivers/gpu/drm/i915/vgt/aperture_gm.c
+@@ -210,8 +210,15 @@ int allocate_vm_aperture_gm_and_fence(struct vgt_device *vgt, vgt_params_t vp)
+ 	int i=0;
+ 
+ 	ASSERT(vgt->aperture_base == 0); /* not allocated yet*/
+-	ASSERT(vp.aperture_sz > 0 && vp.aperture_sz <= vp.gm_sz);
+-	ASSERT(vp.fence_sz > 0);
++
++	if (vp.aperture_sz <= 0 || vp.aperture_sz > vp.gm_sz) {
++		vgt_err("Aperture size error(%d).", vp.aperture_sz);
++		return -EINVAL;
++	}
++	if (vp.fence_sz <= 0) {
++		vgt_err("Fence size error(%d).", vp.fence_sz);
++		return -EINVAL;
++	}
+ 
+ 	visable_gm_start = bitmap_find_next_zero_area(gm_bitmap, guard,
+ 				aperture_search_start, vp.aperture_sz, 0);
+@@ -262,8 +269,6 @@ void free_vm_aperture_gm_and_fence(struct vgt_device *vgt)
+ 	unsigned long hidden_gm_start = vgt->hidden_gm_offset/SIZE_1MB;
+ 	int i=0;
+ 
+-	ASSERT(vgt->aperture_sz > 0 && vgt->aperture_sz <= vgt->gm_sz);
+-
+ 	/* mark the related areas as available */
+ 	bitmap_clear(gm_bitmap, visable_gm_start, vgt->aperture_sz/SIZE_1MB);
+ 	if (vgt->gm_sz > vgt->aperture_sz)
+-- 
+1.7.10.4
+

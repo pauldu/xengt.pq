@@ -1,0 +1,43 @@
+From 75f0f5c5eac11e5eff26bfd550f477233af69099 Mon Sep 17 00:00:00 2001
+From: Yuankai Guo <yuankai.guo@intel.com>
+Date: Mon, 3 Aug 2015 09:23:30 +0800
+Subject: [PATCH 138/403] Partial fix of bug 728.
+
+Make a power related WA effective only when execlists is enabled to
+fix the problem that native and NonGT cannot start X.
+---
+ drivers/gpu/drm/i915/intel_pm.c |   18 ++++++++++--------
+ 1 file changed, 10 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/intel_pm.c b/drivers/gpu/drm/i915/intel_pm.c
+index 8fe165d..5ed5a64 100644
+--- a/drivers/gpu/drm/i915/intel_pm.c
++++ b/drivers/gpu/drm/i915/intel_pm.c
+@@ -6513,14 +6513,16 @@ static void broadwell_init_clock_gating(struct drm_device *dev)
+ 	 */
+ 	I915_WRITE(HSW_GTT_CACHE_EN, GTT_CACHE_EN_ALL);
+ 
+-	/* WaOCLCoherentLineFlush:bdw */
+-	I915_WRITE(GEN8_L3SQCREG4, I915_READ(GEN8_L3SQCREG4) |
+-		   GEN8_PIPELINE_FLUSH_COHERENT_LINES);
+-
+-	/* WaDisableMidThreadPreempt:bdw */
+-	I915_WRITE(GEN8_FF_SLICE_CS_CHICKEN2,
+-		   I915_READ(GEN8_FF_SLICE_CS_CHICKEN2) |
+-		   _MASKED_BIT_ENABLE(GEN8_THREAD_GROUP_PREEMPTION));
++	if (i915.enable_execlists) {
++		/* WaOCLCoherentLineFlush:bdw */
++		I915_WRITE(GEN8_L3SQCREG4, I915_READ(GEN8_L3SQCREG4) |
++			   GEN8_PIPELINE_FLUSH_COHERENT_LINES);
++
++		/* WaDisableMidThreadPreempt:bdw */
++		I915_WRITE(GEN8_FF_SLICE_CS_CHICKEN2,
++			   I915_READ(GEN8_FF_SLICE_CS_CHICKEN2) |
++			   _MASKED_BIT_ENABLE(GEN8_THREAD_GROUP_PREEMPTION));
++	}
+ 
+ 	I915_WRITE(0xb10c, (I915_READ(0xb10c) & ~(0xf << 20)) | (0x8 << 20));
+ 
+-- 
+1.7.10.4
+

@@ -1,0 +1,45 @@
+From 802196d3b4b04ebe099f1e021b33f081b1c5d195 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Mon, 1 Jun 2015 16:19:01 -0400
+Subject: [PATCH 088/403] vgt: device reset: let guest re-create ppgtt mm
+ during virtual device reset
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/instance.c |    6 ------
+ 1 file changed, 6 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/instance.c b/drivers/gpu/drm/i915/vgt/instance.c
+index b009f67..cf97b29 100644
+--- a/drivers/gpu/drm/i915/vgt/instance.c
++++ b/drivers/gpu/drm/i915/vgt/instance.c
+@@ -451,7 +451,6 @@ void vgt_release_instance(struct vgt_device *vgt)
+ 
+ void vgt_reset_ppgtt(struct vgt_device *vgt, unsigned long ring_bitmap)
+ {
+-	struct vgt_mm *mm;
+ 	int bit;
+ 
+ 	if (!vgt->pdev->enable_ppgtt || !vgt->gtt.active_ppgtt_mm_bitmap)
+@@ -467,8 +466,6 @@ void vgt_reset_ppgtt(struct vgt_device *vgt, unsigned long ring_bitmap)
+ 		if (!test_bit(bit, &vgt->gtt.active_ppgtt_mm_bitmap))
+ 			continue;
+ 
+-		mm = vgt->rb[bit].active_ppgtt_mm;
+-
+ 		vgt_info("VM %d: Reset ring %d PPGTT state.\n", vgt->vm_id, bit);
+ 
+ 		vgt->rb[bit].has_ppgtt_mode_enabled = 0;
+@@ -476,9 +473,6 @@ void vgt_reset_ppgtt(struct vgt_device *vgt, unsigned long ring_bitmap)
+ 		vgt->rb[bit].ppgtt_page_table_level = 0;
+ 		vgt->rb[bit].ppgtt_root_pointer_type = GTT_TYPE_INVALID;
+ 
+-		vgt_destroy_mm(mm);
+-
+-		vgt->rb[bit].active_ppgtt_mm = NULL;
+ 		clear_bit(bit, &vgt->gtt.active_ppgtt_mm_bitmap);
+ 	}
+ 
+-- 
+1.7.10.4
+

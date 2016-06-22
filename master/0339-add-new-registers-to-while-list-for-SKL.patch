@@ -1,0 +1,31 @@
+From 0ec018a9282b10d2215edfd0186565d0d48574fc Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Fri, 29 Jan 2016 11:02:41 +0800
+Subject: [PATCH 339/403] add new registers to while list for SKL+
+
+The reg name of 0x1c17c 0x1c178 have changed after SKL but still have the
+same function. LRI access it in SKL also.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 3842c89..7dd4d82 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -3545,8 +3545,8 @@ reg_attr_t vgt_reg_info_general[] = {
+ {0x5200, 32, F_RDR, 0, D_ALL, NULL, NULL},
+ {0x5240, 32, F_RDR, 0, D_ALL, NULL, NULL},
+ {0x5280, 16, F_RDR, 0, D_ALL, NULL, NULL},
+-{0x1c178, 4, F_RDR, 0, D_BDW, NULL, NULL},
+-{0x1c17c, 4, F_RDR, 0, D_BDW, NULL, NULL},
++{0x1c178, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++{0x1c17c, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
+ {BCS_SWCTRL, 4, F_RDR, 0, D_ALL, NULL, NULL},
+ {HS_INVOCATION_COUNT, 8, F_RDR, 0, D_ALL, NULL, NULL},
+ {DS_INVOCATION_COUNT, 8, F_RDR, 0, D_ALL, NULL, NULL},
+-- 
+1.7.10.4
+

@@ -1,0 +1,28 @@
+From e5ca3a36918c714a8524880030a40630fa833953 Mon Sep 17 00:00:00 2001
+From: Min He <min.he@intel.com>
+Date: Fri, 29 Jan 2016 22:24:35 +0800
+Subject: [PATCH 338/403] vgt: patch to fix 897 issue
+
+This patch added 0x2580 into the save/restore reg list of SKL, which can
+fix bug 897.
+
+Signed-off-by: Min He <min.he@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/render.c |    1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index ef9983b..86b432c 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -216,6 +216,7 @@ vgt_reg_t vgt_gen9_render_regs[] = {
+ 	GEN8_PRIVATE_PAT_HI,
+ 
+ 	0x7004,
++	0x2580,
+ 	COMMON_SLICE_CHICKEN2,
+ 	0x7300,
+ 
+-- 
+1.7.10.4
+

@@ -1,0 +1,62 @@
+diff --git a/mk/Kbuild b/mk/Kbuild
+index 5bf1347..d6ccf72 100644
+--- a/mk/Kbuild
++++ b/mk/Kbuild
+@@ -1,5 +1,6 @@
+-LINUXINCLUDE := -I $(KBUILD_EXTMOD)/include -I $(KBUILD_EXTMOD)/include/drm -I $(KBUILD_EXTMOD)/include/uapi $(LINUXINCLUDE)
++LINUXINCLUDE := -I $(KBUILD_EXTMOD)/include -I $(KBUILD_EXTMOD)/include/drm -I $(KBUILD_EXTMOD)/include/uapi -I $(KBUILD_EXTMOD)/drivers/gpu/drm/i915/vgt $(LINUXINCLUDE)
+ 
++CONFIG_XENGT := m
+ CONFIG_DRM := m
+ CONFIG_DRM_MIPI_DSI := m
+ CONFIG_DRM_KMS_HELPER := m
+@@ -9,7 +10,9 @@ CONFIG_DRM_LOAD_EDID_FIRMWARE := y
+ CONFIG_DRM_PANEL := y
+ CONFIG_DRM_I915 := m
+ CONFIG_DRM_I915_PRELIMINARY_HW_SUPPORT := y
++CONFIG_I915_VGT := y
+ 
++export CONFIG_XENGT
+ export CONFIG_DRM
+ export CONFIG_DRM_MIPI_DSI
+ export CONFIG_DRM_KMS_HELPER
+@@ -19,7 +22,9 @@ export CONFIG_DRM_LOAD_EDID_FIRMWARE
+ export CONFIG_DRM_PANEL
+ export CONFIG_DRM_I915
+ export CONFIG_DRM_I915_PRELIMINARY_HW_SUPPORT
++export CONFIG_I915_VGT
+ 
++KBUILD_CFLAGS += -DCONFIG_XENGT=1
+ KBUILD_CFLAGS += -DCONFIG_DRM=1
+ KBUILD_CFLAGS += -DCONFIG_DRM_MIPI_DSI=1
+ KBUILD_CFLAGS += -DCONFIG_DRM_KMS_HELPER=1
+@@ -29,5 +34,6 @@ KBUILD_CFLAGS += -DCONFIG_DRM_LOAD_EDID_FIRMWARE=1
+ KBUILD_CFLAGS += -DCONFIG_DRM_PANEL=1
+ KBUILD_CFLAGS += -DCONFIG_DRM_I915=1
+ KBUILD_CFLAGS += -DCONFIG_DRM_I915_PRELIMINARY_HW_SUPPORT=1
++KBUILD_CFLAGS += -DCONFIG_I915_VGT=1
+ 
+-obj-y := drivers/gpu/drm/
+\ No newline at end of file
++obj-y := drivers/gpu/drm/ drivers/xen/
+\ No newline at end of file
+diff --git a/mk/xengt.spec b/mk/xengt.spec
+index 091f775..86ccc7f 100644
+--- a/mk/xengt.spec
++++ b/mk/xengt.spec
+@@ -39,6 +39,7 @@ rm -rf %{buildroot}
+ # Flatten hierarchy
+ mv %{buildroot}/lib/modules/%{kernel_version}/extra/drivers/gpu/drm/i915/*.ko %{buildroot}/lib/modules/%{kernel_version}/extra
+ mv %{buildroot}/lib/modules/%{kernel_version}/extra/drivers/gpu/drm/*.ko %{buildroot}/lib/modules/%{kernel_version}/extra
++mv %{buildroot}/lib/modules/%{kernel_version}/extra/drivers/xen/*.ko %{buildroot}/lib/modules/%{kernel_version}/extra
+ find %{buildroot}/lib/modules/%{kernel_version}/extra/ -mindepth 1 -type d -delete
+ 
+ # mark modules executable so that strip-to-file can strip them
+@@ -51,6 +52,7 @@ rm -rf %{buildroot}
+ Summary: %{vendor_name} %{driver_name} drivers
+ Group: System Environment/Kernel
+ Requires: %{name}-%{modules_package} = %{version}-%{release}
++Requires: %{name}-userspace = %{version}-%{release}
+ 
+ %description modules
+ Meta-package for automatic upgrades to the latest %{vendor_name}

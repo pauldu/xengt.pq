@@ -1,0 +1,129 @@
+From 7dba49656beee6293f33a32629ad49094eaffa1a Mon Sep 17 00:00:00 2001
+From: Yi Sun <yi.sun@intel.com>
+Date: Mon, 12 Oct 2015 23:15:37 +0800
+Subject: [PATCH 256/403] vgt: Remove ASSERT from edid.c
+
+v2. Change __FUNCTION__ into __func__
+
+We should handle such error which introduced by malicious data from a VM,
+such as length of bytes, offset, etc.
+
+Signed-off-by: Yi Sun <yi.sun@intel.com>
+
+Conflicts:
+	drivers/gpu/drm/i915/vgt/edid.c
+	drivers/gpu/drm/i915/vgt/edid.h
+---
+ drivers/gpu/drm/i915/vgt/edid.c |   33 +++++++++++++++++++++++----------
+ drivers/gpu/drm/i915/vgt/edid.h |    2 +-
+ 2 files changed, 24 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/edid.c b/drivers/gpu/drm/i915/vgt/edid.c
+index 208ba06..43f0998 100644
+--- a/drivers/gpu/drm/i915/vgt/edid.c
++++ b/drivers/gpu/drm/i915/vgt/edid.c
+@@ -318,8 +318,8 @@ void *p_data, unsigned int bytes)
+ bool vgt_gmbus3_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ 	void *p_data, unsigned int bytes)
+ {
+-	ASSERT_VM(0, vgt);
+-	return true;
++	vgt_err("vGT(%d): VM can not request gmbus3 mmio write\n", vgt->vgt_id);
++	return false;
+ }
+ 
+ bool vgt_gmbus3_mmio_read(struct vgt_device *vgt, unsigned int offset,
+@@ -403,7 +403,12 @@ bool vgt_gmbus2_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ bool vgt_i2c_handle_gmbus_read(struct vgt_device *vgt, unsigned int offset,
+ 	void *p_data, unsigned int bytes)
+ {
+-	ASSERT(bytes <= 8 && !(offset & (bytes - 1)));
++	if (bytes > 8 || (offset & (bytes - 1))) {
++		vgt_err("vGT(%d) %s: invalid offset(%x) or bytes(%d)\n",
++				vgt->vgt_id, __func__, offset, bytes);
++		return false;
++	}
++
+ 	switch (offset) {
+ 		case PCH_GMBUS2:
+ 			return vgt_gmbus2_mmio_read(vgt, offset, p_data, bytes);
+@@ -418,7 +423,12 @@ bool vgt_i2c_handle_gmbus_read(struct vgt_device *vgt, unsigned int offset,
+ bool vgt_i2c_handle_gmbus_write(struct vgt_device *vgt, unsigned int offset,
+ 	void *p_data, unsigned int bytes)
+ {
+-	ASSERT(bytes <= 8 && !(offset & (bytes - 1)));
++	if (bytes > 8 || (offset & (bytes - 1))) {
++		vgt_err("vGT(%d) %s: invalid offset(%x) or bytes(%d)\n",
++				vgt->vgt_id, __func__, offset, bytes);
++		return false;
++	}
++
+ 	switch (offset) {
+ 		case PCH_GMBUS0:
+ 			return vgt_gmbus0_mmio_write(vgt, offset, p_data, bytes);
+@@ -480,7 +490,7 @@ static inline AUX_CH_REGISTERS vgt_get_aux_ch_reg(unsigned int offset)
+ 	((reg & _DP_AUX_CH_CTL_MESSAGE_SIZE_MASK) >> \
+ 		_DP_AUX_CH_CTL_MESSAGE_SIZE_SHIFT)
+ 
+-void vgt_i2c_handle_aux_ch_write(struct vgt_device *vgt,
++bool vgt_i2c_handle_aux_ch_write(struct vgt_device *vgt,
+ 				enum port port_idx,
+ 				unsigned int offset,
+ 				void *p_data)
+@@ -494,7 +504,7 @@ void vgt_i2c_handle_aux_ch_write(struct vgt_device *vgt,
+ 
+ 	if (reg != AUX_CH_CTL) {
+ 		__vreg(vgt, offset) = value;
+-		return;
++		return true;
+ 	}
+ 
+ 	msg_length = AUX_CTL_MSG_LENGTH(value);
+@@ -505,7 +515,7 @@ void vgt_i2c_handle_aux_ch_write(struct vgt_device *vgt,
+ 	op = ctrl >> 4;
+ 	if (!(value & _REGBIT_DP_AUX_CH_CTL_SEND_BUSY)) {
+ 		/* The ctl write to clear some states */
+-		return;
++		return true;
+ 	}
+ 
+ 	/* Always set the wanted value for vms. */
+@@ -555,8 +565,11 @@ void vgt_i2c_handle_aux_ch_write(struct vgt_device *vgt,
+ 		 * support the gfx driver to do EDID access.
+ 		 */
+ 	} else {
+-		ASSERT((op & 0x1) == VGT_AUX_I2C_READ);
+-		ASSERT(msg_length == 4);
++		if (((op & 0x1) != VGT_AUX_I2C_READ) || msg_length != 4) {
++			vgt_err("vGT(%d) %s: Error operation(%d), or error message length(%d)\n",
++				vgt->vgt_id, __func__, op, msg_length);
++			return false;
++		}
+ 		if (i2c_edid->edid_available && i2c_edid->slave_selected) {
+ 			unsigned char val = edid_get_byte(vgt);
+ 			aux_data_for_write = (val << 16);
+@@ -570,7 +583,7 @@ void vgt_i2c_handle_aux_ch_write(struct vgt_device *vgt,
+ 	aux_data_for_write |= (VGT_AUX_I2C_REPLY_ACK & 0xff) << 24;
+ 	__vreg(vgt, offset + 4) = aux_data_for_write;
+ 
+-	return;
++	return true;
+ }
+ 
+ void vgt_init_i2c_edid(struct vgt_device *vgt)
+diff --git a/drivers/gpu/drm/i915/vgt/edid.h b/drivers/gpu/drm/i915/vgt/edid.h
+index 2642522..299afd2 100644
+--- a/drivers/gpu/drm/i915/vgt/edid.h
++++ b/drivers/gpu/drm/i915/vgt/edid.h
+@@ -137,7 +137,7 @@ bool vgt_i2c_handle_gmbus_read(struct vgt_device *vgt, unsigned int offset,
+ bool vgt_i2c_handle_gmbus_write(struct vgt_device *vgt, unsigned int offset,
+ 	void *p_data, unsigned int bytes);
+ 
+-void vgt_i2c_handle_aux_ch_write(struct vgt_device *vgt,
++bool vgt_i2c_handle_aux_ch_write(struct vgt_device *vgt,
+ 				enum port port_idx,
+ 				unsigned int offset,
+ 				void *p_data);
+-- 
+1.7.10.4
+

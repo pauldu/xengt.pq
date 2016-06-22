@@ -1,0 +1,258 @@
+From babe20b00066bdfec6c120b614430aad16b0c429 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Wed, 13 May 2015 12:08:25 -0400
+Subject: [PATCH 073/403] vgt: support per-mmio accounting
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/debugfs.c  |  122 +++++++++++++++++++++++++++++++++++
+ drivers/gpu/drm/i915/vgt/instance.c |    3 +
+ drivers/gpu/drm/i915/vgt/mmio.c     |   27 ++++++++
+ drivers/gpu/drm/i915/vgt/vgt.h      |   11 ++++
+ 4 files changed, 163 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/debugfs.c b/drivers/gpu/drm/i915/vgt/debugfs.c
+index 6235134..edb3783 100644
+--- a/drivers/gpu/drm/i915/vgt/debugfs.c
++++ b/drivers/gpu/drm/i915/vgt/debugfs.c
+@@ -103,6 +103,7 @@ enum vgt_debugfs_entry_t
+ 	VGT_DEBUGFS_DPY_INFO,
+ 	VGT_DEBUGFS_VIRTUAL_GTT,
+ 	VGT_DEBUGFS_HLIST_INFO,
++	VGT_DEBUGFS_MMIO_ACCOUNTING,
+ 	VGT_DEBUGFS_ENTRY_MAX
+ };
+ 
+@@ -773,6 +774,119 @@ static const struct file_operations hlist_info_fops = {
+ 	.release = single_release,
+ };
+ 
++static int mmio_accounting_show(struct seq_file *m, void *data)
++{
++	struct vgt_device *vgt = (struct vgt_device *)m->private;
++	struct vgt_mmio_accounting_reg_stat *stat;
++	unsigned long count;
++
++	mutex_lock(&vgt->stat.mmio_accounting_lock);
++
++	if (!vgt->stat.mmio_accounting_reg_stats)
++		goto out;
++
++	seq_printf(m, "MMIO read statistics\n");
++	seq_printf(m, "----------------------\n");
++
++	for (count = 0; count < (2 * 1024 * 1024 / 4); count++) {
++		stat = &vgt->stat.mmio_accounting_reg_stats[count];
++		if (!stat->r_count)
++			continue;
++
++		seq_printf(m, "[0x%lx] [read] count %llu cycles %llu\n", count * 4,
++			stat->r_count, stat->r_cycles);
++	}
++
++	seq_printf(m, "MMIO write statistics\n");
++	seq_printf(m, "----------------------\n");
++
++	for (count = 0; count < (2 * 1024 * 1024 / 4); count++) {
++		stat = &vgt->stat.mmio_accounting_reg_stats[count];
++		if (!stat->w_count)
++			continue;
++
++		seq_printf(m, "[0x%lx] [write] count %llu cycles %llu\n", count * 4,
++			stat->w_count, stat->w_cycles);
++	}
++out:
++	mutex_unlock(&vgt->stat.mmio_accounting_lock);
++
++	return 0;
++}
++
++static int mmio_accounting_open(struct inode *inode, struct file *file)
++{
++	return single_open(file, mmio_accounting_show, inode->i_private);
++}
++
++static ssize_t mmio_accounting_write(struct file *file,
++		const char __user *ubuf, size_t count, loff_t *ppos)
++{
++	struct seq_file *s = file->private_data;
++	struct vgt_device *vgt = (struct vgt_device *)s->private;
++	struct pgt_device *pdev = vgt->pdev;
++	unsigned long flags;
++	char buf[32];
++
++	if (*ppos && count > sizeof(buf))
++		return -EINVAL;
++
++	if (copy_from_user(buf, ubuf, count))
++		return -EFAULT;
++
++	mutex_lock(&vgt->stat.mmio_accounting_lock);
++
++	if (!strncmp(buf, "start", 5)) {
++		if (vgt->stat.mmio_accounting) {
++			vgt_err("mmio accounting has already started.\n");
++			goto out;
++		}
++
++		if (!vgt->stat.mmio_accounting_reg_stats) {
++			vgt->stat.mmio_accounting_reg_stats =
++				vzalloc(sizeof(struct vgt_mmio_accounting_reg_stat) * (2 * 1024 * 1024 / 4));
++			if (!vgt->stat.mmio_accounting_reg_stats) {
++				vgt_err("fail to allocate memory for mmio accounting.\n");
++				goto out;
++			}
++		}
++
++		spin_lock_irqsave(&pdev->lock, flags);
++		vgt->stat.mmio_accounting = true;
++		spin_unlock_irqrestore(&pdev->lock, flags);
++
++		vgt_info("VM %d start mmio accounting.\n", vgt->vm_id);
++	} else if (!strncmp(buf, "stop", 4)) {
++		spin_lock_irqsave(&pdev->lock, flags);
++		vgt->stat.mmio_accounting = false;
++		spin_unlock_irqrestore(&pdev->lock, flags);
++
++		vgt_info("VM %d stop mmio accounting.\n", vgt->vm_id);
++	} else if (!strncmp(buf, "clean", 5)) {
++		spin_lock_irqsave(&pdev->lock, flags);
++		vgt->stat.mmio_accounting = false;
++		spin_unlock_irqrestore(&pdev->lock, flags);
++
++		if (vgt->stat.mmio_accounting_reg_stats) {
++			vfree(vgt->stat.mmio_accounting_reg_stats);
++			vgt->stat.mmio_accounting_reg_stats = NULL;
++		}
++
++		vgt_info("VM %d stop and clean mmio accounting statistics.\n", vgt->vm_id);
++	}
++out:
++	mutex_unlock(&vgt->stat.mmio_accounting_lock);
++	return count;
++}
++
++static const struct file_operations mmio_accounting_fops = {
++	.open = mmio_accounting_open,
++	.write = mmio_accounting_write,
++	.read = seq_read,
++	.llseek = seq_lseek,
++	.release = single_release,
++};
++
+ static int vgt_device_reset_show(struct seq_file *m, void *data)
+ {
+ 	struct pgt_device *pdev = (struct pgt_device *)m->private;
+@@ -1172,6 +1286,14 @@ int vgt_create_debugfs(struct vgt_device *vgt)
+ 	else
+ 		printk("vGT(%d): create debugfs node: hlistinfo\n", vgt_id);
+ 
++	d_debugfs_entry[vgt_id][VGT_DEBUGFS_MMIO_ACCOUNTING] = debugfs_create_file("mmio_accounting",
++			0444, d_per_vgt[vgt_id], vgt, &mmio_accounting_fops);
++
++	if (!d_debugfs_entry[vgt_id][VGT_DEBUGFS_MMIO_ACCOUNTING])
++		printk(KERN_ERR "vGT(%d): failed to create debugfs node: mmio_accounting\n", vgt_id);
++	else
++		printk("vGT(%d): create debugfs node: mmio_accounting\n", vgt_id);
++
+ 	d_debugfs_entry[vgt_id][VGT_DEBUGFS_FB_FORMAT] = debugfs_create_file("frame_buffer_format",
+ 			0444, d_per_vgt[vgt_id], vgt, &fbinfo_fops);
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/instance.c b/drivers/gpu/drm/i915/vgt/instance.c
+index 4ae60d3..b009f67 100644
+--- a/drivers/gpu/drm/i915/vgt/instance.c
++++ b/drivers/gpu/drm/i915/vgt/instance.c
+@@ -320,6 +320,9 @@ int create_vgt_instance(struct pgt_device *pdev, struct vgt_device **ptr_vgt, vg
+ 	if (shadow_tail_based_qos)
+ 		vgt_init_rb_tailq(vgt);
+ 
++	mutex_init(&vgt->stat.mmio_accounting_lock);
++	vgt->stat.mmio_accounting = false;
++
+ 	vgt->warn_untrack = 1;
+ 	return 0;
+ err:
+diff --git a/drivers/gpu/drm/i915/vgt/mmio.c b/drivers/gpu/drm/i915/vgt/mmio.c
+index 459f981..6cb94b3 100644
+--- a/drivers/gpu/drm/i915/vgt/mmio.c
++++ b/drivers/gpu/drm/i915/vgt/mmio.c
+@@ -261,6 +261,30 @@ static inline bool valid_mmio_alignment(struct vgt_mmio_entry *mht,
+ 	return false;
+ }
+ 
++static inline void mmio_accounting_read(struct vgt_device *vgt, unsigned long offset, cycles_t cycles)
++{
++	struct vgt_mmio_accounting_reg_stat *stat;
++
++	if (!vgt->stat.mmio_accounting)
++		return;
++
++	stat = &vgt->stat.mmio_accounting_reg_stats[offset >> 2];
++	stat->r_count++;
++	stat->r_cycles += cycles;
++}
++
++static inline void mmio_accounting_write(struct vgt_device *vgt, unsigned long offset, cycles_t cycles)
++{
++	struct vgt_mmio_accounting_reg_stat *stat;
++
++	if (!vgt->stat.mmio_accounting)
++		return;
++
++	stat = &vgt->stat.mmio_accounting_reg_stats[offset >> 2];
++	stat->w_count++;
++	stat->w_cycles += cycles;
++}
++
+ /*
+  * Emulate the VGT MMIO register read ops.
+  * Return : true/false
+@@ -345,6 +369,8 @@ bool vgt_emulate_read(struct vgt_device *vgt, uint64_t pa, void *p_data,int byte
+ 	t1 = get_cycles();
+ 	stat->mmio_rcnt++;
+ 	stat->mmio_rcycles += t1 - t0;
++
++	mmio_accounting_read(vgt, offset, t1 - t0);
+ 	return true;
+ err_mmio:
+ 	vgt_unlock_dev_flags(pdev, cpu, flags);
+@@ -468,6 +494,7 @@ bool vgt_emulate_write(struct vgt_device *vgt, uint64_t pa,
+ 	t1 = get_cycles();
+ 	stat->mmio_wcycles += t1 - t0;
+ 	stat->mmio_wcnt++;
++	mmio_accounting_write(vgt, offset, t1 - t0);
+ 	return true;
+ err_mmio:
+ 	vgt_unlock_dev_flags(pdev, cpu, flags);
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 9092459..2618e49 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -746,6 +746,13 @@ extern void vgt_check_pending_context_switch(struct vgt_device *vgt);
+ 
+ struct vgt_irq_virt_state;
+ 
++struct vgt_mmio_accounting_reg_stat {
++	u64 r_count;
++	u64 r_cycles;
++	u64 w_count;
++	u64 w_cycles;
++};
++
+ struct vgt_statistics {
+ 	u64	schedule_in_time;	/* TSC time when it is last scheduled in */
+ 	u64	allocated_cycles;
+@@ -790,6 +797,10 @@ struct vgt_statistics {
+ 	u64	gpt_find_miss_cnt;
+ 	u64	gpt_find_miss_cycles;
+ 	u64	skip_bb_cnt;
++
++	struct vgt_mmio_accounting_reg_stat *mmio_accounting_reg_stats;
++	bool mmio_accounting;
++	struct mutex mmio_accounting_lock;
+ };
+ 
+ /* per-VM structure */
+-- 
+1.7.10.4
+

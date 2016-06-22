@@ -1,0 +1,30 @@
+From 34d296b39c33073f55965f50c13f68bf0e2ffcfe Mon Sep 17 00:00:00 2001
+From: Jike Song <jike.song@intel.com>
+Date: Wed, 18 Mar 2015 16:13:21 +0800
+Subject: [PATCH 013/403] vgt: Fix a regression introduce by rebasing hv/vgt
+ split patches
+
+hypervisor_set_trap_area() should be called with the last param
+indicating map/unmap.
+
+Signed-off-by: Jike Song <jike.song@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/utility.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/utility.c b/drivers/gpu/drm/i915/vgt/utility.c
+index 0efb8a7..7945f87 100644
+--- a/drivers/gpu/drm/i915/vgt/utility.c
++++ b/drivers/gpu/drm/i915/vgt/utility.c
+@@ -997,7 +997,7 @@ int vgt_hvm_set_trap_area(struct vgt_device *vgt, int map)
+ 	bar_s &= ~0xF; /* clear the LSB 4 bits */
+ 	bar_e = bar_s + vgt->state.bar_size[0] - 1;
+ 
+-	return hypervisor_set_trap_area(vgt, bar_s, bar_e, 1);
++	return hypervisor_set_trap_area(vgt, bar_s, bar_e, map);
+ }
+ 
+ /* EXECLIST dump functions */
+-- 
+1.7.10.4
+

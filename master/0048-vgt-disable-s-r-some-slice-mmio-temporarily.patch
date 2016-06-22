@@ -1,0 +1,37 @@
+From f34f3113a38a15af7498ffcb9d0974582712512f Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Wed, 22 Apr 2015 00:38:39 +0800
+Subject: [PATCH 048/403] vgt: disable s/r some slice mmio temporarily
+
+It looks that we still can read the correct values from
+some slice mmio even we correctly configure the register 0xfdc.
+
+To prevent writing incorrect values into these registers,
+we remove them out of register s/r list temporarily.
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/render.c |    4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index 0f36d50..ab4382e 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -1690,10 +1690,12 @@ static struct reg_mask_t gen8_rcs_reset_mmio[] = {
+ 	{0x24d8, 0},
+ 	{0x24dc, 0},
+ 
++#if 0
+ 	{0xe4f0, 1},
+ 	{0xe4f4, 1},
+-
+ 	{0xe184, 1},
++#endif
++
+ 	{0x7300, 1},
+ 	{0x7004, 1},
+ 	{0x7008, 1},
+-- 
+1.7.10.4
+

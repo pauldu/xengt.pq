@@ -1,0 +1,36 @@
+From 0ffa4d3d8191a2f2dbdd21e5e3833cf9bec8a606 Mon Sep 17 00:00:00 2001
+From: Terrence Xu <terrence.xu@intel.com>
+Date: Thu, 26 Mar 2015 19:49:45 +0800
+Subject: [PATCH 027/403] Fix a use-after-free condition
+
+Sometimes Dom0 kernel panic while destroying multi guests continuously.
+
+The root cause is that a data structure is freed before it is used later.
+
+The fix s to change the vgt memory freed by change order.
+
+Corresponding bug number in bugzilla is: #734.
+
+Signed-off-by: Terrence Xu <terrence.xu@intel.com>
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/xen/xengt.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/xen/xengt.c b/drivers/xen/xengt.c
+index bfa4184..37360ff 100644
+--- a/drivers/xen/xengt.c
++++ b/drivers/xen/xengt.c
+@@ -942,8 +942,8 @@ static void xen_hvm_exit(struct vgt_device *vgt)
+ 	kfree(info->evtchn_irq);
+ 
+ out1:
+-	kfree(info);
+ 	vgt_vmem_destroy(vgt);
++	kfree(info);
+ }
+ 
+ static int xen_hvm_init(struct vgt_device *vgt)
+-- 
+1.7.10.4
+

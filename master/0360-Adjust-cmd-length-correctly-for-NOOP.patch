@@ -1,0 +1,33 @@
+From 5563c34f3292deaa81132dd50e85d76aca56e035 Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Mon, 29 Feb 2016 08:30:13 +0800
+Subject: [PATCH 360/403] Adjust cmd length correctly for NOOP
+
+It was expected that MI_NOOP command will have ID_NUMBER field all zero when
+WRITE_ENABLE bit (bit 22) was not set. But we see that it was not always true.
+Then GVT-g cannot use ID_NUMBER field to record the cmd buffer patch info.
+
+Here this patch is a temporary change to avoid the miscalculation of MI_NOOP
+command length. Later patch will have a more complete fix.
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index 264a3ea..eb4896d 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -702,7 +702,7 @@ static inline int get_cmd_length(struct cmd_info *info, uint32_t cmd)
+ 		unsigned int subop, length = info->len;
+ 		subop = (cmd & VGT_NOOP_ID_CMD_MASK) >>
+ 			VGT_NOOP_ID_CMD_SHIFT;
+-		if (subop)
++		if (subop == OP_MI_DISPLAY_FLIP)
+ 			length = cmd & CMD_LENGTH_MASK;
+ 
+ 		return length;
+-- 
+1.7.10.4
+

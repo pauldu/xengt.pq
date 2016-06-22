@@ -1,0 +1,194 @@
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index 1e038e5..be96bb4 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -634,16 +634,19 @@ static inline bool vgt_init_shadow_page(struct vgt_device *vgt,
+ 	memset(sp->vaddr, 0, PAGE_SIZE);
+ 
+ 	INIT_HLIST_NODE(&sp->node);
+-	sp->mfn = hypervisor_virt_to_mfn(sp->vaddr);
++	sp->mfn = pci_map_single(vgt->pdev->pdev, sp->vaddr, PAGE_SIZE,
++                       DMA_BIDIRECTIONAL) >> PAGE_SHIFT;
+ 	hash_add(vgt->gtt.shadow_page_hash_table, &sp->node, sp->mfn);
+ 
+ 	return true;
+ }
+ 
+-static inline void vgt_clean_shadow_page(shadow_page_t *sp)
++static inline void vgt_clean_shadow_page(struct vgt_device *vgt, shadow_page_t *sp)
+ {
+ 	if(!hlist_unhashed(&sp->node))
+ 		hash_del(&sp->node);
++	pci_unmap_single(vgt->pdev->pdev, sp->mfn << PAGE_SHIFT, PAGE_SIZE,
++                      DMA_BIDIRECTIONAL);
+ }
+ 
+ static inline shadow_page_t *vgt_find_shadow_page(struct vgt_device *vgt,
+@@ -681,7 +684,7 @@ static void ppgtt_free_shadow_page(ppgtt_spt_t *spt)
+ {
+ 	trace_spt_free(spt->vgt->vm_id, spt, spt->shadow_page.type);
+ 
+-	vgt_clean_shadow_page(&spt->shadow_page);
++	vgt_clean_shadow_page(spt->vgt, &spt->shadow_page);
+ 	vgt_clean_guest_page(spt->vgt, &spt->guest_page);
+ 	list_del_init(&spt->partial_access_list_head);
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/hypercall.h b/drivers/gpu/drm/i915/vgt/hypercall.h
+index 2889e1c..8a2efc7 100644
+--- a/drivers/gpu/drm/i915/vgt/hypercall.h
++++ b/drivers/gpu/drm/i915/vgt/hypercall.h
+@@ -36,7 +36,7 @@ enum map_type {
+ 
+ struct kernel_dm {
+ 	const char *name;
+-	unsigned long (*g2m_pfn)(int vm_id, unsigned long g_pfn);
++	unsigned long (*g2m_pfn)(int vm_id, unsigned long g_pfn, struct vgt_device *vgt);
+ 	int (*pause_domain)(int vm_id);
+ 	int (*shutdown_domain)(int vm_id);
+ 	int (*map_mfn_to_gpfn)(int vm_id, unsigned long gpfn,
+@@ -46,7 +46,7 @@ struct kernel_dm {
+ 	bool (*unset_wp_pages)(struct vgt_device *vgt, struct guest_page *p);
+ 	int (*check_host)(void);
+ 	int (*from_virt_to_mfn)(void *addr);
+-	void *(*from_mfn_to_virt)(int mfn);
++	void *(*from_mfn_to_virt)(unsigned long mfn);
+ 	int (*inject_msi)(int vm_id, u32 addr, u16 data);
+ 	int (*hvm_init)(struct vgt_device *vgt);
+ 	void (*hvm_exit)(struct vgt_device *vgt);
+diff --git a/drivers/gpu/drm/i915/vgt/mmio.c b/drivers/gpu/drm/i915/vgt/mmio.c
+index 73551bb..1b2839c 100644
+--- a/drivers/gpu/drm/i915/vgt/mmio.c
++++ b/drivers/gpu/drm/i915/vgt/mmio.c
+@@ -26,6 +26,7 @@
+ #include <linux/acpi.h>
+ #include <linux/kthread.h>
+ #include <linux/freezer.h>
++#include <asm/xen/page.h>
+ 
+ #include "vgt.h"
+ 
+@@ -601,7 +602,7 @@ int vgt_hvm_opregion_map(struct vgt_device *vgt, int map)
+ 	for (i = 0; i < VGT_OPREGION_PAGES; i++) {
+ 		rc = hypervisor_map_mfn_to_gpfn(vgt,
+ 			vgt->state.opregion_gfn[i],
+-			hypervisor_virt_to_mfn(opregion + i*PAGE_SIZE),
++			virt_to_mfn(opregion + i*PAGE_SIZE),
+ 			1,
+ 			map,
+ 			VGT_MAP_OPREGION);
+diff --git a/drivers/gpu/drm/i915/vgt/mpt.h b/drivers/gpu/drm/i915/vgt/mpt.h
+index 6d25dd3..8f7bd98 100644
+--- a/drivers/gpu/drm/i915/vgt/mpt.h
++++ b/drivers/gpu/drm/i915/vgt/mpt.h
+@@ -31,7 +31,7 @@ extern struct kernel_dm *vgt_pkdm;
+ static inline unsigned long hypervisor_g2m_pfn(struct vgt_device *vgt,
+ 	unsigned long g_pfn)
+ {
+-	return vgt_pkdm->g2m_pfn(vgt->vm_id, g_pfn);
++	return vgt_pkdm->g2m_pfn(vgt->vm_id, g_pfn, vgt);
+ }
+ 
+ static inline int hypervisor_pause_domain(struct vgt_device *vgt)
+@@ -79,7 +79,7 @@ static inline int hypervisor_virt_to_mfn(void *addr)
+ 	return vgt_pkdm->from_virt_to_mfn(addr);
+ }
+ 
+-static inline void *hypervisor_mfn_to_virt(int mfn)
++static inline void *hypervisor_mfn_to_virt(unsigned long mfn)
+ {
+ 	return vgt_pkdm->from_mfn_to_virt(mfn);
+ }
+diff --git a/drivers/xen/xengt.c b/drivers/xen/xengt.c
+index 4dc0116..d9d5f88 100644
+--- a/drivers/xen/xengt.c
++++ b/drivers/xen/xengt.c
+@@ -46,6 +46,7 @@
+ #include <xen/interface/memory.h>
+ #include <xen/interface/platform.h>
+ #include <xen/interface/vcpu.h>
++#include <xen/ioemu.h>
+ 
+ #include "vgt.h"
+ 
+@@ -54,6 +55,8 @@ MODULE_DESCRIPTION("XenGT mediated passthrough driver");
+ MODULE_LICENSE("GPL");
+ MODULE_VERSION("0.1");
+ 
++extern dma_addr_t pv_iommu_1_to_1_offset;
++
+ #define MAX_HVM_VCPUS_SUPPORTED 128
+ struct vgt_hvm_info {
+ 	/* iopage_vma->addr is just iopage. We need iopage_vma on VM destroy */
+@@ -101,25 +104,29 @@ static void *xen_gpa_to_va(struct vgt_device *vgt, unsigned long gpa);
+ 	} while (0)
+ 
+ /* Translate from VM's guest pfn to machine pfn */
+-static unsigned long xen_g2m_pfn(int vm_id, unsigned long g_pfn)
++static unsigned long xen_g2m_pfn(int vm_id, unsigned long g_pfn, struct vgt_device *vgt)
+ {
+-	struct xen_get_mfn_from_pfn pfn_arg;
++	struct pv_iommu_op iommu_op;
++	struct vgt_hvm_info *info = vgt->hvm_info;
+ 	int rc;
+-	unsigned long pfn_list[1];
+ 
+-	pfn_list[0] = g_pfn;
++	if (vm_id == 0)
++		return g_pfn;
+ 
+-	set_xen_guest_handle(pfn_arg.pfn_list, pfn_list);
+-	pfn_arg.nr_pfns = 1;
+-	pfn_arg.domid = vm_id;
++	iommu_op.flags = 0;
++	iommu_op.subop_id = IOMMUOP_lookup_foreign_page;
++	iommu_op.u.map_foreign_page.gfn = g_pfn;
++	iommu_op.u.map_foreign_page.domid = vm_id;
++	iommu_op.u.map_foreign_page.ioserver = info->iosrv_id;
+ 
+-	rc = HYPERVISOR_memory_op(XENMEM_get_mfn_from_pfn, &pfn_arg);
+-	if(rc < 0){
+-		printk("failed to get mfn for gpfn(0x%lx)\n, errno=%d\n", g_pfn, rc);
++	rc = xen_ioemu_map_foreign_gfn_to_bfn(&iommu_op, 1);
++	if(rc < 0 || iommu_op.status ){
++		printk("failed to get mfn for gpfn(0x%lx)\n, errno=%d status %d\n", g_pfn, rc,
++				iommu_op.status);
+ 		return INVALID_MFN;
+ 	}
+ 
+-	return pfn_list[0];
++	return iommu_op.u.lookup_foreign_page.bfn;
+ }
+ 
+ static int xen_get_max_gpfn(int vm_id)
+@@ -168,9 +175,9 @@ static int xen_domain_iomem_perm(uint32_t domain_id, uint64_t first_mfn,
+ 	arg.domain = domain_id;
+ 	arg.cmd = XEN_DOMCTL_iomem_permission;
+ 	arg.interface_version = XEN_DOMCTL_INTERFACE_VERSION;
+-	arg.u.iomem_perm.first_mfn = first_mfn;
+-	arg.u.iomem_perm.nr_mfns = nr_mfns;
+-	arg.u.iomem_perm.allow_access = allow_access;
++	arg.u.iomem_permission.first_mfn = first_mfn;
++	arg.u.iomem_permission.nr_mfns = nr_mfns;
++	arg.u.iomem_permission.allow_access = allow_access;
+ 	rc = HYPERVISOR_domctl(&arg);
+ 
+ 	return rc;
+@@ -510,12 +517,15 @@ static int xen_check_host(void)
+ 
+ static int xen_virt_to_mfn(void *addr)
+ {
+-	return virt_to_mfn(addr);
++	return virt_to_pfn(addr);
+ }
+ 
+-static void *xen_mfn_to_virt(int mfn)
++static void *xen_mfn_to_virt(unsigned long mfn)
+ {
+-	return mfn_to_virt(mfn);
++	if (!pv_iommu_1_to_1_offset)
++		return mfn_to_virt(mfn);
++	else
++		return pfn_to_kaddr(mfn);
+ }
+ 
+ static int xen_inject_msi(int vm_id, u32 addr_lo, u16 data)

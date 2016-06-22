@@ -1,0 +1,84 @@
+From f486401246f548b95227c2a58c1c951a5f49d8f5 Mon Sep 17 00:00:00 2001
+From: Terrence Xu <terrence.xu@intel.com>
+Date: Wed, 23 Dec 2015 22:00:07 +0800
+Subject: [PATCH 294/403] vgt/skl: add SKL 8 VM support
+
+This patch added code to support SKL maximum number of VM from 4 to 8.
+
+V2: Add max_support_vms field in pdev vgt_device_info.
+
+The corresponding bug number in bugzilla are: #943.
+
+Signed-off-by: Terrence Xu <terrence.xu@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/instance.c |    3 ++-
+ drivers/gpu/drm/i915/vgt/vgt.c      |    4 ++++
+ drivers/gpu/drm/i915/vgt/vgt.h      |    2 +-
+ 3 files changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/instance.c b/drivers/gpu/drm/i915/vgt/instance.c
+index 30460ed..1cb9b44 100644
+--- a/drivers/gpu/drm/i915/vgt/instance.c
++++ b/drivers/gpu/drm/i915/vgt/instance.c
+@@ -47,12 +47,13 @@ struct vgt_device *vmid_2_vgt_device(int vmid)
+ 
+ static int allocate_vgt_id(struct pgt_device *pdev)
+ {
++	struct vgt_device_info *info = &pdev->device_info;
+ 	unsigned long bit_index;
+ 
+ 	ASSERT(vgt_id_alloc_bitmap != ~0UL)
+ 	do {
+ 		bit_index = ffz (vgt_id_alloc_bitmap);
+-		if (bit_index >= (IS_BDW(pdev) ? VGT_MAX_VMS : VGT_MAX_VMS_HSW)) {
++		if (bit_index >= info->max_support_vms) {
+ 			vgt_err("vGT: allocate_vgt_id() failed\n");
+ 			return -ENOSPC;
+ 		}
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index cecb73f..855f151 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -597,6 +597,7 @@ static bool vgt_initialize_device_info(struct pgt_device *pdev)
+ 		info->gtt_entry_size_shift = 2;
+ 		info->gmadr_bytes_in_cmd = 4;
+ 		info->max_surface_size = 36 * SIZE_1MB;
++		info->max_support_vms = 4;
+ 	} else if (IS_BDW(pdev) || IS_SKL(pdev)) {
+ 		int gen = IS_BDW(pdev) ? 8 : 9;
+ 
+@@ -617,8 +618,11 @@ static bool vgt_initialize_device_info(struct pgt_device *pdev)
+ 		info->gtt_entry_size_shift = 3;
+ 		info->gmadr_bytes_in_cmd = 8;
+ 		info->max_surface_size = 36 * SIZE_1MB;
++		info->max_support_vms = 8;
+ 	}
+ 
++	ASSERT(info->max_support_vms <= VGT_MAX_VMS);
++
+ 	printk("GEN device info:\n");
+ 	printk("	major: %u minor: %u rev: %u\n", GEN_MAJOR(info->gen),
+ 			GEN_MINOR(info->gen), GEN_REV(info->gen));
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 57f87fe..ffc28e6 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -133,7 +133,6 @@ extern bool opregion_present;
+ #define VGT_RING_TIMEOUT	500	/* in ms */
+ 
+ /* Maximum VMs supported by vGT. Actual number is device specific */
+-#define VGT_MAX_VMS_HSW 		4
+ #define VGT_MAX_VMS			8
+ #define VGT_RSVD_APERTURE_SZ		(32*SIZE_1MB)	/* reserve 8MB for vGT itself */
+ 
+@@ -361,6 +360,7 @@ struct vgt_device_info {
+ 	u32 gtt_entry_size_shift;
+ 	u32 gmadr_bytes_in_cmd;
+ 	u32 max_surface_size;
++	u32 max_support_vms;
+ };
+ 
+ /* per-device structure */
+-- 
+1.7.10.4
+

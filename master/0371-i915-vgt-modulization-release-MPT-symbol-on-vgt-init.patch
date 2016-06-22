@@ -1,0 +1,30 @@
+From 55f303a513e8427076c5c690998b3ab62c2bf3ca Mon Sep 17 00:00:00 2001
+From: Jike Song <jike.song@intel.com>
+Date: Fri, 19 Feb 2016 22:33:20 +0800
+Subject: [PATCH 371/403] i915/vgt modulization: release MPT symbol on vgt
+ init failure
+
+Signed-off-by: Jike Song <jike.song@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/vgt.c |    4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 9b3886e..5d47874 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -1428,8 +1428,10 @@ bool i915_start_vgt(struct pci_dev *pdev)
+ 	}
+ 
+ 
+-	if (!vgt_check_host())
++	if (!vgt_check_host()) {
++		__symbol_put(vgt_pkdm->name);
+ 		return false;
++	}
+ 
+ 	vgt_param_check();
+ 
+-- 
+1.7.10.4
+

@@ -1,0 +1,48 @@
+From 9205dac85cc45834055d541642ebeb00dc5b4b94 Mon Sep 17 00:00:00 2001
+From: Tian Zhang <tian.c.zhang@intel.com>
+Date: Mon, 4 May 2015 18:02:24 +0800
+Subject: [PATCH 064/403] Fix bug for indirect display vgtbuffer feature
+
+Signed-off-by: Tian Zhang <tian.c.zhang@intel.com>
+
+For indirect display vgtbuffer test case, resize VM qemu Windows or
+close/open vmdisp Window repeatedly leads Dom0 panic.
+
+This patch fix the bug described above and clean some false warning
+message.
+
+The corresponding bug number in bugzilla is : #715.
+---
+ drivers/gpu/drm/i915/i915_gem.c |    9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/i915_gem.c b/drivers/gpu/drm/i915/i915_gem.c
+index 9cab123..4c3c283 100644
+--- a/drivers/gpu/drm/i915/i915_gem.c
++++ b/drivers/gpu/drm/i915/i915_gem.c
+@@ -3284,9 +3284,8 @@ static int __i915_vma_unbind(struct i915_vma *vma, bool wait)
+ 
+ 	/* Since the unbound list is global, only move to that list if
+ 	 * no more VMAs exist. */
+-	if (list_empty(&obj->vma_list)) {
+-		if (!obj->has_vmfb_mapping)
+-			i915_gem_gtt_finish_object(obj);
++	if (list_empty(&obj->vma_list) && !obj->has_vmfb_mapping) {
++		i915_gem_gtt_finish_object(obj);
+ 		list_move_tail(&obj->global_list, &dev_priv->mm.unbound_list);
+ 	}
+ 
+@@ -4537,6 +4536,10 @@ struct i915_vma *i915_gem_obj_to_ggtt_view(struct drm_i915_gem_object *obj,
+ void i915_gem_vma_destroy(struct i915_vma *vma)
+ {
+ 	struct i915_address_space *vm = NULL;
++
++	if (vma->obj->has_vmfb_mapping)
++		vma->node.allocated = 0;
++
+ 	WARN_ON(vma->node.allocated);
+ 
+ 	/* Keep the vma as a placeholder in the execbuffer reservation lists */
+-- 
+1.7.10.4
+

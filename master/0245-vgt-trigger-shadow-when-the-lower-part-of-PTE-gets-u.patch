@@ -1,0 +1,59 @@
+From b0e0a9e6ae1c4d657cbfedb1dc8c410a9a248aa5 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Sun, 13 Dec 2015 23:02:06 +0800
+Subject: [PATCH 245/403] vgt: trigger shadow when the lower part of PTE gets
+ updated
+
+This patch is a workaround to improve the stablility of 32 bit guest.
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/gtt.c |   27 ++-------------------------
+ 1 file changed, 2 insertions(+), 25 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index 9c4ea01..9861c1f 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -1185,36 +1185,13 @@ static bool ppgtt_handle_guest_write_page_table_bytes(void *gp,
+ 	ppgtt_get_guest_entry(spt, &we, index);
+ 	memcpy((char *)&we.val64 + (pa & (info->gtt_entry_size - 1)), p_data, bytes);
+ 
+-	if (partial_access && !hi) {
++	if (partial_access && hi) {
+ 		trace_gpt_change(vgt->vm_id, "partial access - LOW",
+ 				NULL, we.type, *(u32 *)(p_data), index);
+ 
+-		ppgtt_check_partial_access(vgt);
+-
+ 		ppgtt_set_guest_entry(spt, &we, index);
+-		ppgtt_get_shadow_entry(spt, &se, index);
+-
+-		if (!ops->test_present(&se))
+-			return true;
+-
+-		if (gtt_type_is_pt(get_next_pt_type(se.type)))
+-			if (!ppgtt_invalidate_shadow_page_by_shadow_entry(vgt, &se))
+-				return false;
+-
+-		se.val64 = 0;
+-		ppgtt_set_shadow_entry(spt, &se, index);
+-
+-		gtt->last_partial_ppgtt_access_index = index;
+-		gtt->last_partial_ppgtt_access_gpt = gpt;
+-		gtt->last_partial_ppgtt_access_entry = we;
+-
+ 		return true;
+-	} else
+-		gtt->last_partial_ppgtt_access_index = -1;
+-
+-	if (hi)
+-		trace_gpt_change(vgt->vm_id, "partial access - HIGH",
+-				NULL, we.type, *(u32 *)(p_data), index);
++	}
+ 
+ 	ops->test_pse(&we);
+ 
+-- 
+1.7.10.4
+

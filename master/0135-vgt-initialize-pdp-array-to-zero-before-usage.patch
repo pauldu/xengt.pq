@@ -1,0 +1,26 @@
+From 5c15592ab3d99bf29dbae643f0b237cf0e924723 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Mon, 20 Jul 2015 04:34:57 +0800
+Subject: [PATCH 135/403] vgt: initialize pdp array to zero before usage
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index b26b4df..c526777 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -806,7 +806,7 @@ static bool vgt_el_create_shadow_ppgtt(struct vgt_device *vgt,
+ 				struct execlist_context *el_ctx)
+ {
+ 	struct vgt_mm *mm;
+-	u32 pdp[8];
++	u32 pdp[8] = {0};
+ 	uint32_t *s_rootp;
+ 
+ 	struct reg_state_ctx_header *reg_state;
+-- 
+1.7.10.4
+

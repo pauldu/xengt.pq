@@ -1,0 +1,545 @@
+From 1ce27bbc988ddebb9484f84e812708c8f22a2398 Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Tue, 20 Oct 2015 12:31:04 +0800
+Subject: [PATCH 267/403] shadow privilege batch buffer
+
+Perform shadow for privilege batch buffer at workload submission time
+in command scan. When command scan meets "MI_BATCH_BUFFER_START"
+command to jump into privilege batch buffer, the shadow implementation
+will be called, and the command will be modified to use the shadow
+address instead. The shadow batch buffer is destroyed when its context
+is scheduled out from hardware.
+
+In order to support second level batch buffer and multi-pages batch
+buffer, the privilege batch buffer will be scanned twice. The first
+scan just finds the length of the batch buffer(not counting the second
+level bb). Then generate the shadow buffer, and the second scan.
+
+In this commit, shadow batch buffer is generated but not used yet.
+Guest command buffer are submitted to hardware instead. Later commit
+will enable it.
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |  225 +++++++++++++++++++++++++++++++--
+ drivers/gpu/drm/i915/vgt/execlists.c  |   56 +++++++-
+ drivers/gpu/drm/i915/vgt/execlists.h  |   28 ++++
+ drivers/gpu/drm/i915/vgt/trace.h      |   17 +++
+ 4 files changed, 314 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index 067d191..969db50 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -676,10 +676,8 @@ static inline int ip_gma_advance(struct parser_exec_state *s, unsigned int len)
+ 	return rc;
+ }
+ 
+-static inline int cmd_length(struct parser_exec_state *s)
++static inline int get_cmd_length(struct cmd_info *info, uint32_t cmd)
+ {
+-	struct cmd_info *info = s->info;
+-
+ 	/*
+ 	 * MI_NOOP is special as the replacement elements. It's fixed
+ 	 * length in definition, but variable length when using for
+@@ -688,20 +686,25 @@ static inline int cmd_length(struct parser_exec_state *s)
+ 	 * handling for MI_NOOP.
+ 	 */
+ 	if (info->opcode == OP_MI_NOOP) {
+-		unsigned int cmd, length = info->len;
+-		cmd = (cmd_val(s, 0) & VGT_NOOP_ID_CMD_MASK) >>
++		unsigned int subop, length = info->len;
++		subop = (cmd & VGT_NOOP_ID_CMD_MASK) >>
+ 			VGT_NOOP_ID_CMD_SHIFT;
+-		if (cmd)
+-			length = cmd_val(s, 0) & CMD_LENGTH_MASK;
++		if (subop)
++			length = cmd & CMD_LENGTH_MASK;
+ 
+ 		return length;
+ 	} else if ((info->flag & F_LEN_MASK) == F_LEN_CONST) {
+ 		return info->len;
+ 	} else /* F_LEN_VAR */{
+-		return (cmd_val(s, 0) & ((1U << s->info->len) - 1)) + 2;
++		return (cmd & ((1U << info->len) - 1)) + 2;
+ 	}
+ }
+ 
++static inline int cmd_length(struct parser_exec_state *s)
++{
++	return get_cmd_length(s->info, cmd_val(s, 0));
++}
++
+ static int vgt_cmd_handler_mi_set_context(struct parser_exec_state* s)
+ {
+ 	struct vgt_device *vgt = s->vgt;
+@@ -777,6 +780,19 @@ static int vgt_cmd_handler_lri_emulate(struct parser_exec_state *s)
+ 	return 0;
+ }
+ 
++static bool is_shadowed_mmio(unsigned int offset)
++{
++	bool ret = false;
++	if ((offset == 0x2168) || /*BB current head register UDW */
++	    (offset == 0x2140) || /*BB current header register */
++	    (offset == 0x211c) || /*second BB header register UDW */
++	    (offset == 0x2114)) { /*second BB header register UDW */
++		ret = true;
++	}
++
++	return ret;
++}
++
+ static int cmd_reg_handler(struct parser_exec_state *s,
+ 	unsigned int offset, unsigned int index, char *cmd)
+ {
+@@ -801,6 +817,9 @@ static int cmd_reg_handler(struct parser_exec_state *s,
+ 				vgt_err("fail to allocate post handle\n");
+ 			}
+ 		}
++	} else if (is_shadowed_mmio(offset)) {
++		vgt_warn("VM-%d: !!! Found access of shadowed MMIO<0x%x>!\n",
++			 s->vgt->vm_id, offset);
+ 	}
+ 
+ reg_handle:
+@@ -935,6 +954,90 @@ static int vgt_cmd_advance_default(struct parser_exec_state *s)
+ 	return ip_gma_advance(s, cmd_length(s));
+ }
+ 
++#define MAX_BB_SIZE 0x10000000
++
++static inline unsigned long vgt_get_gma_from_bb_start(
++				struct vgt_device *vgt,
++				int ring_id, unsigned long ip_gma)
++{
++	unsigned long bb_start_gma;
++	uint32_t cmd;
++	uint32_t opcode;
++	void *va;
++
++	ASSERT(g_gm_is_valid(vgt, ip_gma));
++	if (g_gm_is_valid(vgt, ip_gma)) {
++		bb_start_gma = 0;
++		va = vgt_gma_to_va(vgt->gtt.ggtt_mm, ip_gma);
++		hypervisor_read_va(vgt, va, &cmd, 4, 1);
++		opcode = vgt_get_opcode(cmd, ring_id);
++		ASSERT(opcode == OP_MI_BATCH_BUFFER_START);
++		va = vgt_gma_to_va(vgt->gtt.ggtt_mm, ip_gma + 4);
++		hypervisor_read_va(vgt, va, &bb_start_gma, 4, 1);
++	} else if (g_gm_is_reserved(vgt, ip_gma)) {
++		va = v_aperture(vgt->pdev, ip_gma);
++		cmd = *(uint32_t *)va;
++		opcode = vgt_get_opcode(cmd, ring_id);
++		ASSERT(opcode == OP_MI_BATCH_BUFFER_START);
++		bb_start_gma = *(unsigned long *)(va + 4);
++	}
++	return bb_start_gma;
++}
++
++static uint32_t vgt_find_bb_size(struct vgt_device *vgt,
++				 struct vgt_mm *mm,
++				 int ring_id,
++				 unsigned long bb_start_cmd_gma)
++{
++	uint32_t bb_size = 0;
++	unsigned long gma = 0;
++	bool met_bb_end = false;
++	uint32_t *va;
++	struct cmd_info *info;
++
++	/* set gma as the start gm address of the batch buffer */
++	gma = vgt_get_gma_from_bb_start(vgt, ring_id, bb_start_cmd_gma);
++	do {
++		uint32_t cmd;
++		uint32_t cmd_length;
++		va = vgt_gma_to_va(mm, gma);
++		if (va == NULL) {
++			vgt_err("VM-%d(ring %d>: Failed to get va of guest gma 0x%lx!\n",
++				vgt->vm_id, ring_id, gma);
++			return 0;
++		}
++		hypervisor_read_va(vgt, va, &cmd, sizeof(uint32_t), 1);
++		info = vgt_get_cmd_info(cmd, ring_id);
++		if (info == NULL) {
++			vgt_err("ERROR: VM-%d: unknown cmd 0x%x! "
++				"Failed to get batch buffer length.\n",
++				vgt->vm_id, cmd);
++			return 0;
++		}
++
++		if (info->opcode == OP_MI_BATCH_BUFFER_END) {
++			met_bb_end = true;
++		} else if (info->opcode == OP_MI_BATCH_BUFFER_START) {
++			if (BATCH_BUFFER_2ND_LEVEL_BIT(cmd) == 0) {
++				/* chained batch buffer */
++				met_bb_end = true;
++			}
++		}
++
++		cmd_length = get_cmd_length(info, cmd) << 2;
++		bb_size += cmd_length;
++		gma += cmd_length;
++	} while (!met_bb_end && (bb_size < MAX_BB_SIZE));
++
++	if (bb_size >= MAX_BB_SIZE) {
++		vgt_err("ERROR: VM-%d: Failed to get batch buffer length! "
++			"Not be able to find mi_batch_buffer_end command.\n",
++			vgt->vm_id);
++		return 0;
++	}
++
++	return bb_size;
++}
+ 
+ static int vgt_cmd_handler_mi_batch_buffer_end(struct parser_exec_state *s)
+ {
+@@ -1554,6 +1657,8 @@ static int batch_buffer_needs_scan(struct parser_exec_state *s)
+ 	struct pgt_device *pdev = s->vgt->pdev;
+ 
+ 	if (IS_BDW(pdev) || IS_SKL(pdev)) {
++		if (s->ring_id == RING_BUFFER_BCS)
++			return 0;
+ 		/* BDW decides privilege based on address space */
+ 		if (cmd_val(s, 0) & (1 << 8))
+ 			return 0;
+@@ -1571,6 +1676,103 @@ static int batch_buffer_needs_scan(struct parser_exec_state *s)
+ 	return 1;
+ }
+ 
++static int vgt_perform_bb_shadow(struct parser_exec_state *s)
++{
++	struct vgt_device *vgt = s->vgt;
++	unsigned long bb_start_gma = 0;
++	unsigned long bb_start_aligned;
++	uint32_t bb_start_offset;
++
++	uint32_t bb_size;
++	uint32_t bb_page_num;
++	unsigned long shadow_bb_start_gma;
++	unsigned long shadow_base_hpa, shadow_hpa;
++	unsigned long bb_guest_gma;
++	int i;
++
++	bb_start_gma = get_gma_bb_from_cmd(s, 1);
++
++	bb_start_offset = bb_start_gma & (PAGE_SIZE - 1);
++	bb_start_aligned = bb_start_gma - bb_start_offset;
++
++	bb_size = vgt_find_bb_size(vgt, vgt->gtt.ggtt_mm,
++				   s->ring_id, s->ip_gma);
++	if (bb_size == 0) {
++		vgt_err("VM-%d<ring-%d>: Failed to get batch buffer size!\n",
++			vgt->vm_id, s->ring_id);
++		goto shadow_err;
++	}
++	bb_page_num = (bb_start_offset + bb_size + PAGE_SIZE - 1) >> GTT_PAGE_SHIFT;
++
++	/* allocate gm space */
++	shadow_base_hpa = rsvd_aperture_alloc(vgt->pdev, bb_page_num * PAGE_SIZE);
++	if (shadow_base_hpa == 0) {
++		vgt_err("VM-%d: Failed to allocate gm for shadow privilege bb!\n",
++			vgt->vm_id);
++		goto shadow_err;
++	}
++
++	shadow_bb_start_gma = aperture_2_gm(vgt->pdev, shadow_base_hpa);
++	shadow_bb_start_gma += bb_start_offset;
++
++	/* copy aligned pages from guest cmd buf into shadow */
++	shadow_hpa = shadow_base_hpa;
++	bb_guest_gma = bb_start_aligned;
++	for (i = 0; i < bb_page_num; ++ i) {
++		struct shadow_cmd_page *s_cmd_page;
++		unsigned long shadow_gma;
++		void *guest_bb_va, *shadow_bb_va;
++
++		shadow_gma = aperture_2_gm(vgt->pdev, shadow_hpa);
++
++		s_cmd_page = kzalloc(sizeof(struct shadow_cmd_page), GFP_ATOMIC);
++		if (!s_cmd_page) {
++			vgt_err ("VM-%d<ring %d>: Failed to allocate memory "
++				 "for shadow batch buffer!\n",
++				 vgt->vm_id, s->ring_id);
++			rsvd_aperture_free(vgt->pdev, shadow_base_hpa,
++					   bb_page_num * PAGE_SIZE);
++			goto shadow_err;
++		}
++
++		s_cmd_page->guest_gma = bb_guest_gma;
++		s_cmd_page->bound_gma = shadow_gma;
++
++		s->el_ctx->shadow_priv_bb.n_pages ++;
++		list_add_tail(&s_cmd_page->list,
++			      &s->el_ctx->shadow_priv_bb.pages);
++
++		guest_bb_va = vgt_gma_to_va(vgt->gtt.ggtt_mm, bb_guest_gma);
++		if (guest_bb_va == NULL) {
++			vgt_err("VM-%d(ring %d>: Failed to get guest bb va for 0x%lx! "
++				"MI command gma: 0x%lx, size 0x%x\n",
++				vgt->vm_id, s->ring_id, bb_guest_gma,
++				s->ip_gma, bb_size);
++			goto shadow_err;
++		}
++		shadow_bb_va = v_aperture(vgt->pdev, s_cmd_page->bound_gma);
++
++		hypervisor_read_va(vgt, guest_bb_va, shadow_bb_va,
++				   PAGE_SIZE, 1);
++
++		shadow_hpa += PAGE_SIZE;
++		bb_guest_gma += PAGE_SIZE;
++	}
++
++	/* perform relocation for mi_batch_buffer_start */
++	//*reloc_va = shadow_bb_start_gma;
++	trace_shadow_bb_relocate(vgt->vm_id, s->ring_id,
++			      s->el_ctx->guest_context.lrca,
++			      s->ip_gma + 4, bb_start_gma, shadow_bb_start_gma, bb_size);
++
++	return 0;
++shadow_err:
++		printk("MI_BATCH_BUFFER_START<gma addr:0x%lx>: "
++		       "[0x%x][0x%x][0x%x]\n",
++		       s->ip_gma, cmd_val(s, 0), cmd_val(s, 1), cmd_val(s, 2));
++	return -1;
++}
++
+ static int vgt_cmd_handler_mi_batch_buffer_start(struct parser_exec_state *s)
+ {
+ 	int rc=0;
+@@ -1609,6 +1811,11 @@ static int vgt_cmd_handler_mi_batch_buffer_start(struct parser_exec_state *s)
+ 	}
+ 
+ 	if (batch_buffer_needs_scan(s)) {
++		if (shadow_ring_buffer) {
++			rc = vgt_perform_bb_shadow(s);
++			if (rc)
++				return rc;
++		}
+ 		rc = ip_gma_set(s, get_gma_bb_from_cmd(s, 1));
+ 		if (rc < 0)
+ 			vgt_warn("invalid batch buffer addr, so skip scanning it\n");
+@@ -2702,7 +2909,7 @@ int vgt_scan_vring(struct vgt_device *vgt, int ring_id)
+ 	/* copy the guest rb into shadow rb */
+ 	if (shadow_ring_buffer) {
+ 		ret = vgt_copy_rb_to_shadow(vgt, rs->el_ctx,
+-				    vring->head,
++				    rs->last_scan_head,
+ 				    vring->tail & RB_TAIL_OFF_MASK);
+ 	}
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index bbb20ec..c6ffe99 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -178,6 +178,7 @@ static inline enum vgt_ring_id vgt_get_ringid_from_lrca(struct vgt_device *vgt,
+ 
+ static void vgt_create_shadow_rb(struct vgt_device *vgt, struct execlist_context *el_ctx);
+ static void vgt_destroy_shadow_rb(struct vgt_device *vgt, struct execlist_context *el_ctx);
++static void vgt_release_shadow_cmdbuf(struct vgt_device *vgt, struct shadow_batch_buffer *p);
+ 
+ /* a queue implementation
+  *
+@@ -288,7 +289,8 @@ static void vgt_el_slots_find_submitted_ctx(bool forward_search, vgt_state_ring_
+ 
+ 		for (i = 0; i < 2; ++ i) {
+ 			struct execlist_context *p = el_slot->el_ctxs[i];
+-			if (p && p->guest_context.context_id == ctx_id) {
++			if ((p && p->guest_context.context_id == ctx_id) ||
++			    (p && ctx_id == 0)) {
+ 				*el_slot_idx = forward_search ? head : tail;
+ 				*el_slot_ctx_idx = i;
+ 				break;
+@@ -922,6 +924,7 @@ static struct execlist_context *vgt_create_execlist_context(struct vgt_device *v
+ 		return NULL;
+ 
+ 	el_ctx->ring_id = ring_id;
++	INIT_LIST_HEAD(&el_ctx->shadow_priv_bb.pages);
+ 
+ 	if (vgt_require_shadow_context(vgt))
+ 		vgt_el_create_shadow_context(vgt, ring_id, el_ctx);
+@@ -966,6 +969,7 @@ static void vgt_destroy_execlist_context(struct vgt_device *vgt,
+ 
+ 	/* free the shadow cmd buffers */
+ 	vgt_destroy_shadow_rb(vgt, el_ctx);
++	vgt_release_shadow_cmdbuf(vgt, &el_ctx->shadow_priv_bb);
+ 
+ 	// free the shadow context;
+ 	if (vgt_require_shadow_context(vgt)) {
+@@ -1176,7 +1180,7 @@ static void vgt_emulate_context_status_change(struct vgt_device *vgt,
+ 			vgt_el_slots_delete(vgt, ring_id, el_slot_idx);
+ 		}
+ 		el_slot->el_ctxs[el_slot_ctx_idx] = NULL;
+-	} else {
++	} else if (!ctx_status->idle_to_active) {
+ 		goto emulation_done;
+ 	}
+ 
+@@ -1189,6 +1193,9 @@ static void vgt_emulate_context_status_change(struct vgt_device *vgt,
+ 	if (ctx_status->context_complete)
+ 		vgt_update_guest_ctx_from_shadow(vgt, ring_id, el_ctx);
+ 
++	el_ctx->ctx_running = (ctx_status->idle_to_active || ctx_status->lite_restore);
++	el_ctx->sync_needed = !ctx_status->lite_restore;
++
+ emulation_done:
+ 	return;
+ err_ctx_not_found:
+@@ -1264,6 +1271,20 @@ static void vgt_emulate_csb_updates(struct vgt_device *vgt, enum vgt_ring_id rin
+ 		vgt_add_ctx_switch_status(vgt, ring_id, &ctx_status);
+ 	}
+ 
++	if (vgt_require_shadow_context(vgt)) {
++		struct execlist_context *el_ctx;
++		int i;
++		hash_for_each(vgt->gtt.el_ctx_hash_table, i, el_ctx, node) {
++			if (!el_ctx->sync_needed)
++				continue;
++			if (!el_ctx->ctx_running) {
++				vgt_release_shadow_cmdbuf(vgt,
++						&el_ctx->shadow_priv_bb);
++				el_ctx->sync_needed = false;
++			}
++		}
++	}
++
+ 	read_idx = write_idx % CTX_STATUS_BUF_NUM;
+ 	el_read_ptr(vgt->pdev, ring_id) = read_idx;
+ 	ctx_ptr_val.status_buf_read_ptr = read_idx;
+@@ -1408,7 +1429,7 @@ static inline bool vgt_hw_ELSP_write(struct vgt_device *vgt,
+ 	!(((tail) >= (last_tail)) &&				\
+ 	  ((tail) <= (head)))))
+ 
+-/* Shadow ring buffer implementation */
++/* Shadow implementation of command buffers */
+ static void vgt_create_shadow_rb(struct vgt_device *vgt,
+ 				 struct execlist_context *el_ctx)
+ {
+@@ -1474,6 +1495,34 @@ static void vgt_destroy_shadow_rb(struct vgt_device *vgt,
+ 	return;
+ }
+ 
++static void vgt_release_shadow_cmdbuf(struct vgt_device *vgt,
++				      struct shadow_batch_buffer *s_buf)
++{
++	/* unbind the shadow bb from GGTT */
++	struct shadow_cmd_page *s_page, *next;
++
++	if (!shadow_ring_buffer)
++		return;
++
++	if (!s_buf || s_buf->n_pages == 0) {
++		/* no privilege bb to release */
++		return;
++	}
++
++	/* free the shadow pages */
++	list_for_each_entry_safe(s_page, next, &s_buf->pages, list) {
++		unsigned long shadow_hpa;
++		list_del(&s_page->list);
++		shadow_hpa = phys_aperture_base(vgt->pdev) + s_page->bound_gma;
++		rsvd_aperture_free(vgt->pdev, shadow_hpa, PAGE_SIZE);
++		s_page->bound_gma = 0;
++		kfree(s_page);
++	}
++
++	s_buf->n_pages = 0;
++	INIT_LIST_HEAD(&s_buf->pages);
++}
++
+ /* perform command buffer scan and shadowing */
+ static void vgt_manipulate_cmd_buf(struct vgt_device *vgt,
+ 			struct execlist_context *el_ctx)
+@@ -1691,6 +1740,7 @@ void vgt_submit_execlist(struct vgt_device *vgt, enum vgt_ring_id ring_id)
+ 		dump_execlist_status((struct execlist_status_format *)&status,
+ 					ring_id);
+ #endif
++		execlist->el_ctxs[0]->ctx_running = true;
+ 		vgt_hw_ELSP_write(vgt, elsp_reg, &context_descs[0],
+ 					&context_descs[1]);
+ #ifdef EL_SLOW_DEBUG
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.h b/drivers/gpu/drm/i915/vgt/execlists.h
+index 3113f71..3e9e6d8 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.h
++++ b/drivers/gpu/drm/i915/vgt/execlists.h
+@@ -179,12 +179,36 @@ struct shadow_ctx_page {
+ 	struct vgt_device *vgt;
+ };
+ 
++struct shadow_cmd_page {
++	struct list_head list;
++	unsigned long guest_gma;
++	unsigned long bound_gma;
++	//shadow_page_t shadow_page;
++};
++
+ struct shadow_ring_buffer {
+ 	unsigned long guest_rb_base;
+ 	unsigned long shadow_rb_base;
+ 	uint32_t ring_size;
+ };
+ 
++/* Relocation for MI_BATCH_BUFFER_START to privilege batch buffers */
++
++/* one context can have one ring buffer, but multiple batch buffers.
++ * Those batch buffers are not necessarily address sequential, and the
++ * mapping between guest gma and shadow gma is needed.
++ *
++ * Ideally each bb has one mapping, and each bb can have multiple pages.
++ * In order to simplify the implementation, the mapping is maintained
++ * in each page of structure "shadow_cmd_page". Then the shadow batch
++ * buffer can be very simple of a link list.
++ *
++ */
++struct shadow_batch_buffer {
++	uint32_t n_pages;
++	struct list_head pages;
++};
++
+ struct execlist_context {
+ 	struct ctx_desc_format guest_context;
+ 	uint32_t shadow_lrca;
+@@ -208,7 +232,11 @@ struct execlist_context {
+ 	/* used for lazy context shadowing optimization */
+ 	gtt_entry_t shadow_entry_backup[MAX_EXECLIST_CTX_PAGES];
+ 
++	bool ctx_running;
++	bool sync_needed;
++
+ 	struct shadow_ring_buffer shadow_rb;
++	struct shadow_batch_buffer shadow_priv_bb;
+ 
+ 	struct hlist_node node;
+ };
+diff --git a/drivers/gpu/drm/i915/vgt/trace.h b/drivers/gpu/drm/i915/vgt/trace.h
+index 2098c40..1ae52a1 100644
+--- a/drivers/gpu/drm/i915/vgt/trace.h
++++ b/drivers/gpu/drm/i915/vgt/trace.h
+@@ -365,6 +365,23 @@ TRACE_EVENT(shadow_rb_copy,
+ 		TP_printk("%s", __entry->buf)
+ );
+ 
++TRACE_EVENT(shadow_bb_relocate,
++		TP_PROTO(int vm_id, int ring_id, uint32_t guest_lrca, uint32_t source_gma, uint32_t value, uint32_t new_value, uint32_t bb_size),
++
++		TP_ARGS(vm_id, ring_id, guest_lrca, source_gma, value, new_value, bb_size),
++
++		TP_STRUCT__entry(
++			__array(char, buf, MAX_BUF_LEN)
++		),
++
++		TP_fast_assign(
++			snprintf(__entry->buf, MAX_BUF_LEN,
++			"VM-%d(ring<%d>, lrca<0x%x>): Relocating source gma<0x%x> from <0x%x> to <0x%x> of size <0x%x>\n",
++			vm_id, ring_id, guest_lrca, source_gma, value, new_value, bb_size);
++		),
++
++		TP_printk("%s", __entry->buf)
++);
+ #endif /* _VGT_TRACE_H_ */
+ 
+ /* This part must be out of protection */
+-- 
+1.7.10.4
+

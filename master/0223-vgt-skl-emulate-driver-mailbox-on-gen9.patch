@@ -1,0 +1,152 @@
+From e272e6ab24ff17f5b942d8481bb3dd22364c8eb0 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Fri, 6 Nov 2015 04:33:23 +0800
+Subject: [PATCH 223/403] vgt/skl: emulate driver mailbox on gen9+
+
+Currently only command 5 and 6 are supported.
+
+v3:
+
+- Take Kevin's comment: remove the sensitive information
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |   35 +++++++++++++++++++++++++++++-
+ drivers/gpu/drm/i915/vgt/vgt.c      |   40 +++++++++++++++++++++++++++++++++++
+ drivers/gpu/drm/i915/vgt/vgt.h      |    2 ++
+ 3 files changed, 76 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 16acc4b..d5ae5ef 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -2457,6 +2457,38 @@ out:
+ 	return default_mmio_read(vgt, offset, p_data, bytes);
+ }
+ 
++static bool mailbox_write(struct vgt_device *vgt, unsigned int offset,
++		void *p_data, unsigned int bytes)
++{
++	u32 v = *(u32 *)p_data;
++	u32 cmd = v & 0xff;
++	u32 *data0 = &__vreg(vgt, 0x138128);
++
++	if (!vgt->vm_id)
++		goto out;
++
++	switch (cmd) {
++		case 0x6:
++			/* "Read memory latency" command on gen9. */
++			if (!*data0)
++				*data0 = vgt->pdev->memory_latency[0];
++			else
++				*data0 = vgt->pdev->memory_latency[1];
++			break;
++		case 0x5:
++			*data0 |= 0x1;
++			break;
++	}
++
++	vgt_info("VM %d write %x to mailbox, return data0 %x\n", vgt->vm_id,
++		v, *data0);
++
++	v &= ~(1 << 31);
++out:
++	return default_mmio_write(vgt, offset, &v, bytes);
++}
++
++
+ /*
+  * Track policies of all captured registers
+  *
+@@ -3154,7 +3186,7 @@ reg_attr_t vgt_reg_info_general[] = {
+ 
+ {_REG_SWF, 0x90, F_VIRT, 0, D_ALL, NULL, NULL},
+ 
+-{GEN6_PCODE_MAILBOX, 4, F_DOM0, 0, D_ALL, NULL, NULL},
++{GEN6_PCODE_MAILBOX, 4, F_DOM0, 0, D_PRE_SKL, NULL, NULL},
+ {GEN6_PCODE_DATA, 4, F_DOM0, 0, D_ALL, NULL, NULL},
+ {0x13812c, 4, F_DOM0, 0, D_ALL, NULL, NULL},
+ {GEN7_ERR_INT, 4, F_VIRT, 0, D_ALL, err_int_r, err_int_w},
+@@ -3555,6 +3587,7 @@ reg_attr_t vgt_reg_info_skl[] = {
+ {DPD_AUX_CH_CTL, 6*4, F_DPY, 0, D_SKL, NULL, dp_aux_ch_ctl_mmio_write},
+ {HSW_PWR_WELL_BIOS, 4, F_DOM0, 0, D_SKL, NULL, NULL},
+ {HSW_PWR_WELL_DRIVER, 4, F_DOM0, 0, D_SKL, NULL, skl_power_well_ctl_write},
++{GEN6_PCODE_MAILBOX, 4, F_DOM0, 0, D_SKL, NULL, mailbox_write},
+ {0xa210, 4, F_DOM0, 0, D_SKL_PLUS, NULL, NULL},
+ {0x4ddc, 4, F_PT, 0, D_SKL, NULL, NULL},
+ {0x42080, 4, F_PT, 0, D_SKL_PLUS, NULL, NULL},
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index df61e9e6..1de4685 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -619,6 +619,43 @@ static bool vgt_initialize_device_info(struct pgt_device *pdev)
+ 	return true;
+ }
+ 
++static bool vgt_get_memory_latency(struct pgt_device *pdev)
++{
++	if (VGT_MMIO_READ(pdev, 0x138124) & (1 << 31))
++		goto timeout;
++
++	/* first set */
++	VGT_MMIO_WRITE(pdev, 0x138128, 0);
++	VGT_MMIO_WRITE(pdev, 0x13812c, 0);
++
++	VGT_MMIO_WRITE(pdev, 0x138124, (1 << 31) | 0x6);
++
++	if (wait_for_atomic(!(VGT_MMIO_READ(pdev, 0x138124) & (1 << 31)), 500))
++		goto timeout;
++
++	pdev->memory_latency[0] = VGT_MMIO_READ(pdev, 0x138128);
++
++	/* second set */
++	VGT_MMIO_WRITE(pdev, 0x138128, 1);
++	VGT_MMIO_WRITE(pdev, 0x13812c, 0);
++
++	VGT_MMIO_WRITE(pdev, 0x138124, (1 << 31) | 0x6);
++
++	if (wait_for_atomic(!(VGT_MMIO_READ(pdev, 0x138124) & (1 << 31)), 500))
++		goto timeout;
++
++	pdev->memory_latency[1] = VGT_MMIO_READ(pdev, 0x138128);
++
++	printk("vgt: memory latency: [0] %x [1] %x\n", pdev->memory_latency[0],
++		pdev->memory_latency[1]);
++
++	return true;
++
++timeout:
++	vgt_err("wait mailbox idle timeout!\n");
++	return false;
++}
++
+ static bool vgt_initialize_platform(struct pgt_device *pdev)
+ {
+ 	/* check PPGTT enabling. */
+@@ -678,6 +715,9 @@ static bool vgt_initialize_platform(struct pgt_device *pdev)
+ 			pdev->ring_xxx[RING_BUFFER_VCS2] = 0x8008;
+ 			pdev->ring_xxx_bit[RING_BUFFER_VCS2] = 0;
+ 		}
++
++		if (IS_SKL(pdev))
++			vgt_get_memory_latency(pdev);
+ 	} else {
+ 		vgt_err("Unsupported platform.\n");
+ 		return false;
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index f0b499e..7b11a51 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -465,6 +465,8 @@ struct pgt_device {
+ 	bool ctx_switch_pending;
+ 
+ 	uint32_t el_read_ptr[MAX_ENGINES];
++
++	u32 memory_latency[2];
+ };
+ 
+ /*
+-- 
+1.7.10.4
+

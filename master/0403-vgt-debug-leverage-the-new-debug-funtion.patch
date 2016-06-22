@@ -1,0 +1,70 @@
+From 331df2232bce538f6971480c39ec9fa88d9d854b Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Fri, 15 Apr 2016 17:07:54 +0800
+Subject: [PATCH 403/403] vgt debug: leverage the new debug funtion
+
+set cur_reset_vm when reset happen, and dump all the debug information
+include context and execlist related.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |    5 +++++
+ drivers/gpu/drm/i915/vgt/mmio.c     |    8 +++++++-
+ drivers/gpu/drm/i915/vgt/vgt.h      |    1 +
+ 3 files changed, 13 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 289742e..6971a19 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -285,7 +285,12 @@ static bool handle_device_reset(struct vgt_device *vgt, unsigned int offset,
+ 	vgt_info("VM %d is trying to reset device: %s.\n", vgt->vm_id,
+ 		ring_bitmap == 0xff ? "full reset" : "per-engine reset");
+ 
++	vgt->pdev->cur_reset_vm = vgt;
+ 	show_debug(vgt->pdev);
++	if (vgt_debug & VGT_DBG_RESET)
++		dump_all_el_contexts(vgt->pdev);
++	dump_el_status(vgt->pdev);
++	vgt->pdev->cur_reset_vm = NULL;
+ 
+ 	/* after this point, driver should re-initialize the device */
+ 	vgt->warn_untrack = 1;
+diff --git a/drivers/gpu/drm/i915/vgt/mmio.c b/drivers/gpu/drm/i915/vgt/mmio.c
+index 13522ca..73551bb 100644
+--- a/drivers/gpu/drm/i915/vgt/mmio.c
++++ b/drivers/gpu/drm/i915/vgt/mmio.c
+@@ -384,11 +384,17 @@ bool vgt_emulate_read(struct vgt_device *vgt, uint64_t pa, void *p_data,int byte
+ 
+ 		if (offset == 0x206c) {
+ 			printk("------------------------------------------\n");
+-			printk("VM(%d) likely triggers a gfx reset\n", vgt->vm_id);
++			printk("VM(%d) likely triggers a gfx reset at %lld\n",
++					vgt->vm_id, vgt_get_cycles()/(cpu_khz/1000));
+ 			printk("Disable untracked MMIO warning for VM(%d)\n", vgt->vm_id);
+ 			printk("------------------------------------------\n");
+ 			vgt->warn_untrack = 0;
++			pdev->cur_reset_vm = vgt;
+ 			show_debug(pdev);
++			if (vgt_debug & VGT_DBG_RESET)
++				dump_all_el_contexts(pdev);
++			dump_el_status(pdev);
++			pdev->cur_reset_vm = NULL;
+ 		}
+ 
+ 		//WARN_ON(vgt->vm_id == 0); /* The call stack is meaningless for HVM */
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index da09abf..16a84fa 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -126,6 +126,7 @@ extern int preemption_policy;
+ #define VGT_DBG_IRQ		(1<<5)
+ #define VGT_DBG_EDID		(1<<6)
+ #define VGT_DBG_EXECLIST	(1<<7)
++#define VGT_DBG_RESET		(1<<8)
+ #define VGT_DBG_ALL		(0xffff)
+ 
+ #define SIZE_1KB		(1024UL)
+-- 
+1.7.10.4
+

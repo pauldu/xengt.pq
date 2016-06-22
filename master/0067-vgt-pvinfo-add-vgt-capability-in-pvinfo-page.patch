@@ -1,0 +1,26 @@
+From 8033bceff40970df788fca8650a7aedb689139e9 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Thu, 7 May 2015 05:35:00 +0800
+Subject: [PATCH 067/403] vgt: pvinfo: add vgt capability in pvinfo page
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |    2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 7b889ea..34a95aa 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -1929,6 +1929,8 @@ static bool pvinfo_read(struct vgt_device *vgt, unsigned int offset,
+ 			 *   *((unsigned int *)p_data)) = VGT_V2G_SET_SW_CURSOR;
+ 			 */
+ 			break;
++		case vgt_info_off(vgt_caps):
++			break;
+ 		default:
+ 			invalid_read = true;
+ 			break;
+-- 
+1.7.10.4
+

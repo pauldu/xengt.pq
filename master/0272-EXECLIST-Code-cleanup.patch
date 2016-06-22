@@ -1,0 +1,226 @@
+From d861988c5cc6f878d7ef705a14120007b546dd76 Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Thu, 29 Oct 2015 10:25:50 +0800
+Subject: [PATCH 272/403] EXECLIST Code cleanup
+
+Changes are below, which do not impact functionality:
+
+1, Delete a not useful option of context wp control
+2, Add a trace function for CSB emulation
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |   40 ++++++++++++----------------------
+ drivers/gpu/drm/i915/vgt/trace.h     |   35 ++++++++++++++++++++++-------
+ drivers/gpu/drm/i915/vgt/vgt.c       |    9 --------
+ drivers/gpu/drm/i915/vgt/vgt.h       |    1 -
+ 4 files changed, 41 insertions(+), 44 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 091cffe..8ab7117 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -34,8 +34,6 @@
+ do{							\
+ 	state->pdp##i##_LDW.val = root[(i)<<1];		\
+ 	state->pdp##i##_UDW.val = root[((i) << 1) + 1];	\
+-	vgt_dbg(VGT_DBG_EXECLIST, "New root[%d] in state is: 0x%x(high)-0x%x(low)\n",	\
+-		i, root[((i) << 1) + 1], root[(i) << 1]);	\
+ }while(0);
+ 
+ #define CTX_STATE_2_ROOT_POINTER(root, state, i)	\
+@@ -474,21 +472,8 @@ static bool vgt_validate_status_entry(struct vgt_device *vgt,
+ static inline void vgt_set_wp_guest_ctx(struct vgt_device *vgt,
+ 			struct execlist_context *el_ctx, int idx)
+ {
+-	enum vgt_ring_id ring_id;
+-
+-	if (!wp_submitted_ctx &&
+-		(shadow_execlist_context != NORMAL_CTX_SHADOW)) {
+-		/* If option is set not to protect submitted_ctx, write
+-		 * protection will be disabled, except that the shadow policy
+-		 * is NORMAL_CTX_SHADOW. In normal shadowing case, the write
+-		 * protection is from context creation to the context destroy.
+-		 * It is needed for guest-shadow data sync-up, and cannot be
+-		 * disabled.
+-		 */
+-		return;
+-	}
++	enum vgt_ring_id ring_id = el_ctx->ring_id;
+ 
+-	ring_id = el_ctx->ring_id;
+ 	hypervisor_set_wp_pages(vgt,
+ 				&el_ctx->ctx_pages[idx].guest_page);
+ 	trace_ctx_protection(vgt->vm_id, ring_id, el_ctx->guest_context.lrca,
+@@ -499,14 +484,8 @@ static inline void vgt_set_wp_guest_ctx(struct vgt_device *vgt,
+ static inline void vgt_clear_wp_guest_ctx(struct vgt_device *vgt,
+ 			struct execlist_context *el_ctx, int idx)
+ {
+-	enum vgt_ring_id ring_id;
+-
+-	if (!wp_submitted_ctx &&
+-		(shadow_execlist_context != NORMAL_CTX_SHADOW)) {
+-		return;
+-	}
++	enum vgt_ring_id ring_id = el_ctx->ring_id;
+ 
+-	ring_id = el_ctx->ring_id;
+ 	hypervisor_unset_wp_pages(vgt,
+ 				&el_ctx->ctx_pages[idx].guest_page);
+ 	trace_ctx_protection(vgt->vm_id, ring_id, el_ctx->guest_context.lrca,
+@@ -517,17 +496,20 @@ static inline void vgt_clear_wp_guest_ctx(struct vgt_device *vgt,
+ static bool sctx_mirror_state_wp_handler(void *gp, uint64_t pa, void *p_data, int bytes)
+ {
+ 	guest_page_t *guest_page = (guest_page_t *)gp;
++	struct execlist_context *el_ctx = (struct execlist_context *)guest_page->data;
+ 	struct shadow_ctx_page *ctx_page = container_of(guest_page,
+ 					struct shadow_ctx_page, guest_page);
+ 	uint32_t offset = pa & (PAGE_SIZE - 1);
+ 
+-	trace_ctx_write_trap(pa, bytes);
+ 	if (!guest_page->writeprotection) {
+ 		vgt_err("EXECLIST Ctx mirror wp handler is called without write protection! "
+ 			"addr <0x%llx>, bytes %i\n", pa, bytes);
+ 		return false;
+ 	}
+ 
++	trace_ctx_write_trap(el_ctx->guest_context.lrca,
++				el_ctx->shadow_lrca, pa, bytes, *(uint32_t *)p_data);
++
+ 	if ((offset & (bytes -1)) != 0)
+ 		vgt_warn("Not aligned EXECLIST context update!");
+ 
+@@ -567,7 +549,6 @@ static bool sctx_reg_state_wp_handler(void *gp, uint64_t pa, void *p_data, int b
+ 	int idx;
+ 	bool rc;
+ 
+-	trace_ctx_write_trap(pa, bytes);
+ 	if (!guest_page->writeprotection) {
+ 		vgt_err("EXECLIST Ctx regstate wp handler is called without write protection! "
+ 			"addr <0x%llx>, bytes %i\n", pa, bytes);
+@@ -692,6 +673,7 @@ static void vgt_update_guest_ctx_from_shadow(struct vgt_device *vgt,
+ 				memcpy(dst, src, SIZE_PAGE);
+ 		}
+ 	}
++	trace_ctx_lifecycle(vgt->vm_id, ring_id, el_ctx->guest_context.lrca, "sync to guest");
+ }
+ 
+ static void vgt_patch_guest_context(struct execlist_context *el_ctx)
+@@ -952,7 +934,7 @@ static void vgt_destroy_execlist_context(struct vgt_device *vgt,
+ 
+ 	ring_id = el_ctx->ring_id;
+ 	if (ring_id == MAX_ENGINES) {
+-		vgt_err("Invalid execlist context!\n");
++		vgt_err("VM-%d: Invalid execlist context!\n", vgt->vm_id);
+ 		ASSERT_VM(0, vgt);
+ 	}
+ 
+@@ -1270,6 +1252,12 @@ static void vgt_emulate_csb_updates(struct vgt_device *vgt, enum vgt_ring_id rin
+ 		if (!vgt_validate_status_entry(vgt, ring_id, &ctx_status))
+ 			continue;
+ 
++		trace_ctx_csb_emulate(vgt->vm_id,
++				      ring_id,
++				      read_idx % CTX_STATUS_BUF_NUM,
++				      write_idx % CTX_STATUS_BUF_NUM,
++				      ctx_status.udw, ctx_status.ldw);
++
+ 		vgt_emulate_context_status_change(vgt, ring_id, &ctx_status);
+ 		vgt_add_ctx_switch_status(vgt, ring_id, &ctx_status);
+ 	}
+diff --git a/drivers/gpu/drm/i915/vgt/trace.h b/drivers/gpu/drm/i915/vgt/trace.h
+index 1ae52a1..9e1f27c 100644
+--- a/drivers/gpu/drm/i915/vgt/trace.h
++++ b/drivers/gpu/drm/i915/vgt/trace.h
+@@ -327,22 +327,24 @@ TRACE_EVENT(ctx_protection,
+ );
+ 
+ TRACE_EVENT(ctx_write_trap,
+-		TP_PROTO(uint64_t pa, int bytes),
++		TP_PROTO(uint32_t guest_lrca, uint32_t shadow_lrca,
++			 uint64_t pa, int bytes, uint32_t val_32),
+ 
+-		TP_ARGS(pa, bytes),
++		TP_ARGS(guest_lrca, shadow_lrca, pa, bytes, val_32),
+ 
+ 		TP_STRUCT__entry(
+-			__field(u64, pa)
+-			__field(int, bytes)
++			__array(char, buf, MAX_BUF_LEN)
+ 			),
+ 
+ 		TP_fast_assign(
+-			__entry->pa = pa;
+-			__entry->bytes = bytes;
++			snprintf(__entry->buf, MAX_BUF_LEN,
++				 "EXECLIST Context write trapped: guest_lrca: "
++				 "<0x%x>, shadow_lrca: <0x%x>, "
++				 "addr: <0x%llx> idx[0x%x], bytes %i, val_32: <0x%x>\n",
++				 guest_lrca, shadow_lrca, pa, ((pa & 0xfff) >> 2), bytes, val_32)
+ 		),
+ 
+-		TP_printk("EXECLIST Context Write Protection addr: <0x%llx>, bytes %i\n",
+-				__entry->pa, __entry->bytes)
++		TP_printk("%s", __entry->buf)
+ );
+ 
+ TRACE_EVENT(shadow_rb_copy,
+@@ -365,6 +367,23 @@ TRACE_EVENT(shadow_rb_copy,
+ 		TP_printk("%s", __entry->buf)
+ );
+ 
++TRACE_EVENT(ctx_csb_emulate,
++		TP_PROTO(int vm_id, int ring_id, int csb_entry, int tail, uint32_t udw, uint32_t ldw),
++
++		TP_ARGS(vm_id, ring_id, csb_entry, tail, udw, ldw),
++
++		TP_STRUCT__entry(
++			__array(char, buf, MAX_BUF_LEN)
++		),
++
++		TP_fast_assign(
++			snprintf(__entry->buf, MAX_BUF_LEN,"VM-%d <ring-%d>: Emulate CSB[%d](tail:%d): udw: 0x%x; ldw: 0x%x\n",
++			vm_id, ring_id, csb_entry, tail, udw, ldw);
++		),
++
++		TP_printk("%s", __entry->buf)
++);
++
+ TRACE_EVENT(shadow_bb_relocate,
+ 		TP_PROTO(int vm_id, int ring_id, uint32_t guest_lrca, uint32_t source_gma, uint32_t value, uint32_t new_value, uint32_t bb_size),
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index de4ab32..e54c5b7 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -191,15 +191,6 @@ module_param_named(shadow_execlist_context, shadow_execlist_context, int, 0400);
+ int shadow_cmd_buffer = 1;
+ module_param_named(shadow_cmd_buffer, shadow_cmd_buffer, int, 0400);
+ 
+-/* Very frequent set/clear write protection can see wrong write trap even if
+-+ * write protection has been cleared. Below option is to disable the context
+-+ * protection between ctx submission and ctx completion. Normal context shadow
+-+ * will not be impacted by this option, which will have ctx write protection
+-+ * between ctx creation and ctx destroy.
+-+ */
+-bool wp_submitted_ctx = false;
+-module_param_named(wp_submitted_ctx, wp_submitted_ctx, bool, 0400);
+-
+ static struct vgt_ops __vgt_ops = {
+ 	.emulate_read = vgt_emulate_read,
+ 	.emulate_write = vgt_emulate_write,
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index c65724c..3b32b1d 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -98,7 +98,6 @@ extern int reset_max_threshold;
+ extern bool vgt_lock_irq;
+ extern int shadow_execlist_context;
+ extern int shadow_cmd_buffer;
+-extern bool wp_submitted_ctx;
+ extern bool propagate_monitor_to_guest;
+ extern bool irq_based_ctx_switch;
+ extern int preallocated_shadow_pages;
+-- 
+1.7.10.4
+

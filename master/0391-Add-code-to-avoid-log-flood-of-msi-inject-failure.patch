@@ -1,0 +1,102 @@
+From e76dff201a5372070aa0bbf58f5437953b4eee97 Mon Sep 17 00:00:00 2001
+From: pei <pei.zhang@intel.com>
+Date: Wed, 23 Mar 2016 16:12:02 +0800
+Subject: [PATCH 391/403] Add code to avoid log flood of msi inject failure
+
+V2. enable once print to alert user, based on Kevin's suggestion.
+
+This issue happens if the qemu process is closed or killed before
+guest OS is shutdown first. This could be seen as an design limit-
+ation and would be automatically fixed when VFIO is implemented.
+
+The root cause of this issue is that kvm and vgt is not well synced.
+They don't hold a reference to each other, so also don't know each
+other's status clearly.
+
+In this issue, the vgt instance still exist but kvm instance already
+destroyed. The left workload of that vgt is still be processed and
+msi are transferred to KVM to process. This KVM instance is already
+destroyed and an error is returned to vGT which cause error printed.
+There could be thousands of msi at that point and cause huge err log.
+If with serial port connected, the log print will take a very long
+time to finish and cause system looks like hang
+
+Signed-off-by: pei <pei.zhang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/interrupt.c |   10 ++++++++--
+ drivers/gpu/drm/i915/vgt/mpt.h       |    9 +++------
+ drivers/gpu/drm/i915/vgt/perf.h      |    1 +
+ 3 files changed, 12 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/interrupt.c b/drivers/gpu/drm/i915/vgt/interrupt.c
+index bd703c6..210ff2f 100644
+--- a/drivers/gpu/drm/i915/vgt/interrupt.c
++++ b/drivers/gpu/drm/i915/vgt/interrupt.c
+@@ -999,8 +999,14 @@ void inject_dom0_virtual_interrupt(void *info)
+ 
+ static int vgt_inject_virtual_interrupt(struct vgt_device *vgt)
+ {
+-	if (vgt->vm_id)
+-		hypervisor_inject_msi(vgt);
++	if (vgt->vm_id) {
++		if (hypervisor_inject_msi(vgt) < 0) {
++			if (!vgt->stat.irq_inject_fail)
++				vgt_err("vGT(%d): failed to inject vmsi\n",
++					vgt->vgt_id);
++			vgt->stat.irq_inject_fail++;
++		}
++	}
+ 	else
+ 		pend_dom0_virtual_interrupt(vgt);
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/mpt.h b/drivers/gpu/drm/i915/vgt/mpt.h
+index 99b1d5a..6d25dd3 100644
+--- a/drivers/gpu/drm/i915/vgt/mpt.h
++++ b/drivers/gpu/drm/i915/vgt/mpt.h
+@@ -84,7 +84,7 @@ static inline void *hypervisor_mfn_to_virt(int mfn)
+ 	return vgt_pkdm->from_mfn_to_virt(mfn);
+ }
+ 
+-static inline void hypervisor_inject_msi(struct vgt_device *vgt)
++static inline int hypervisor_inject_msi(struct vgt_device *vgt)
+ {
+ #define MSI_CAP_CONTROL (msi_cap_offset + 2)
+ #define MSI_CAP_ADDRESS (msi_cap_offset + 4)
+@@ -97,20 +97,17 @@ static inline void hypervisor_inject_msi(struct vgt_device *vgt)
+ 	u16 control = *(u16 *)(cfg_space + MSI_CAP_CONTROL);
+ 	u32 addr = *(u32 *)(cfg_space + MSI_CAP_ADDRESS);
+ 	u16 data = *(u16 *)(cfg_space + MSI_CAP_DATA);
+-	int r;
+ 
+ 	/* Do not generate MSI if MSIEN is disable */
+ 	if (!(control & MSI_CAP_EN))
+-		return;
++		return 0;
+ 
+ 	/* FIXME: currently only handle one MSI format */
+ 	ASSERT_NUM(!(control & 0xfffe), control);
+ 
+ 	vgt_dbg(VGT_DBG_IRQ, "vGT: VM(%d): hvm injections. address (%x) data(%x)!\n",
+ 			vgt->vm_id, addr, data);
+-	r = vgt_pkdm->inject_msi(vgt->vm_id, addr, data);
+-	if (r < 0)
+-		vgt_err("vGT(%d): failed to inject vmsi\n", vgt->vgt_id);
++	return vgt_pkdm->inject_msi(vgt->vm_id, addr, data);
+ }
+ 
+ static inline int hypervisor_hvm_init(struct vgt_device *vgt)
+diff --git a/drivers/gpu/drm/i915/vgt/perf.h b/drivers/gpu/drm/i915/vgt/perf.h
+index dbca48c..1fabb73 100644
+--- a/drivers/gpu/drm/i915/vgt/perf.h
++++ b/drivers/gpu/drm/i915/vgt/perf.h
+@@ -39,6 +39,7 @@ struct vgt_statistics {
+ 	u64	used_cycles;
+ 	u64	irq_num;
+ 	u64	events[EVENT_MAX];
++	u64	irq_inject_fail;
+ 
+ 	/* actually this is the number of pending
+ 	* interrutps, check this in vgt_check_pending_events,
+-- 
+1.7.10.4
+

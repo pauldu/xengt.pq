@@ -1,0 +1,31 @@
+From 5b819d6d704ed46a22ce4b72004bcda3ca925bf5 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Wed, 11 Mar 2015 20:12:14 +0800
+Subject: [PATCH 006/403] vgt: save/restore BCS ring registers for BDW during
+ context switch
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/render.c |    6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index b9f73bc..2fb4fe1 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -573,6 +573,12 @@ vgt_reg_t vgt_gen8_render_regs[] = {
+ 	_REG_GEN8_PRIVATE_PAT,
+ 	_REG_GEN8_PRIVATE_PAT + 4,
+ 
++	_REG_BCS_MI_MODE,
++	_REG_BCS_BLT_MODE_IVB,
++	_REG_BCS_INSTPM,
++	_REG_BCS_HWSTAM,
++	_REG_BCS_EXCC,
++
+         /* Execlist Status Registers */
+         _REG_RCS_EXECLIST_STATUS,
+         _REG_VCS_EXECLIST_STATUS,
+-- 
+1.7.10.4
+

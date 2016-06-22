@@ -1,0 +1,30 @@
+From 6731064fc4f34f81a1c105cc2f0504c16c458537 Mon Sep 17 00:00:00 2001
+From: Rodrigo Vivi <rodrigo.vivi@intel.com>
+Date: Wed, 1 Apr 2015 12:50:05 -0700
+Subject: [PATCH 034/403] drm/i915: PPGTT Cacheability Override
+
+Override Cacheability to WB in LLC/eLLC - Aged 3 1000
+for better performance.
+
+Signed-off-by: Rodrigo Vivi <rodrigo.vivi@intel.com>
+---
+ drivers/gpu/drm/i915/intel_pm.c |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/intel_pm.c b/drivers/gpu/drm/i915/intel_pm.c
+index 8351ce5..8a62143 100644
+--- a/drivers/gpu/drm/i915/intel_pm.c
++++ b/drivers/gpu/drm/i915/intel_pm.c
+@@ -6472,7 +6472,8 @@ static void broadwell_init_clock_gating(struct drm_device *dev)
+ 	ilk_init_lp_watermarks(dev);
+ 
+ 	/* WaSwitchSolVfFArbitrationPriority:bdw */
+-	I915_WRITE(GAM_ECOCHK, I915_READ(GAM_ECOCHK) | HSW_ECOCHK_ARB_PRIO_SOL);
++	I915_WRITE(GAM_ECOCHK, I915_READ(GAM_ECOCHK) | HSW_ECOCHK_ARB_PRIO_SOL |
++		   ECOCHK_PPGTT_WB_HSW);
+ 
+ 	/* WaPsrDPAMaskVBlankInSRD:bdw */
+ 	I915_WRITE(CHICKEN_PAR1_1,
+-- 
+1.7.10.4
+

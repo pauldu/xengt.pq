@@ -1,0 +1,127 @@
+From d0ea0c740743de684433eda5b19080ba03160268 Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Thu, 12 Nov 2015 16:44:57 +0800
+Subject: [PATCH 275/403] Fix kernel panic caused by element switch
+
+We queued workload submitted from guest, and when context switch
+interrupt is received, we will emulate the status change of those
+submitted workloads. Normally the search of the queued workload should
+be First-In-First-Out order, but we have logic to change the order in
+some scenarios.
+
+The order change is not correct. We should always follow the FIFO
+order. In most cases the old code do not cause problem, but will cause
+failure in below case:
+
+Submission:
+
+1, guest submit ctx pair A: (CTX-1, CTX-2), then is scheduled to hardware
+2, guest submit ctx pair B: (CTX-2, CTX-1), then is scheduled to hardware
+
+Interrupt:
+
+a, CTX-1 idle-to-active
+b, CTX-1 element-switch
+c, CTX-2 active-to-idle
+
+d, CTX-2 idle-to-active
+e, CTX-2 element-switch
+f, CTX-1 active-to-idle
+
+VGT Emulation:
+
+The problem is in the emulation of interrupt (b). We should find the
+submission from the record "A". If we do not follow FIFO order, we
+will find the record "B". Then VGT got confused that the
+element_switch is reported with the second context's context_id.
+
+V2:
+ - Remove the forward_search function argument completely. (from Kevin)
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |   35 ++++++++--------------------------
+ 1 file changed, 8 insertions(+), 27 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 182276a..53c6e02 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -260,7 +260,8 @@ static void vgt_el_slots_delete(struct vgt_device *vgt,
+ 	el_slot->el_ctxs[1] = NULL;
+ }
+ 
+-static void vgt_el_slots_find_submitted_ctx(bool forward_search, vgt_state_ring_t *ring_state,
++/* search the queue with FIFO order */
++static void vgt_el_slots_find_submitted_ctx(vgt_state_ring_t *ring_state,
+ 			uint32_t ctx_id, int *el_slot_idx, int *el_slot_ctx_idx)
+ {
+ 	int head = ring_state->el_slots_head;
+@@ -273,15 +274,7 @@ static void vgt_el_slots_find_submitted_ctx(bool forward_search, vgt_state_ring_
+ 		int i;
+ 		struct vgt_exec_list *el_slot;
+ 
+-		if (forward_search) {
+-			el_slot = &ring_state->execlist_slots[head];
+-		} else {
+-			if (tail == 0)
+-				tail = EL_QUEUE_SLOT_NUM;
+-			tail --;
+-			el_slot = &ring_state->execlist_slots[tail];
+-		}
+-
++		el_slot = &ring_state->execlist_slots[head];
+ 		if (el_slot->status != EL_SUBMITTED)
+ 			continue;
+ 
+@@ -289,17 +282,15 @@ static void vgt_el_slots_find_submitted_ctx(bool forward_search, vgt_state_ring_
+ 			struct execlist_context *p = el_slot->el_ctxs[i];
+ 			if ((p && p->guest_context.context_id == ctx_id) ||
+ 			    (p && ctx_id == 0)) {
+-				*el_slot_idx = forward_search ? head : tail;
++				*el_slot_idx = head;
+ 				*el_slot_ctx_idx = i;
+ 				break;
+ 			}
+ 		}
+ 
+-		if (forward_search) {
+-			head ++;
+-			if (head == EL_QUEUE_SLOT_NUM)
+-				head = 0;
+-		}
++		head ++;
++		if (head == EL_QUEUE_SLOT_NUM)
++			head = 0;
+ 	}
+ }
+ 
+@@ -1171,7 +1162,6 @@ static void vgt_emulate_context_status_change(struct vgt_device *vgt,
+ 				enum vgt_ring_id ring_id,
+ 				struct context_status_format *ctx_status)
+ {
+-	bool forward_search = true;
+ 	vgt_state_ring_t *ring_state;
+ 	uint32_t el_slot_ctx_idx = -1;
+ 	uint32_t el_slot_idx = -1;
+@@ -1181,16 +1171,7 @@ static void vgt_emulate_context_status_change(struct vgt_device *vgt,
+ 	bool lite_restore;
+ 
+ 	ring_state = &vgt->rb[ring_id];
+-	if (vgt_el_slots_number(ring_state) > 1) {
+-		if (!ctx_status->preempted) {
+-			/* TODO we may give warning here.
+-			 * It is not expected but still work.
+-			 */
+-			forward_search = false;
+-		}
+-	}
+-
+-	vgt_el_slots_find_submitted_ctx(forward_search, ring_state, ctx_id,
++	vgt_el_slots_find_submitted_ctx(ring_state, ctx_id,
+ 				&el_slot_idx, &el_slot_ctx_idx);
+ 	if (el_slot_idx == -1)
+ 		goto err_ctx_not_found;
+-- 
+1.7.10.4
+

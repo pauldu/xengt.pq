@@ -1,0 +1,43 @@
+From a2954abd23e2eeab1459b0047fe26c246e6fa814 Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Fri, 19 Feb 2016 10:20:55 +0800
+Subject: [PATCH 350/403] skip some verification for LRI
+
+It's not allowed to program some address range for LRI, but there is
+a special case have already do it seems without any side effect, so skip
+this check for LRI to avoid test case break, it's a WA.
+
+fix bug 998.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |   11 +++++++++--
+ 1 file changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index 0be4b46..264a3ea 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -855,10 +855,17 @@ static int vgt_cmd_handler_lri(struct parser_exec_state *s)
+ 	struct pgt_device *pdev = s->vgt->pdev;
+ 
+ 	for (i = 1; i < cmd_len; i += 2) {
+-		if (IS_BDW(pdev) && (s->ring_id != RING_BUFFER_RCS))
+-			rc |= (cmd_val(s, i) & BIT_RANGE_MASK(22, 18)) ? -1 : 0;
++		if (IS_BDW(pdev) && (s->ring_id != RING_BUFFER_RCS)) {
++			if (s->ring_id == RING_BUFFER_BCS &&
++				(cmd_val(s, i) & BIT_RANGE_MASK(22, 2)) == _REG_DE_RRMR)
++				rc |= 0;
++			else
++				rc |= (cmd_val(s, i) & BIT_RANGE_MASK(22, 18)) ? -1 : 0;
++		}
++
+ 		if (rc)
+ 			break;
++
+ 		rc |= cmd_reg_handler(s,
+ 			cmd_val(s, i) & BIT_RANGE_MASK(22, 2), i, "lri");
+ 	}
+-- 
+1.7.10.4
+

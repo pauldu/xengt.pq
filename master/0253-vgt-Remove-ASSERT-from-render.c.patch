@@ -1,0 +1,35 @@
+From 8205bb5361d99350e0a99ee8d6e0ac2d6b291cde Mon Sep 17 00:00:00 2001
+From: Yi Sun <yi.sun@intel.com>
+Date: Mon, 12 Oct 2015 16:26:36 +0800
+Subject: [PATCH 253/403] vgt: Remove ASSERT from render.c
+
+Remove ASSERT from ring_uhptr_write_in_rb_mode, and return false if
+invalid offset occurs.
+
+Signed-off-by: Yi Sun <yi.sun@intel.com>
+
+Conflicts:
+	drivers/gpu/drm/i915/vgt/render.c
+---
+ drivers/gpu/drm/i915/vgt/legacy/render_hsw.c |    5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/legacy/render_hsw.c b/drivers/gpu/drm/i915/vgt/legacy/render_hsw.c
+index 2905d11..c26a128 100644
+--- a/drivers/gpu/drm/i915/vgt/legacy/render_hsw.c
++++ b/drivers/gpu/drm/i915/vgt/legacy/render_hsw.c
+@@ -1349,8 +1349,9 @@ bool ring_uhptr_write_in_rb_mode(struct vgt_device *vgt, unsigned int off,
+ 		ring_id = RING_BUFFER_VECS;
+ 		break;
+ 	default:
+-		ASSERT(0);
+-		break;
++		vgt_err("vGT(%d) ring_uhptr_write_in_rb_mode: Invalid offset(%x)\n",
++			vgt->vgt_id, off);
++		return false;
+ 	}
+ 
+ 	rs = &vgt->rb[ring_id];
+-- 
+1.7.10.4
+

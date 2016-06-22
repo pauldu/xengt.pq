@@ -1,0 +1,56 @@
+From 59e8afe8733fb5735fe0c55f5f571805f24282f7 Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Fri, 13 Mar 2015 18:43:11 +0800
+Subject: [PATCH 011/403] To address some warnings from code check tool
+
+Just some trivial code changes
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/gtt.c       |    2 ++
+ drivers/gpu/drm/i915/vgt/handlers.c  |    2 +-
+ drivers/gpu/drm/i915/vgt/interrupt.c |    2 ++
+ 3 files changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index 4dcd83b..2c2bdc6 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -1293,6 +1293,8 @@ static inline unsigned long vgt_gma_to_gpa(struct vgt_mm *mm, unsigned long gma)
+ 			gma_index[0] = gma_ops->gma_to_pte_index(gma);
+ 			index = 1;
+ 			break;
++		default:
++			BUG();
+ 	}
+ 	/* walk into the last level shadow page table and get gpa from guest entry */
+ 	for (i = 0; i < index; i++)
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index e4e4052..53b5522 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -2339,7 +2339,7 @@ static bool vgt_write_submitport(struct vgt_device *vgt, unsigned int offset,
+ 	struct vgt_elsp_store *elsp_store = &vgt->rb[ring_id].elsp_store;
+ 
+ 	ASSERT((bytes == 4) && ((offset & 3) == 0));
+-	ASSERT(elsp_store->count >= 0 && elsp_store->count < ELSP_BUNDLE_NUM);
++	ASSERT(elsp_store->count < ELSP_BUNDLE_NUM);
+ 
+ 	elsp_store->element[elsp_store->count] = *(vgt_reg_t *)p_data;
+ 	elsp_store->count ++;
+diff --git a/drivers/gpu/drm/i915/vgt/interrupt.c b/drivers/gpu/drm/i915/vgt/interrupt.c
+index 06a8974..2c7e5a5 100644
+--- a/drivers/gpu/drm/i915/vgt/interrupt.c
++++ b/drivers/gpu/drm/i915/vgt/interrupt.c
+@@ -751,6 +751,8 @@ static void update_upstream_irq(struct vgt_device *vgt,
+ 			clear_bits |= (1 << bit);
+ 	}
+ 
++	ASSERT(up_irq_info);
++
+ 	if (up_irq_info->group == IRQ_INFO_MASTER) {
+ 		u32 isr = up_irq_info->reg_base;
+ 		__vreg(vgt, isr) &= ~clear_bits;
+-- 
+1.7.10.4
+

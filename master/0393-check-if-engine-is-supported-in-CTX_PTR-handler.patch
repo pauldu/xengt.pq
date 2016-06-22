@@ -1,0 +1,33 @@
+From 6d6b91797f6f1801770e9b9978e465c048f3ae50 Mon Sep 17 00:00:00 2001
+From: Min He <min.he@intel.com>
+Date: Thu, 24 Mar 2016 01:03:00 +0800
+Subject: [PATCH 393/403] check if engine is supported in CTX_PTR handler
+
+Added a check to see if current GT supports corresponding ring.
+This patch is to fix bug 1041 -- "Kernel panic and dom0 crashed while
+running forcetdr in win10/win7-32 guest"
+
+Signed-off-by: Min He <min.he@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |    5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index bdb3de5..7105df4 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -2496,7 +2496,10 @@ static bool vgt_read_ctx_status_ptr(struct vgt_device *vgt, unsigned int offset,
+ 		return false;
+ 	};
+ 
+-	if (vgt == current_render_owner(vgt->pdev)) {
++	if (ring_id >= vgt->pdev->max_engines)
++		WARN_ONCE(1, "vGT(%d) accessing ring%d offset 0x%x not supported\n",
++				vgt->vgt_id, ring_id, offset);
++	else if (vgt == current_render_owner(vgt->pdev)) {
+ 		/* update HW CSB status to guest if we are render owner
+ 		 * this is to make sure that guest always can get latest HW status,
+ 		 * even if we delay/did not send ctx switch events to guest.
+-- 
+1.7.10.4
+

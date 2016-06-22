@@ -1,0 +1,156 @@
+From 1cd0d59276dbcaadfbc181ecf7e273ae43bf7229 Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Thu, 28 Jan 2016 16:52:44 +0800
+Subject: [PATCH 331/403] passthru regs: bring a new register type F_PT_RO
+
+use F_PT_RO instead of F_PT to describe registers that allowed guest
+read directly.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |    1 +
+ drivers/gpu/drm/i915/vgt/debugfs.c    |    2 ++
+ drivers/gpu/drm/i915/vgt/handlers.c   |   10 +++++-----
+ drivers/gpu/drm/i915/vgt/mmio.c       |    6 ++++--
+ drivers/gpu/drm/i915/vgt/mmio.h       |    7 +++++++
+ drivers/gpu/drm/i915/vgt/vgt.h        |    8 ++++++++
+ 6 files changed, 27 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index abe1a4f..a5a468e 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -824,6 +824,7 @@ static int cmd_reg_handler(struct parser_exec_state *s,
+ 	if ((reg_is_render(pdev, offset) &&
+ 		!reg_addr_fix(pdev, offset) && offset != 0x24d0) ||
+ 				reg_passthrough(pdev, offset) ||
++				reg_pt_readonly(pdev, offset) ||
+ 		(!vgt->vm_id && reg_is_config(pdev, offset))) {
+ 		rc = 0;
+ 	} else if (offset == _REG_DE_RRMR || offset == FORCEWAKE_MT) {
+diff --git a/drivers/gpu/drm/i915/vgt/debugfs.c b/drivers/gpu/drm/i915/vgt/debugfs.c
+index 3f90737..427b096 100644
+--- a/drivers/gpu/drm/i915/vgt/debugfs.c
++++ b/drivers/gpu/drm/i915/vgt/debugfs.c
+@@ -321,6 +321,8 @@ static inline char *reg_show_reg_type(struct pgt_device *pdev, int i)
+ 		return "PT";
+ 	else if (reg_virt(pdev, i))
+ 		return "Virt";
++	else if (reg_pt_readonly(pdev, i))
++		return "PT_RO";
+ 	else
+ 		return "";
+ }
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index c4f600b..d7fc229 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -2893,10 +2893,10 @@ reg_attr_t vgt_reg_info_general[] = {
+ {COMMON_SLICE_CHICKEN2, 4, F_RDR_MODE, 0, D_ALL, NULL, NULL},
+ {0x9030, 4, F_RDR, 0, D_ALL, NULL, NULL},
+ {0x20a0, 4, F_RDR, 0, D_ALL, NULL, NULL},
+-{_REG_RCS_TIMESTAMP, 8, F_PT, 0, D_ALL, NULL, NULL},
+-{_REG_VCS_TIMESTAMP, 8, F_PT, 0, D_ALL, NULL, NULL},
+-{0x1a358, 8, F_PT, 0, D_ALL, NULL, NULL},
+-{_REG_BCS_TIMESTAMP, 8, F_PT, 0, D_ALL, NULL, NULL},
++{_REG_RCS_TIMESTAMP, 8, F_PT_RO, 0, D_ALL, NULL, NULL},
++{_REG_VCS_TIMESTAMP, 8, F_PT_RO, 0, D_ALL, NULL, NULL},
++{0x1a358, 8, F_PT_RO, 0, D_ALL, NULL, NULL},
++{_REG_BCS_TIMESTAMP, 8, F_PT_RO, 0, D_ALL, NULL, NULL},
+ {0x2420, 4, F_RDR, 0, D_ALL, NULL, NULL},
+ {0x2430, 4, F_RDR, 0, D_ALL, NULL, NULL},
+ {0x2434, 4, F_RDR, 0, D_ALL, NULL, NULL},
+@@ -3651,7 +3651,7 @@ reg_attr_t vgt_reg_info_bdw[] = {
+ {_REG_VCS2_MI_MODE, 4, F_RDR_MODE, 0, D_BDW_PLUS, NULL, NULL},
+ {_REG_VCS2_INSTPM, 4, F_RDR_MODE, 0, D_BDW_PLUS, NULL, NULL},
+ 
+-{_REG_VCS2_TIMESTAMP, 8, F_PT, 0, D_BDW_PLUS, NULL, NULL},
++{_REG_VCS2_TIMESTAMP, 8, F_PT_RO, 0, D_BDW_PLUS, NULL, NULL},
+ 
+ {_REG_RCS_EXECLIST_SUBMITPORT, 4, F_VIRT, 0, D_BDW_PLUS,
+ 			vgt_not_allowed_mmio_read, vgt_write_submitport},
+diff --git a/drivers/gpu/drm/i915/vgt/mmio.c b/drivers/gpu/drm/i915/vgt/mmio.c
+index e6c2f5f..fafe198 100644
+--- a/drivers/gpu/drm/i915/vgt/mmio.c
++++ b/drivers/gpu/drm/i915/vgt/mmio.c
+@@ -136,7 +136,7 @@ static unsigned long vgt_get_reg(struct vgt_device *vgt, unsigned int reg)
+ {
+ 	/* check whether to update vreg from HW */
+ //	if (reg_hw_status(pdev, reg) &&
+-	if (reg_hw_access(vgt, reg))
++	if (reg_hw_access(vgt, reg) || reg_pt_readonly(vgt->pdev, reg))
+ 		return vgt_get_passthrough_reg(vgt, reg);
+ 	else
+ 		return __vreg(vgt, reg);
+@@ -160,7 +160,7 @@ static unsigned long vgt_get_reg_64(struct vgt_device *vgt, unsigned int reg)
+ {
+ 	/* check whether to update vreg from HW */
+ //	if (reg_hw_status(pdev, reg) &&
+-	if (reg_hw_access(vgt, reg))
++	if (reg_hw_access(vgt, reg) || reg_pt_readonly(vgt->pdev, reg))
+ 		return vgt_get_passthrough_reg_64(vgt, reg);
+ 	else
+ 		return __vreg64(vgt, reg);
+@@ -640,6 +640,8 @@ static void vgt_set_reg_attr(struct pgt_device *pdev,
+ 	}
+ 
+ 	reg_set_owner(pdev, reg, attr->flags & VGT_REG_OWNER);
++	if (attr->flags & VGT_REG_PT_READONLY)
++		reg_set_pt_readonly(pdev, reg);
+ 	if (attr->flags & VGT_REG_PASSTHROUGH)
+ 		reg_set_passthrough(pdev, reg);
+ 	if (attr->flags & VGT_REG_ADDR_FIX ) {
+diff --git a/drivers/gpu/drm/i915/vgt/mmio.h b/drivers/gpu/drm/i915/vgt/mmio.h
+index 2e36d68..60608f1 100644
+--- a/drivers/gpu/drm/i915/vgt/mmio.h
++++ b/drivers/gpu/drm/i915/vgt/mmio.h
+@@ -72,6 +72,11 @@
+  */
+ #define F_PT			VGT_OT_NONE | VGT_REG_PASSTHROUGH
+ 
++/*
++ * read only pass through registers, not allowed write but allow guest read HW
++ */
++#define F_PT_RO			(VGT_OT_NONE | VGT_REG_PT_READONLY)
++
+ struct vgt_device;
+ 
+ typedef bool (*vgt_mmio_read)(struct vgt_device *vgt, unsigned int offset,
+@@ -126,6 +131,8 @@ enum vgt_owner_type {
+ #define VGT_REG_STICKY		(1 << 13)
+ /* Accessed through GPU commands */
+ #define VGT_REG_CMD_ACCESS	(1 << 14)
++/* read only pass through register */
++#define VGT_REG_PT_READONLY    (1 << 15)
+ /* index into another auxillary table. Maximum 256 entries now */
+ #define VGT_REG_INDEX_SHIFT	16
+ #define VGT_REG_INDEX_MASK	(0xFFFF << VGT_REG_INDEX_SHIFT)
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 256034f..bbd34d7 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -530,6 +530,7 @@ struct pgt_device {
+ #define reg_virt(pdev, reg)		(pdev->reg_info[REG_INDEX(reg)] & VGT_REG_VIRT)
+ #define reg_mode_ctl(pdev, reg)		(pdev->reg_info[REG_INDEX(reg)] & VGT_REG_MODE_CTL)
+ #define reg_passthrough(pdev, reg)	(pdev->reg_info[REG_INDEX(reg)] & VGT_REG_PASSTHROUGH)
++#define reg_pt_readonly(pdev, reg)	(pdev->reg_info[REG_INDEX(reg)] & VGT_REG_PT_READONLY)
+ #define reg_need_switch(pdev, reg)	(pdev->reg_info[REG_INDEX(reg)] & VGT_REG_NEED_SWITCH)
+ #define reg_is_tracked(pdev, reg)	(pdev->reg_info[REG_INDEX(reg)] & VGT_REG_TRACKED)
+ #define reg_is_accessed(pdev, reg)	(pdev->reg_info[REG_INDEX(reg)] & VGT_REG_ACCESSED)
+@@ -641,6 +642,13 @@ static inline void reg_set_passthrough(struct pgt_device *pdev,
+ 	pdev->reg_info[REG_INDEX(reg)] |= VGT_REG_PASSTHROUGH;
+ }
+ 
++static inline void reg_set_pt_readonly(struct pgt_device *pdev,
++	vgt_reg_t reg)
++{
++	ASSERT_NUM(!reg_is_tracked(pdev, reg), reg);
++	pdev->reg_info[REG_INDEX(reg)] |= VGT_REG_PT_READONLY;
++}
++
+ static inline void reg_set_tracked(struct pgt_device *pdev,
+ 	vgt_reg_t reg)
+ {
+-- 
+1.7.10.4
+

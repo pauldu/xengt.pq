@@ -1,0 +1,116 @@
+From e021db6b12a9cc9f6c6059685565c3dcf5239b4a Mon Sep 17 00:00:00 2001
+From: "Zheng, Xiao" <xiao.zheng@intel.com>
+Date: Thu, 13 Aug 2015 21:40:02 +0800
+Subject: [PATCH 218/403] vgt/skl: add SKL forcewake support for guest VM
+
+only forcewake in kernel mode emulation is covered.
+forcewake request with user mode are not addressed.
+
+v3:
+
+- Take Kevin's comments: remove the unused code
+with comments.
+
+Signed-off-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |   63 ++++++++++++++++++++++++++---------
+ 1 file changed, 47 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 48216d8..efae082 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -157,27 +157,52 @@ static bool force_wake_write(struct vgt_device *vgt, unsigned int offset,
+ 	void *p_data, unsigned int bytes)
+ {
+ 	uint32_t data;
++	uint32_t ack_reg_offset;
+ 
+-	data = (*(uint32_t*) p_data) & 1 ;
++	data = (*(uint32_t*) p_data);
+ 
+ 	vgt_dbg(VGT_DBG_GENERIC, "VM%d write register FORCE_WAKE with %x\n", vgt->vm_id, data);
+ 
+-	if (IS_HSW(vgt->pdev)) {
+-		__vreg(vgt, FORCEWAKE_ACK_HSW) = data;
++	/* SKL+ Kernel mode forcewake.*/
++	if (IS_SKLPLUS(vgt->pdev)) {
++		/* TODO: user mode forcewake are not handled */
++		switch (offset) {
++			case FORCEWAKE_RENDER_GEN9:
++				ack_reg_offset = FORCEWAKE_ACK_RENDER_GEN9;
++				break;
++			case FORCEWAKE_BLITTER_GEN9:
++				ack_reg_offset = FORCEWAKE_ACK_BLITTER_GEN9;
++				break;
++			case FORCEWAKE_MEDIA_GEN9:
++				ack_reg_offset = FORCEWAKE_ACK_MEDIA_GEN9;
++				break;
++			default:
++				ASSERT(0); // should not hit
++		}
++
++		__vreg(vgt, offset) = data;
++
++		/* set ACK reg */
++		__vreg(vgt, ack_reg_offset) = data & FORCEWAKE_KERNEL;
++		/* HSW and BDW */
+ 	} else {
+-		__vreg(vgt, FORCEWAKE_ACK) = data;
+-	}
++		data &= FORCEWAKE_KERNEL;
+ 
+-	__vreg(vgt, FORCEWAKE) = data;
+-	if (data == 1){
+-		set_vRC_to_C0(vgt);
+-		v_force_wake_get(vgt);
+-	}
+-	else{
+-		set_vRC_to_C6(vgt);
+-		v_force_wake_put(vgt);
+-	}
++		if (IS_HSW(vgt->pdev)) {
++			__vreg(vgt, FORCEWAKE_ACK_HSW) = data;
++		} else if (IS_BDW(vgt->pdev)){
++			__vreg(vgt, FORCEWAKE_ACK) = data;
++		}
+ 
++		__vreg(vgt, FORCEWAKE) = data;
++		if (data == 1) {
++			set_vRC_to_C0(vgt);
++			v_force_wake_get(vgt);
++		} else {
++			set_vRC_to_C6(vgt);
++			v_force_wake_put(vgt);
++		}
++	}
+ 	return true;
+ }
+ 
+@@ -3013,8 +3038,8 @@ reg_attr_t vgt_reg_info_general[] = {
+ {GEN6_GT_THREAD_STATUS_REG, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+ {GTFIFODBG, 4, F_RDR, 0, D_ALL, NULL, NULL},
+ {GTFIFOCTL, 4, F_RDR, 0, D_ALL, NULL, NULL},
+-{FORCEWAKE_MT, 4, F_VIRT, 0, D_ALL, NULL, mul_force_wake_write},
+-{FORCEWAKE_ACK_HSW, 4, F_VIRT, 0, D_ALL, mul_force_wake_ack_read, NULL},
++{FORCEWAKE_MT, 4, F_VIRT, 0, D_PRE_SKL, NULL, mul_force_wake_write},
++{FORCEWAKE_ACK_HSW, 4, F_VIRT, 0, D_HSW | D_BDW, mul_force_wake_ack_read, NULL},
+ {ECOBUS, 4, F_DOM0, 0, D_ALL, NULL, NULL},
+ {GEN6_RC_CONTROL, 4, F_DOM0, 0, D_ALL, NULL, rc_state_ctrl_1_mmio_write},
+ {GEN6_RC_STATE, 4, F_DOM0, 0, D_ALL, NULL, rc_state_ctrl_1_mmio_write},
+@@ -3460,6 +3485,12 @@ reg_attr_t vgt_reg_info_bdw[] = {
+ };
+ 
+ reg_attr_t vgt_reg_info_skl[] = {
++{FORCEWAKE_RENDER_GEN9, 4, F_VIRT, 0, D_SKL_PLUS, NULL, force_wake_write},
++{FORCEWAKE_ACK_RENDER_GEN9, 4, F_VIRT, 0, D_SKL_PLUS, NULL, NULL},
++{FORCEWAKE_BLITTER_GEN9, 4, F_VIRT, 0, D_SKL_PLUS, NULL, force_wake_write},
++{FORCEWAKE_ACK_BLITTER_GEN9, 4, F_VIRT, 0, D_SKL_PLUS, NULL, NULL},
++{FORCEWAKE_MEDIA_GEN9, 4, F_VIRT, 0, D_SKL_PLUS, NULL, force_wake_write},
++{FORCEWAKE_ACK_MEDIA_GEN9, 4, F_VIRT, 0, D_SKL_PLUS, NULL, NULL},
+ {DPB_AUX_CH_CTL, 6*4, F_DPY, 0, D_SKL, NULL, dp_aux_ch_ctl_mmio_write},
+ {DPC_AUX_CH_CTL, 6*4, F_DPY, 0, D_SKL, NULL, dp_aux_ch_ctl_mmio_write},
+ {DPD_AUX_CH_CTL, 6*4, F_DPY, 0, D_SKL, NULL, dp_aux_ch_ctl_mmio_write},
+-- 
+1.7.10.4
+

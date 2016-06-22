@@ -1,0 +1,26 @@
+From 9a23d6464fdcfcc40481462e52523a06e78030cb Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Thu, 11 Jun 2015 21:03:08 +0800
+Subject: [PATCH 100/403] vgt: remove register 0x229c from register
+ save/restore list
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/render.c |    1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index 824a69a..ee3db4e 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -1683,7 +1683,6 @@ struct vgt_render_context_ops gen7_context_ops = {
+ 
+ static struct reg_mask_t gen8_rcs_reset_mmio[] = {
+ 	{0x2098, 0},
+-	{0x229c, 1},
+ 	{0x20c0, 1},
+ 
+ 	{0x24d0, 0},
+-- 
+1.7.10.4
+

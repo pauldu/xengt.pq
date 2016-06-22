@@ -1,0 +1,65 @@
+From 8d48b78170d2fd31fd6adc5dfd58bdf2831d58af Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Thu, 4 Jun 2015 15:03:11 +0800
+Subject: [PATCH 092/403] vgt: clear fence registers after fence regions
+ allocate and free.
+
+To avoid fence regions conflict that may cause wrong memory access.
+
+Fix bug#770.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/aperture_gm.c |   15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/aperture_gm.c b/drivers/gpu/drm/i915/vgt/aperture_gm.c
+index 03e4698..2d4dcb8 100644
+--- a/drivers/gpu/drm/i915/vgt/aperture_gm.c
++++ b/drivers/gpu/drm/i915/vgt/aperture_gm.c
+@@ -209,6 +209,7 @@ int allocate_vm_aperture_gm_and_fence(struct vgt_device *vgt, vgt_params_t vp)
+ 	unsigned long aperture_search_start = 0;
+ 	unsigned long visable_gm_start, hidden_gm_start = guard;
+ 	unsigned long fence_base;
++	int i=0;
+ 
+ 	ASSERT(vgt->aperture_base == 0); /* not allocated yet*/
+ 	ASSERT(vp.aperture_sz > 0 && vp.aperture_sz <= vp.gm_sz);
+@@ -243,6 +244,13 @@ int allocate_vm_aperture_gm_and_fence(struct vgt_device *vgt, vgt_params_t vp)
+ 	if (vp.gm_sz > vp.aperture_sz)
+ 		bitmap_set(gm_bitmap, hidden_gm_start, vp.gm_sz - vp.aperture_sz);
+ 	bitmap_set(fence_bitmap, fence_base, vp.fence_sz);
++
++	for (i = vgt->fence_base; i < vgt->fence_base + vgt->fence_sz; i++){
++		VGT_MMIO_WRITE_BYTES(pdev,
++			_REG_FENCE_0_LOW + 8 * i,
++			0, 8);
++	}
++
+ 	return 0;
+ }
+ 
+@@ -254,6 +262,7 @@ void free_vm_aperture_gm_and_fence(struct vgt_device *vgt)
+ 	unsigned long visable_gm_start =
+ 		aperture_2_gm(vgt->pdev, vgt->aperture_base)/SIZE_1MB;
+ 	unsigned long hidden_gm_start = vgt->hidden_gm_offset/SIZE_1MB;
++	int i=0;
+ 
+ 	ASSERT(vgt->aperture_sz > 0 && vgt->aperture_sz <= vgt->gm_sz);
+ 
+@@ -263,6 +272,12 @@ void free_vm_aperture_gm_and_fence(struct vgt_device *vgt)
+ 		bitmap_clear(gm_bitmap, hidden_gm_start,
+ 			(vgt->gm_sz - vgt->aperture_sz)/SIZE_1MB);
+ 	bitmap_clear(fence_bitmap, vgt->fence_base,  vgt->fence_sz);
++
++	for (i = vgt->fence_base; i < vgt->fence_base + vgt->fence_sz; i++){
++		VGT_MMIO_WRITE_BYTES(pdev,
++			_REG_FENCE_0_LOW + 8 * i,
++			0, 8);
++	}
+ }
+ 
+ int alloc_vm_rsvd_aperture(struct vgt_device *vgt)
+-- 
+1.7.10.4
+

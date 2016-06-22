@@ -1,0 +1,156 @@
+From b8b8f13e2e3bf0b259c6e91f66be4bb1b5c5bd39 Mon Sep 17 00:00:00 2001
+From: Min He <min.he@intel.com>
+Date: Thu, 10 Dec 2015 01:47:22 +0800
+Subject: [PATCH 292/403] vgt/skl: handle SKL forcewake regs correctly
+
+In SKL, forcewake regs are multi-thread regs, and previouse implementation
+is incorrect, so removing SKL forcewake reg handler from force_wake_write
+and added them into mul_force_wake_write.
+
+Signed-off-by: Min He <min.he@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |   95 ++++++++++++++++-------------------
+ 1 file changed, 43 insertions(+), 52 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 2cef2fa..b048390 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -169,51 +169,26 @@ static bool force_wake_write(struct vgt_device *vgt, unsigned int offset,
+ 	void *p_data, unsigned int bytes)
+ {
+ 	uint32_t data;
+-	uint32_t ack_reg_offset;
+ 
+ 	data = (*(uint32_t*) p_data);
+ 
+ 	vgt_dbg(VGT_DBG_GENERIC, "VM%d write register FORCE_WAKE with %x\n", vgt->vm_id, data);
+ 
+-	/* SKL+ Kernel mode forcewake.*/
+-	if (IS_SKLPLUS(vgt->pdev)) {
+-		/* TODO: user mode forcewake are not handled */
+-		switch (offset) {
+-			case FORCEWAKE_RENDER_GEN9:
+-				ack_reg_offset = FORCEWAKE_ACK_RENDER_GEN9;
+-				break;
+-			case FORCEWAKE_BLITTER_GEN9:
+-				ack_reg_offset = FORCEWAKE_ACK_BLITTER_GEN9;
+-				break;
+-			case FORCEWAKE_MEDIA_GEN9:
+-				ack_reg_offset = FORCEWAKE_ACK_MEDIA_GEN9;
+-				break;
+-			default:
+-				ASSERT(0); // should not hit
+-		}
++	data &= FORCEWAKE_KERNEL;
+ 
+-		__vreg(vgt, offset) = data;
++	if (IS_HSW(vgt->pdev)) {
++		__vreg(vgt, FORCEWAKE_ACK_HSW) = data;
++	} else if (IS_BDW(vgt->pdev)) {
++		__vreg(vgt, FORCEWAKE_ACK) = data;
++	}
+ 
+-		/* set ACK reg */
+-		__vreg(vgt, ack_reg_offset) = data & FORCEWAKE_KERNEL;
+-		/* HSW and BDW */
++	__vreg(vgt, FORCEWAKE) = data;
++	if (data == 1) {
++		set_vRC_to_C0(vgt);
++		v_force_wake_get(vgt);
+ 	} else {
+-		data &= FORCEWAKE_KERNEL;
+-
+-		if (IS_HSW(vgt->pdev)) {
+-			__vreg(vgt, FORCEWAKE_ACK_HSW) = data;
+-		} else if (IS_BDW(vgt->pdev)){
+-			__vreg(vgt, FORCEWAKE_ACK) = data;
+-		}
+-
+-		__vreg(vgt, FORCEWAKE) = data;
+-		if (data == 1) {
+-			set_vRC_to_C0(vgt);
+-			v_force_wake_get(vgt);
+-		} else {
+-			set_vRC_to_C6(vgt);
+-			v_force_wake_put(vgt);
+-		}
++		set_vRC_to_C6(vgt);
++		v_force_wake_put(vgt);
+ 	}
+ 	return true;
+ }
+@@ -229,6 +204,7 @@ bool mul_force_wake_write(struct vgt_device *vgt, unsigned int offset,
+ 	void *p_data, unsigned int bytes)
+ {
+ 	uint32_t data, mask, wake, old_wake, new_wake;
++	uint32_t ack_reg_offset;
+ 
+ 	data = *(uint32_t*) p_data;
+ 
+@@ -243,19 +219,34 @@ bool mul_force_wake_write(struct vgt_device *vgt, unsigned int offset,
+ 	   bit 0-15: force wake
+ 	   forcewake bit apply only if its mask bit is 1
+ 	 */
++	if (IS_SKL(vgt->pdev)) {
++		switch (offset) {
++		case FORCEWAKE_RENDER_GEN9:
++			ack_reg_offset = FORCEWAKE_ACK_RENDER_GEN9;
++			break;
++		case FORCEWAKE_BLITTER_GEN9:
++			ack_reg_offset = FORCEWAKE_ACK_BLITTER_GEN9;
++			break;
++		case FORCEWAKE_MEDIA_GEN9:
++			ack_reg_offset = FORCEWAKE_ACK_MEDIA_GEN9;
++			break;
++		default:
++			/*should not hit here*/
++			vgt_err("invalid forcewake offset 0x%x\n",
++				offset);
++			return false;
++		}
++	} else {
++		ack_reg_offset = FORCEWAKE_ACK_HSW;
++	}
++
+ 	mask = data >> 16;
+ 	wake = data & 0xFFFF;
+-	old_wake = __vreg(vgt, FORCEWAKE_MT) & 0xFFFF;
++	old_wake = __vreg(vgt, offset) & 0xFFFF;
+ 
+ 	new_wake = (old_wake & ~mask) + (wake & mask);
+-	__vreg(vgt, FORCEWAKE_MT) = (data & 0xFFFF0000) + new_wake;
+-
+-	if (IS_HSW(vgt->pdev) || IS_BDWPLUS(vgt->pdev)) {
+-		__vreg(vgt, FORCEWAKE_ACK_HSW) = new_wake;
+-	} else {
+-		/* IVB */
+-		__vreg(vgt, FORCEWAKE_MT_ACK) = new_wake;
+-	}
++	__vreg(vgt, offset) = (data & 0xFFFF0000) + new_wake;
++	__vreg(vgt, ack_reg_offset) = new_wake;
+ 
+ 	if (new_wake){
+ 		v_force_wake_get(vgt);
+@@ -3697,12 +3688,12 @@ reg_attr_t vgt_reg_info_bdw[] = {
+ };
+ 
+ reg_attr_t vgt_reg_info_skl[] = {
+-{FORCEWAKE_RENDER_GEN9, 4, F_VIRT, 0, D_SKL_PLUS, NULL, force_wake_write},
+-{FORCEWAKE_ACK_RENDER_GEN9, 4, F_VIRT, 0, D_SKL_PLUS, NULL, NULL},
+-{FORCEWAKE_BLITTER_GEN9, 4, F_VIRT, 0, D_SKL_PLUS, NULL, force_wake_write},
+-{FORCEWAKE_ACK_BLITTER_GEN9, 4, F_VIRT, 0, D_SKL_PLUS, NULL, NULL},
+-{FORCEWAKE_MEDIA_GEN9, 4, F_VIRT, 0, D_SKL_PLUS, NULL, force_wake_write},
+-{FORCEWAKE_ACK_MEDIA_GEN9, 4, F_VIRT, 0, D_SKL_PLUS, NULL, NULL},
++{FORCEWAKE_RENDER_GEN9, 4, F_VIRT, 0, D_SKL_PLUS, NULL, mul_force_wake_write},
++{FORCEWAKE_ACK_RENDER_GEN9, 4, F_VIRT, 0, D_SKL_PLUS, mul_force_wake_ack_read, NULL},
++{FORCEWAKE_BLITTER_GEN9, 4, F_VIRT, 0, D_SKL_PLUS, NULL, mul_force_wake_write},
++{FORCEWAKE_ACK_BLITTER_GEN9, 4, F_VIRT, 0, D_SKL_PLUS, mul_force_wake_ack_read, NULL},
++{FORCEWAKE_MEDIA_GEN9, 4, F_VIRT, 0, D_SKL_PLUS, NULL, mul_force_wake_write},
++{FORCEWAKE_ACK_MEDIA_GEN9, 4, F_VIRT, 0, D_SKL_PLUS, mul_force_wake_ack_read, NULL},
+ {DPB_AUX_CH_CTL, 6*4, F_DPY, 0, D_SKL, NULL, dp_aux_ch_ctl_mmio_write},
+ {DPC_AUX_CH_CTL, 6*4, F_DPY, 0, D_SKL, NULL, dp_aux_ch_ctl_mmio_write},
+ {DPD_AUX_CH_CTL, 6*4, F_DPY, 0, D_SKL, NULL, dp_aux_ch_ctl_mmio_write},
+-- 
+1.7.10.4
+

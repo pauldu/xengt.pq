@@ -1,0 +1,39 @@
+From 0341ca9d53aa95d480ffe0b3565917dc6292d0a7 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Thu, 3 Dec 2015 23:53:49 +0800
+Subject: [PATCH 239/403] vgt/skl: write bit 0 of 0x4fdc when boot up
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |    2 +-
+ drivers/gpu/drm/i915/vgt/vgt.c      |    1 +
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index b31dadc..34c32bc 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -3791,7 +3791,7 @@ reg_attr_t vgt_reg_info_skl[] = {
+ {0x4dec, 4, F_RDR, 0, D_SKL, NULL, NULL},
+ {0x4df0, 4, F_RDR, 0, D_SKL, NULL, NULL},
+ {0x4df4, 4, F_RDR, 0, D_SKL, NULL, NULL},
+-{0x4dfc, 4, F_PT, 0, D_SKL, NULL, NULL},
++{0x4dfc, 4, F_VIRT, 0, D_SKL, NULL, NULL},
+ 
+ {0x45008, 4, F_VIRT, 0, D_SKL, NULL, NULL},
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 071b234..8522c29 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -719,6 +719,7 @@ static bool vgt_initialize_platform(struct pgt_device *pdev)
+ 		if (IS_SKL(pdev)) {
+ 			enable_panel_fitting = false;
+ 			vgt_get_memory_latency(pdev);
++			VGT_MMIO_WRITE(pdev, 0x4dfc, 0x1);
+ 		}
+ 	} else {
+ 		vgt_err("Unsupported platform.\n");
+-- 
+1.7.10.4
+

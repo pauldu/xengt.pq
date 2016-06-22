@@ -1,0 +1,69 @@
+From 42f5e3ed562d66eb45cbce5d6ee4e0818f1acd60 Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Wed, 24 Jun 2015 10:38:26 +0800
+Subject: [PATCH 103/403] vgt: MIT licence compatible changes
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/hypercall.h |   28 +++++++++++++++++-----------
+ drivers/gpu/drm/i915/vgt/vgt.c       |    2 +-
+ 2 files changed, 18 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/hypercall.h b/drivers/gpu/drm/i915/vgt/hypercall.h
+index 6f83bc4..edd8bd6 100644
+--- a/drivers/gpu/drm/i915/vgt/hypercall.h
++++ b/drivers/gpu/drm/i915/vgt/hypercall.h
+@@ -1,20 +1,26 @@
+ /*
+  * Interface abstraction for hypervisor services
+  *
+- * Copyright(c) 2014 Intel Corporation. All rights reserved.
++ * Copyright(c) 2011-2015 Intel Corporation. All rights reserved.
+  *
+- * This program is free software; you can redistribute it and/or modify
+- * it under the terms of Version 2 of the GNU General Public License as
+- * published by the Free Software Foundation.
++ * Permission is hereby granted, free of charge, to any person obtaining a
++ * copy of this software and associated documentation files (the "Software"),
++ * to deal in the Software without restriction, including without limitation
++ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
++ * and/or sell copies of the Software, and to permit persons to whom the
++ * Software is furnished to do so, subject to the following conditions:
+  *
+- * This program is distributed in the hope that it will be useful, but
+- * WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
+- * General Public License for more details.
++ * The above copyright notice and this permission notice (including the next
++ * paragraph) shall be included in all copies or substantial portions of the
++ * Software.
+  *
+- * You should have received a copy of the GNU General Public License
+- * along with this program; if not, write to the Free Software
+- * Foundation, Inc., 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
++ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
++ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++ * SOFTWARE.
+  */
+ 
+ #ifndef _VGT_HYPERCALL_H_
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index d84c80c..cce9d91 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -32,7 +32,7 @@
+ 
+ MODULE_AUTHOR("Intel Corporation");
+ MODULE_DESCRIPTION("Virtual GPU device model for Intel Processor Graphics");
+-MODULE_LICENSE("GPL");
++MODULE_LICENSE("GPL and additional rights");
+ MODULE_VERSION("0.1");
+ 
+ bool hvm_render_owner = false;
+-- 
+1.7.10.4
+

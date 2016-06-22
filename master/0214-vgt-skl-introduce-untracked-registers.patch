@@ -1,0 +1,390 @@
+From 9b56ca4dcc6bf859191d883f787df98faeff0ca2 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Wed, 5 Aug 2015 05:04:48 +0800
+Subject: [PATCH 214/403] vgt/skl: introduce untracked registers
+
+a) Fix some definition error, which cause incorrect registers save/restore
+e.g. some F_RDR registers should be F_RDR_MODE
+
+b) Extend some BDW register definitions to SKL.
+
+c) Put the new SKL registers definition into new register info array.
+
+v2:
+
+Take Zhiyuan's comment:
+- Reuse i915 register definition as much as possible.
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |  236 +++++++++++++++++++++++++++++++----
+ drivers/gpu/drm/i915/vgt/mmio.c     |   11 ++
+ drivers/gpu/drm/i915/vgt/reg.h      |    3 +
+ drivers/gpu/drm/i915/vgt/vgt.h      |    1 +
+ 4 files changed, 226 insertions(+), 25 deletions(-)
+ mode change 100755 => 100644 drivers/gpu/drm/i915/vgt/reg.h
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index de0eab3..df11ef7f 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -2503,8 +2503,8 @@ reg_attr_t vgt_reg_info_general[] = {
+ {0x20e4, 4, F_RDR_MODE, 0, D_ALL, NULL, NULL},
+ {_REG_VFSKPD, 4, F_RDR_MODE, 0, D_ALL, NULL, NULL},
+ {GAM_ECOCHK, 4, F_RDR, 0, D_ALL, NULL, NULL},
+-{GEN7_COMMON_SLICE_CHICKEN1, 4, F_RDR, 0, D_ALL, NULL, NULL},
+-{COMMON_SLICE_CHICKEN2, 4, F_RDR, 0, D_ALL, NULL, NULL},
++{GEN7_COMMON_SLICE_CHICKEN1, 4, F_RDR_MODE, 0, D_ALL, NULL, NULL},
++{COMMON_SLICE_CHICKEN2, 4, F_RDR_MODE, 0, D_ALL, NULL, NULL},
+ {0x9030, 4, F_RDR, 0, D_ALL, NULL, NULL},
+ {0x20a0, 4, F_RDR, 0, D_ALL, NULL, NULL},
+ {_REG_RCS_TIMESTAMP, 8, F_PT, 0, D_ALL, NULL, NULL},
+@@ -2535,7 +2535,7 @@ reg_attr_t vgt_reg_info_general[] = {
+ {VGA1, 4, F_DPY, 0, D_ALL, NULL, NULL},
+ {VGA_PD, 4, F_DPY, 0, D_ALL, NULL, NULL},
+ 
+-{0x42080, 4, F_DOM0, 0, D_ALL, NULL, NULL},
++{0x42080, 4, F_DOM0, 0, D_PRE_SKL, NULL, NULL},
+ {0xc4040, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+ 
+ {_REG_DE_RRMR, 4, F_VIRT, 0, D_ALL, NULL, vgt_rrmr_mmio_write},
+@@ -2903,13 +2903,13 @@ reg_attr_t vgt_reg_info_general[] = {
+ {0x71400, 0x40, F_DPY, 0, D_ALL, NULL, NULL},
+ {0x72400, 0x40, F_DPY, 0, D_ALL, NULL, NULL},
+ 
+-{0x70440, 0xc, F_DPY, 0, D_ALL, NULL, NULL},
+-{0x71440, 0xc, F_DPY, 0, D_ALL, NULL, NULL},
+-{0x72440, 0xc, F_DPY, 0, D_ALL, NULL, NULL},
++{0x70440, 0xc, F_DPY, 0, D_PRE_SKL, NULL, NULL},
++{0x71440, 0xc, F_DPY, 0, D_PRE_SKL, NULL, NULL},
++{0x72440, 0xc, F_DPY, 0, D_PRE_SKL, NULL, NULL},
+ 
+-{0x7044c, 0xc, F_DPY, 0, D_ALL, NULL, NULL},
+-{0x7144c, 0xc, F_DPY, 0, D_ALL, NULL, NULL},
+-{0x7244c, 0xc, F_DPY, 0, D_ALL, NULL, NULL},
++{0x7044c, 0xc, F_DPY, 0, D_PRE_SKL, NULL, NULL},
++{0x7144c, 0xc, F_DPY, 0, D_PRE_SKL, NULL, NULL},
++{0x7244c, 0xc, F_DPY, 0, D_PRE_SKL, NULL, NULL},
+ 
+ {PIPE_WM_LINETIME_A, 4, F_DPY, 0, D_ALL, NULL, NULL},
+ {PIPE_WM_LINETIME_B, 4, F_DPY, 0, D_ALL, NULL, NULL},
+@@ -3389,7 +3389,7 @@ reg_attr_t vgt_reg_info_bdw[] = {
+ {0x1a080, 4, F_RDR_ADRFIX, 0xFFFFF000, D_BDW_PLUS, NULL, NULL},
+ {0x22080, 4, F_RDR_ADRFIX, 0xFFFFF000, D_BDW_PLUS, NULL, NULL},
+ 
+-{0x7300, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++{0x7300, 4, F_RDR_MODE, 0, D_BDW_PLUS, NULL, NULL},
+ 
+ {0x420b0, 4, F_DPY, 0, D_BDW, NULL, NULL},
+ {0x420b4, 4, F_DPY, 0, D_BDW, NULL, NULL},
+@@ -3399,43 +3399,226 @@ reg_attr_t vgt_reg_info_bdw[] = {
+ {0x6f800, 4, F_DPY, 0, D_BDW, NULL, NULL},
+ 
+ {0x66c00, 4, F_VIRT, 0, D_BDW_PLUS, NULL, NULL},
+-{0x66c04, 4, F_VIRT, 0, D_BDW, NULL, NULL},
++{0x66c04, 4, F_VIRT, 0, D_BDW_PLUS, NULL, NULL},
+ 
+-{0x4024, 4, F_DOM0, 0, D_BDW, NULL, NULL},
++{0x4024, 4, F_DOM0, 0, D_BDW_PLUS, NULL, NULL},
+ 
+-{0x9134, 4, F_VIRT, 0, D_BDW, NULL, NULL},
+-{0x9138, 4, F_VIRT, 0, D_BDW, NULL, NULL},
+-{0x913c, 4, F_VIRT, 0, D_BDW, NULL, NULL},
++{0x9134, 4, F_VIRT, 0, D_BDW_PLUS, NULL, NULL},
++{0x9138, 4, F_VIRT, 0, D_BDW_PLUS, NULL, NULL},
++{0x913c, 4, F_VIRT, 0, D_BDW_PLUS, NULL, NULL},
+ 
+ /* WA */
+ {0xfdc, 4, F_DOM0, 0, D_BDW, NULL, NULL},
+-{0xe4f0, 4, F_RDR, 0, D_BDW, NULL, NULL},
+-{0xe4f4, 4, F_RDR, 0, D_BDW, NULL, NULL},
+-{0x9430, 4, F_RDR, 0, D_BDW, NULL, NULL},
++{0xe4f0, 4, F_RDR_MODE, 0, D_BDW_PLUS, NULL, NULL},
++{0xe4f4, 4, F_RDR_MODE, 0, D_BDW_PLUS, NULL, NULL},
++{0x9430, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
+ 
+ /* L3 */
+ {0xb1f0, 4, F_RDR, 0, D_BDW, NULL, NULL},
+ {0xb1c0, 4, F_RDR, 0, D_BDW, NULL, NULL},
+-{0xb118, 4, F_RDR, 0, D_BDW, NULL, NULL},
++{0xb118, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
+ {0xb100, 4, F_RDR, 0, D_BDW, NULL, NULL},
+ {0xb10c, 4, F_RDR, 0, D_BDW, NULL, NULL},
+ {0xb110, 4, F_PT, 0, D_BDW, NULL, NULL},
+ 
+ /* NON-PRIV */
+-{0x24d0, 4, F_RDR, 0, D_BDW, NULL, NULL},
+-{0x24d4, 4, F_RDR, 0, D_BDW, NULL, NULL},
+-{0x24d8, 4, F_RDR, 0, D_BDW, NULL, NULL},
+-{0x24dc, 4, F_RDR, 0, D_BDW, NULL, NULL},
++{0x24d0, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++{0x24d4, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++{0x24d8, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++{0x24dc, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
+ 
+ {0x83a4, 4, F_RDR, 0, D_BDW, NULL, NULL},
+-{0x4dd4, 4, F_PT, 0, D_BDW, NULL, NULL},
++{0x4dd4, 4, F_PT, 0, D_BDW_PLUS, NULL, NULL},
+ 
+ /* UCG */
+ {0x8430, 4, F_PT, 0, D_BDW, NULL, NULL},
+ 
+ {0x110000, 4, F_VIRT, 0, D_BDW_PLUS, NULL, NULL},
++
++{0x48400, 4, F_DPY, 0, D_BDW_PLUS, NULL, NULL},
++
++{0x6e570, 4, F_VIRT, 0, D_BDW_PLUS, NULL, NULL},
++{0x65f10, 4, F_DOM0, 0, D_BDW_PLUS, NULL, NULL},
++
++{0xe194, 4, F_RDR_MODE, 0, D_BDW_PLUS, NULL, NULL},
++{0xe188, 4, F_RDR_MODE, 0, D_BDW_PLUS, NULL, NULL},
++{0xe180, 4, F_RDR_MODE, 0, D_BDW_PLUS, NULL, NULL},
++{0x2580, 4, F_RDR_MODE, 0, D_BDW_PLUS, NULL, NULL},
+ };
+ 
++reg_attr_t vgt_reg_info_skl[] = {
++{0xa210, 4, F_DOM0, 0, D_SKL_PLUS, NULL, NULL},
++{0x4ddc, 4, F_PT, 0, D_SKL, NULL, NULL},
++{0x42080, 4, F_PT, 0, D_SKL_PLUS, NULL, NULL},
++{0x45504, 4, F_DOM0, 0, D_SKL, NULL, NULL},
++{0x45520, 4, F_DOM0, 0, D_SKL, NULL, NULL},
++{0x46000, 4, F_DPY, 0, D_SKL, NULL, NULL},
++{0x46010, 4, F_DPY, 0, D_SKL, NULL, NULL},
++{0x46014, 4, F_DPY, 0, D_SKL, NULL, NULL},
++{0x6C040, 4, F_DPY, 0, D_SKL, NULL, NULL},
++{0x6C048, 4, F_DPY, 0, D_SKL, NULL, NULL},
++{0x6C050, 4, F_DPY, 0, D_SKL, NULL, NULL},
++{0x6C044, 4, F_DPY, 0, D_SKL, NULL, NULL},
++{0x6C04C, 4, F_DPY, 0, D_SKL, NULL, NULL},
++{0x6C054, 4, F_DPY, 0, D_SKL, NULL, NULL},
++{0x6c058, 4, F_DPY, 0, D_SKL, NULL, NULL},
++{0x6c05c, 4, F_DPY, 0, D_SKL, NULL, NULL},
++{0X6c060, 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{SKL_PS_WIN_POS(PIPE_A, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SKL_PS_WIN_POS(PIPE_A, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SKL_PS_WIN_POS(PIPE_B, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SKL_PS_WIN_POS(PIPE_B, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SKL_PS_WIN_POS(PIPE_C, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SKL_PS_WIN_POS(PIPE_C, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{SKL_PS_WIN_SZ(PIPE_A, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SKL_PS_WIN_SZ(PIPE_A, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SKL_PS_WIN_SZ(PIPE_B, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SKL_PS_WIN_SZ(PIPE_B, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SKL_PS_WIN_SZ(PIPE_C, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SKL_PS_WIN_SZ(PIPE_C, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{SKL_PS_CTRL(PIPE_A, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SKL_PS_CTRL(PIPE_A, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SKL_PS_CTRL(PIPE_B, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SKL_PS_CTRL(PIPE_B, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SKL_PS_CTRL(PIPE_C, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SKL_PS_CTRL(PIPE_C, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{PLANE_BUF_CFG(PIPE_A, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_BUF_CFG(PIPE_A, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_BUF_CFG(PIPE_A, 2), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_BUF_CFG(PIPE_A, 3), 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{PLANE_BUF_CFG(PIPE_B, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_BUF_CFG(PIPE_B, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_BUF_CFG(PIPE_B, 2), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_BUF_CFG(PIPE_B, 3), 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{PLANE_BUF_CFG(PIPE_C, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_BUF_CFG(PIPE_C, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_BUF_CFG(PIPE_C, 2), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_BUF_CFG(PIPE_C, 3), 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{CUR_BUF_CFG(PIPE_A), 4, F_DPY, 0, D_SKL, NULL, dpy_plane_mmio_write},
++{CUR_BUF_CFG(PIPE_B), 4, F_DPY, 0, D_SKL, NULL, dpy_plane_mmio_write},
++{CUR_BUF_CFG(PIPE_C), 4, F_DPY, 0, D_SKL, NULL, dpy_plane_mmio_write},
++
++{PLANE_WM(PIPE_A, 0, 0), 4 * 8, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_WM(PIPE_A, 1, 0), 4 * 8, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_WM(PIPE_A, 2, 0), 4 * 8, F_DPY, 0, D_SKL, NULL, NULL},
++
++{PLANE_WM(PIPE_B, 0, 0), 4 * 8, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_WM(PIPE_B, 1, 0), 4 * 8, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_WM(PIPE_B, 2, 0), 4 * 8, F_DPY, 0, D_SKL, NULL, NULL},
++
++{PLANE_WM(PIPE_C, 0, 0), 4 * 8, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_WM(PIPE_C, 1, 0), 4 * 8, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_WM(PIPE_C, 2, 0), 4 * 8, F_DPY, 0, D_SKL, NULL, NULL},
++
++{CUR_WM(PIPE_A, 0), 4 * 8, F_DPY, 0, D_SKL, NULL, dpy_plane_mmio_write},
++{CUR_WM(PIPE_B, 0), 4 * 8, F_DPY, 0, D_SKL, NULL, dpy_plane_mmio_write},
++{CUR_WM(PIPE_C, 0), 4 * 8, F_DPY, 0, D_SKL, NULL, dpy_plane_mmio_write},
++
++{PLANE_WM_TRANS(PIPE_A, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_WM_TRANS(PIPE_A, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_WM_TRANS(PIPE_A, 2), 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{PLANE_WM_TRANS(PIPE_B, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_WM_TRANS(PIPE_B, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_WM_TRANS(PIPE_B, 2), 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{PLANE_WM_TRANS(PIPE_C, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_WM_TRANS(PIPE_C, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_WM_TRANS(PIPE_C, 2), 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{CUR_WM_TRANS(PIPE_A), 4, F_DPY, 0, D_SKL, NULL, dpy_plane_mmio_write},
++{CUR_WM_TRANS(PIPE_B), 4, F_DPY, 0, D_SKL, NULL, dpy_plane_mmio_write},
++{CUR_WM_TRANS(PIPE_C), 4, F_DPY, 0, D_SKL, NULL, dpy_plane_mmio_write},
++
++{PLANE_NV12_BUF_CFG(PIPE_A, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_NV12_BUF_CFG(PIPE_A, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_NV12_BUF_CFG(PIPE_A, 2), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_NV12_BUF_CFG(PIPE_A, 3), 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{PLANE_NV12_BUF_CFG(PIPE_B, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_NV12_BUF_CFG(PIPE_B, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_NV12_BUF_CFG(PIPE_B, 2), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_NV12_BUF_CFG(PIPE_B, 3), 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{PLANE_NV12_BUF_CFG(PIPE_C, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_NV12_BUF_CFG(PIPE_C, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_NV12_BUF_CFG(PIPE_C, 2), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{PLANE_NV12_BUF_CFG(PIPE_C, 3), 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{_REG_701C0(PIPE_A, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{_REG_701C0(PIPE_A, 2), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{_REG_701C0(PIPE_A, 3), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{_REG_701C0(PIPE_A, 4), 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{_REG_701C0(PIPE_B, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{_REG_701C0(PIPE_B, 2), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{_REG_701C0(PIPE_B, 3), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{_REG_701C0(PIPE_B, 4), 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{_REG_701C0(PIPE_C, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{_REG_701C0(PIPE_C, 2), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{_REG_701C0(PIPE_C, 3), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{_REG_701C0(PIPE_C, 4), 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{_REG_701C4(PIPE_A, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{_REG_701C4(PIPE_A, 2), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{_REG_701C4(PIPE_A, 3), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{_REG_701C4(PIPE_A, 4), 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{_REG_701C4(PIPE_B, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{_REG_701C4(PIPE_B, 2), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{_REG_701C4(PIPE_B, 3), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{_REG_701C4(PIPE_B, 4), 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{_REG_701C4(PIPE_C, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{_REG_701C4(PIPE_C, 2), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{_REG_701C4(PIPE_C, 3), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{_REG_701C4(PIPE_C, 4), 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{0x70380, 4, F_DPY, 0, D_SKL, NULL, NULL},
++{0x7039c, 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{0x80000, 0x3000, F_DPY, 0, D_SKL, NULL, NULL},
++{0x8f074, 4, F_DPY, 0, D_SKL, NULL, NULL},
++{0x8f004, 4, F_DPY, 0, D_SKL, NULL, NULL},
++{0x8f034, 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{0xb11c, 4, F_DOM0, 0, D_SKL, NULL, NULL},
++
++{0x51000, 4, F_VIRT, 0, D_SKL, NULL, NULL},
++{0x6c00c, 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{0xc800, 0x7f8, F_RDR, 0, D_SKL, NULL, NULL},
++{0xb020, 0x80, F_RDR, 0, D_SKL, NULL, NULL},
++
++{0xd08, 4, F_PT, 0, D_SKL, NULL, NULL},
++{0x20e0, 4, F_PT, 0, D_SKL, NULL, NULL},
++{0x20ec, 4, F_PT, 0, D_SKL, NULL, NULL},
++
++{0x4de0, 4, F_RDR, 0, D_SKL, NULL, NULL},
++{0x4de4, 4, F_RDR, 0, D_SKL, NULL, NULL},
++{0x4de8, 4, F_RDR, 0, D_SKL, NULL, NULL},
++{0x4dec, 4, F_RDR, 0, D_SKL, NULL, NULL},
++{0x4df0, 4, F_RDR, 0, D_SKL, NULL, NULL},
++{0x4df4, 4, F_RDR, 0, D_SKL, NULL, NULL},
++{0x4dfc, 4, F_PT, 0, D_SKL, NULL, NULL},
++
++{0x45008, 4, F_VIRT, 0, D_SKL, NULL, NULL},
++
++{0x46430, 4, F_VIRT, 0, D_SKL, NULL, NULL},
++
++{0x46520, 4, F_VIRT, 0, D_SKL, NULL, NULL},
++
++{0xc403c, 4, F_VIRT, 0, D_SKL, NULL, NULL},
++{0xb004, 4, F_DOM0, 0, D_SKL, NULL, NULL},
++};
+ 
+ static void vgt_passthrough_execlist(struct pgt_device *pdev)
+ {
+@@ -3534,7 +3717,10 @@ int vgt_get_reg_num(int type)
+ 			return ARRAY_NUM(vgt_reg_info_general);
+ 		case D_BDW:
+ 			return ARRAY_NUM(vgt_reg_info_bdw);
+-		default: return 0;
++		case D_SKL:
++			return ARRAY_NUM(vgt_reg_info_skl);
++		default:
++			return 0;
+ 	}
+ 
+ 	return 0;
+diff --git a/drivers/gpu/drm/i915/vgt/mmio.c b/drivers/gpu/drm/i915/vgt/mmio.c
+index 3582471..77a0b41 100644
+--- a/drivers/gpu/drm/i915/vgt/mmio.c
++++ b/drivers/gpu/drm/i915/vgt/mmio.c
+@@ -690,6 +690,13 @@ void vgt_setup_reg_info(struct pgt_device *pdev)
+ 		vgt_initialize_reg_attr(pdev, vgt_reg_info_bdw,
+ 				vgt_get_reg_num(D_BDW), true);
+ 
++	if(IS_SKL(pdev)) {
++		vgt_initialize_reg_attr(pdev, vgt_reg_info_bdw,
++				vgt_get_reg_num(D_BDW), true);
++		vgt_initialize_reg_attr(pdev, vgt_reg_info_skl,
++				vgt_get_reg_num(D_SKL), true);
++	}
++
+ 	/* GDRST can be accessed by byte */
+ 	mht = vgt_find_mmio_entry(GEN6_GDRST);
+ 	if (mht)
+@@ -747,6 +754,10 @@ bool vgt_initial_mmio_setup (struct pgt_device *pdev)
+ 		__vgt_initial_mmio_space(pdev, vgt_reg_info_hsw, vgt_get_hsw_reg_num());
+ 	if(IS_BDW(pdev))
+ 		__vgt_initial_mmio_space(pdev, vgt_reg_info_bdw, vgt_get_reg_num(D_BDW));
++	if(IS_SKL(pdev)) {
++		__vgt_initial_mmio_space(pdev, vgt_reg_info_bdw, vgt_get_reg_num(D_BDW));
++		__vgt_initial_mmio_space(pdev, vgt_reg_info_skl, vgt_get_reg_num(D_SKL));
++	}
+ 
+ 	/* customize the initial MMIO
+ 	 * 1, GMBUS status
+diff --git a/drivers/gpu/drm/i915/vgt/reg.h b/drivers/gpu/drm/i915/vgt/reg.h
+old mode 100755
+new mode 100644
+index fba2a89..2c793a0
+--- a/drivers/gpu/drm/i915/vgt/reg.h
++++ b/drivers/gpu/drm/i915/vgt/reg.h
+@@ -1015,4 +1015,7 @@ union _TRANS_CONFIG
+ #define _REG_SBB_HEAD(ring)	__RING_REG((ring), _REG_RCS_SBB_HEAD)
+ #define _REG_SBB_HEAD_U(ring)	__RING_REG((ring), _REG_RCS_SBB_HEAD_U)
+ 
++#define _REG_701C0(pipe, plane) (0x701c0 + pipe * 0x1000 + (plane - 1) * 0x100)
++#define _REG_701C4(pipe, plane) (0x701c4 + pipe * 0x1000 + (plane - 1) * 0x100)
++
+ #endif	/* _VGT_REG_H_ */
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index d08297a..f0b499e 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -1772,6 +1772,7 @@ void vgt_destroy_mmio_dev(struct vgt_device *vgt);
+ extern reg_attr_t vgt_reg_info_general[];
+ extern reg_attr_t vgt_reg_info_hsw[];
+ extern reg_attr_t vgt_reg_info_bdw[];
++extern reg_attr_t vgt_reg_info_skl[];
+ extern reg_addr_sz_t vgt_reg_addr_sz[];
+ extern int vgt_get_reg_num(int type);
+ extern int vgt_get_hsw_reg_num(void);
+-- 
+1.7.10.4
+

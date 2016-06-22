@@ -1,0 +1,28 @@
+From 7e64b6d80259dd450c42a7e8f23f280287847c4f Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Thu, 28 Jan 2016 08:23:47 +0800
+Subject: [PATCH 324/403] add a new F_RDR register to whitelist
+
+0x215c is part of HW context, could be access from cmd in bb per ctx.
+there is no corresponding definition in i915 driver.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |    1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index d7fed14..9477353 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -3509,6 +3509,7 @@ reg_attr_t vgt_reg_info_general[] = {
+ {0x44070, 4, F_DOM0, 0, D_ALL, NULL, NULL},
+ 
+ /*command accessed registers, supplement for reg audit in cmd parser*/
++{0x215c, 4, F_RDR, 0, D_HSW_PLUS, NULL, NULL},
+ {0x2178, 4, F_RDR, 0, D_ALL, NULL, NULL},
+ {0x217c, 4, F_RDR, 0, D_ALL, NULL, NULL},
+ {0x12178, 4, F_RDR, 0, D_ALL, NULL, NULL},
+-- 
+1.7.10.4
+

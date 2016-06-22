@@ -1,0 +1,95 @@
+From 56f8b3b62c3c7adf57afdec19afa9d57bc93f932 Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Wed, 28 Oct 2015 22:05:01 +0800
+Subject: [PATCH 262/403] vgt: security: audit force nonpriv access
+
+only allowed nonpriv 0x24d0 write with value 0x2248
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |    9 +++++----
+ drivers/gpu/drm/i915/vgt/handlers.c   |   29 +++++++++++++++++++----------
+ 2 files changed, 24 insertions(+), 14 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index 15db0e2..037f6b5 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -785,15 +785,16 @@ static int cmd_reg_handler(struct parser_exec_state *s,
+ 		goto reg_handle;
+ 	}
+ 
+-	if ((reg_is_render(pdev, offset) && !reg_addr_fix(pdev, offset)) ||
+-	     reg_passthrough(pdev, offset) ||
+-	     (!vgt->vm_id && reg_is_config(pdev, offset)) ) {
++	if ((reg_is_render(pdev, offset) &&
++		!reg_addr_fix(pdev, offset) && offset != 0x24d0) ||
++				reg_passthrough(pdev, offset) ||
++		(!vgt->vm_id && reg_is_config(pdev, offset))) {
+ 		rc = 0;
+ 	} else if (offset == _REG_DE_RRMR || offset == FORCEWAKE_MT) {
+ 		if (!strcmp(cmd, "lri")) {
+ 			rc = add_post_handle_entry(s, vgt_cmd_handler_lri_emulate);
+ 			if (rc) {
+-					vgt_err("fail to allocate post handle");
++				vgt_err("fail to allocate post handle\n");
+ 			}
+ 		}
+ 	}
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index e4d972a..2cef2fa 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -812,12 +812,6 @@ int vgt_surf_base_range_check(struct vgt_device *vgt,
+ 	struct vgt_sprite_plane_format  sprite_plane;
+ 	struct vgt_cursor_plane_format  cursor_plane;
+ 
+-	/*
+-	 * TODO: Enable range check on SKL.
+-	 */
+-	if (IS_SKL(vgt->pdev))
+-		return surf_base;
+-
+ 	if (!vgt_has_pipe_enabled(vgt, pipe)) {
+ 		*surf_base = 0;
+ 		return 0;
+@@ -2517,6 +2511,24 @@ static bool vgt_write_ctx_status_ptr(struct vgt_device *vgt, unsigned int offset
+ #endif
+ 	return default_mmio_write(vgt, offset, p_data, bytes);
+ }
++static bool vgt_write_force_nonpriv(struct vgt_device *vgt, unsigned int offset,
++			void *p_data, unsigned int bytes)
++{
++	if ((bytes != 4) || ((offset & (bytes - 1)) != 0)) {
++		vgt_err("VM(%d) vgt_write_force_nonpriv: invalid offset(%x) or bytes(%d)\n",
++				vgt->vgt_id, offset, bytes);
++		return false;
++	}
++
++	if (*(vgt_reg_t *)p_data == 0x2248) {
++		return default_mmio_write(vgt, offset, p_data, bytes);
++	} else {
++		vgt_err("Unexpected force_to_nonpriv 0x%x mmio write, value=0x%x\n",
++				offset, *(vgt_reg_t *)p_data);
++		return false;
++	}
++
++}
+ 
+ static bool skl_lcpll_write(struct vgt_device *vgt, unsigned int offset,
+ 	void *p_data, unsigned int bytes)
+@@ -3663,10 +3675,7 @@ reg_attr_t vgt_reg_info_bdw[] = {
+ {0xb110, 4, F_PT, 0, D_BDW, NULL, NULL},
+ 
+ /* NON-PRIV */
+-{0x24d0, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
+-{0x24d4, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
+-{0x24d8, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
+-{0x24dc, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++{0x24d0, 4, F_RDR, 0, D_BDW_PLUS, NULL, vgt_write_force_nonpriv},
+ 
+ {0x83a4, 4, F_RDR, 0, D_BDW, NULL, NULL},
+ {0x4dd4, 4, F_PT, 0, D_BDW_PLUS, NULL, NULL},
+-- 
+1.7.10.4
+

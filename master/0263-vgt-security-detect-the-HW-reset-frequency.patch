@@ -1,0 +1,207 @@
+From d089f1209b0e0411777853b50fde2e5672ecb364 Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Thu, 15 Oct 2015 21:36:21 +0800
+Subject: [PATCH 263/403] vgt: security: detect the HW reset frequency
+
+frequently HW reset will make Denial of Server. if so, kill the guest VM.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |    4 ++-
+ drivers/gpu/drm/i915/vgt/instance.c   |    5 +++
+ drivers/gpu/drm/i915/vgt/vgt.c        |   59 +++++++++++++++++++++++++++++++++
+ drivers/gpu/drm/i915/vgt/vgt.h        |   30 +++++++++++++++++
+ 4 files changed, 97 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index 037f6b5..c579b1e 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -2641,7 +2641,9 @@ int vgt_scan_vring(struct vgt_device *vgt, int ring_id)
+ 
+ 	t1 = get_cycles();
+ 	stat->vring_scan_cycles += t1 - t0;
+-	ASSERT_VM(!ret, vgt);
++	if (ret)
++		vgt_kill_vm(vgt);
++
+ 	return ret;
+ }
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/instance.c b/drivers/gpu/drm/i915/vgt/instance.c
+index aef29be..30460ed 100644
+--- a/drivers/gpu/drm/i915/vgt/instance.c
++++ b/drivers/gpu/drm/i915/vgt/instance.c
+@@ -123,6 +123,9 @@ int create_vgt_instance(struct pgt_device *pdev, struct vgt_device **ptr_vgt, vg
+ 		printk("Insufficient memory for vgt_device in %s\n", __FUNCTION__);
+ 		return rc;
+ 	}
++	if (reset_dur_threshold > 0 && reset_count_threshold > 0)
++		vgt->reset_count_start_time =
++			vzalloc(reset_count_threshold * sizeof(unsigned long));
+ 
+ 	atomic_set(&vgt->crashing, 0);
+ 
+@@ -340,6 +343,7 @@ err2:
+ 	vfree(vgt->state.sReg);
+ 	if (vgt->vgt_id >= 0)
+ 		free_vgt_id(vgt->vgt_id);
++	vfree(vgt->reset_count_start_time);
+ 	vfree(vgt);
+ 	return rc;
+ }
+@@ -455,6 +459,7 @@ void vgt_release_instance(struct vgt_device *vgt)
+ 	free_vm_rsvd_aperture(vgt);
+ 	vfree(vgt->state.vReg);
+ 	vfree(vgt->state.sReg);
++	vfree(vgt->reset_count_start_time);
+ 	vfree(vgt);
+ 	printk("vGT: vgt_release_instance done\n");
+ }
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index c5e40bc..7b31d9e 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -166,6 +166,22 @@ module_param_named(enable_panel_fitting, enable_panel_fitting, bool, 0600);
+ bool enable_reset = true;
+ module_param_named(enable_reset, enable_reset, bool, 0600);
+ 
++/*
++ * Below parameters allow two kinds of reset policy setting:
++ * 1, Maximum allowed reset number in a specified duration.
++ *  Set "reset_dur_threshold" as the duration and "reset_count_threshold" as the number.
++ * 2, Total allowed reset number in VM's life cycle.
++ *  Set "reset_dur_threshold" as 0 and "reset_max_threshold" the maximum number.
++ * By default only 5 times reset allowed in 60 seconds, disable the counter by setting
++ * reset_count_threshold and reset_max_threshold to ZERO.
++ */
++int reset_count_threshold = 5;
++module_param_named(reset_count_threshold, reset_count_threshold, int, 0600);
++int reset_dur_threshold = 60;
++module_param_named(reset_dur_threshold, reset_dur_threshold, int, 0600);
++int reset_max_threshold = 20;
++module_param_named(reset_max_threshold, reset_max_threshold, int, 0600);
++
+ bool vgt_lock_irq = false;
+ module_param_named(vgt_lock_irq, vgt_lock_irq, bool, 0400);
+ 
+@@ -1189,6 +1205,46 @@ bool vgt_handle_dom0_device_reset(void)
+ 	return true;
+ }
+ 
++bool vgt_reset_stat(struct vgt_device *vgt)
++{
++	bool rc = true;
++
++	if (vgt->vm_id == 0)
++		return true;
++
++	vgt->reset_count++;
++
++	if (reset_dur_threshold == 0) {
++		if (reset_max_threshold > 0 &&
++				vgt->reset_count > reset_max_threshold) {
++			rc = false;
++			vgt_err("VM-%d reset device %d times after it created.\n",
++				vgt->vm_id, vgt->reset_count);
++		}
++	} else if (reset_dur_threshold > 0 && reset_count_threshold > 0) {
++
++		vgt->reset_count_start_time[vgt->reset_count_head] = get_seconds();
++
++		if (vgt->reset_count >= reset_count_threshold) {
++			int reset_stat_duration = get_seconds() -
++				vgt->reset_count_start_time[(vgt->reset_count_head + 1) %
++					reset_count_threshold];
++			if (reset_stat_duration < reset_dur_threshold) {
++				rc = false;
++				vgt_err("VM-%d reset device %d times in %d seconds.\n",
++					vgt->vm_id, reset_count_threshold, reset_stat_duration);
++			}
++		}
++		vgt->reset_count_head++;
++		vgt->reset_count_head %= reset_count_threshold;
++	}
++
++	if (!rc)
++		vgt_kill_vm(vgt);
++
++	return rc;
++}
++
+ int vgt_reset_device(struct pgt_device *pdev)
+ {
+ 	struct vgt_irq_host_state *hstate = pdev->irq_hstate;
+@@ -1204,6 +1260,9 @@ int vgt_reset_device(struct pgt_device *pdev)
+ 		return -EAGAIN;
+ 	}
+ 
++	if (!vgt_reset_stat(current_render_owner(pdev)))
++		return -EPERM;
++
+ 	if (test_and_set_bit(RESET_INPROGRESS,
+ 				&pdev->device_reset_flags)) {
+ 		vgt_err("Another device reset has been already running.\n");
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 2305b1b..590083b 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -92,6 +92,9 @@ extern bool bypass_dom0_addr_check;
+ extern bool render_engine_reset;
+ extern bool enable_panel_fitting;
+ extern bool enable_reset;
++extern int reset_count_threshold;
++extern int reset_dur_threshold;
++extern int reset_max_threshold;
+ extern bool vgt_lock_irq;
+ extern int shadow_execlist_context;
+ extern bool wp_submitted_ctx;
+@@ -304,6 +307,10 @@ struct vgt_device {
+ 	unsigned long reset_flags;
+ 	unsigned long enabled_rings_before_reset;
+ 	unsigned long last_reset_time;
++
++	unsigned long *reset_count_start_time; /*record each reset time*/
++	int reset_count;
++	int reset_count_head; /*sliding window methods*/
+ };
+ 
+ typedef u32 reg_info_t;
+@@ -1693,6 +1700,7 @@ extern void i915_handle_error(struct drm_device *dev, bool wedged,
+ extern int i915_wait_error_work_complete(struct drm_device *dev);
+ 
+ int vgt_reset_device(struct pgt_device *pgt);
++bool vgt_reset_stat(struct vgt_device *vgt);
+ int vgt_del_state_sysfs(vgt_params_t vp);
+ void reset_cached_interrupt_registers(struct pgt_device *pdev);
+ 
+@@ -1869,4 +1877,26 @@ static inline void reset_el_structure(struct pgt_device *pdev,
+ 
+ #include "mpt.h"
+ 
++static inline bool vgt_kill_vm(struct vgt_device *vgt)
++{
++	if (vgt->vm_id == 0) {
++		vgt_err("Try to kill the Dom0!\n");
++		return false;
++	}
++
++	if (atomic_cmpxchg(&vgt->crashing, 0, 1)) {
++		vgt_err("VM-%d is under crashing!\n", vgt->vm_id);
++		return false;
++	}
++
++	vgt_warn("Killing VM-%d\n", vgt->vm_id);
++	if (!hypervisor_pause_domain(vgt) &&
++			!hypervisor_shutdown_domain(vgt)) {
++		return true;
++	} else {
++		vgt_err("Failed to kill VM-%d!\n", vgt->vm_id);
++		return false;
++	}
++}
++
+ #endif	/* _VGT_DRV_H_ */
+-- 
+1.7.10.4
+

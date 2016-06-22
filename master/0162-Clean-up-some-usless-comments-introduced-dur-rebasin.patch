@@ -1,0 +1,138 @@
+From 39cf95f014f83ff65464f39a0c3aaab83098a389 Mon Sep 17 00:00:00 2001
+From: Yi Sun <yi.sun@intel.com>
+Date: Fri, 11 Sep 2015 16:55:01 +0800
+Subject: [PATCH 162/403] Clean up some usless comments introduced dur
+ rebasing.
+
+Signed-off-by: Yi Sun <yi.sun@intel.com>
+---
+ drivers/gpu/drm/i915/intel_lrc.c       |    2 --
+ drivers/gpu/drm/i915/vgt/aperture_gm.c |    2 --
+ drivers/gpu/drm/i915/vgt/handlers.c    |    8 ++++----
+ drivers/gpu/drm/i915/vgt/interrupt.c   |   14 --------------
+ drivers/gpu/drm/i915/vgt/reg.h         |    6 +++---
+ drivers/gpu/drm/i915/vgt/trace.h       |    1 -
+ 6 files changed, 7 insertions(+), 26 deletions(-)
+ mode change 100755 => 100644 drivers/gpu/drm/i915/vgt/handlers.c
+ mode change 100755 => 100644 drivers/gpu/drm/i915/vgt/mmio.c
+ mode change 100755 => 100644 drivers/gpu/drm/i915/vgt/vgt.h
+
+diff --git a/drivers/gpu/drm/i915/intel_lrc.c b/drivers/gpu/drm/i915/intel_lrc.c
+index 7793b42..9c26f24 100644
+--- a/drivers/gpu/drm/i915/intel_lrc.c
++++ b/drivers/gpu/drm/i915/intel_lrc.c
+@@ -376,8 +376,6 @@ static void execlists_elsp_write(struct drm_i915_gem_request *rq0,
+ 		intel_uncore_forcewake_get__locked(dev_priv, FORCEWAKE_ALL);
+ 	}
+ 	/* You must always write both descriptors in the order below. */
+-	spin_lock(&dev_priv->uncore.lock);
+-	intel_uncore_forcewake_get__locked(dev_priv, FORCEWAKE_ALL);
+ 	I915_WRITE_FW(RING_ELSP(ring), upper_32_bits(desc[1]));
+ 	I915_WRITE_FW(RING_ELSP(ring), lower_32_bits(desc[1]));
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/aperture_gm.c b/drivers/gpu/drm/i915/vgt/aperture_gm.c
+index 2d4dcb8..7eac5f1 100644
+--- a/drivers/gpu/drm/i915/vgt/aperture_gm.c
++++ b/drivers/gpu/drm/i915/vgt/aperture_gm.c
+@@ -188,8 +188,6 @@ ssize_t get_avl_vm_aperture_gm_and_fence(struct pgt_device *pdev, char *buf,
+ 	init_resource_bitmap(1, pdev->fence_bitmap, fence_guard);
+ 
+ 	for (i = 0; i < MAX_NR_RES; i++) {
+-//ysun		buf_len += bitmap_scnprintf(buf + buf_len, buf_sz - buf_len,
+-//				bitmap[i], bitmap_sz[i]);
+ 		buf_len += snprintf(buf + buf_len, buf_sz - buf_len,
+ 					"%*pd\n", bitmap_sz[i], bitmap[i]);
+ 	}
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+old mode 100755
+new mode 100644
+index ace199b..99490a2
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -2543,8 +2543,8 @@ reg_attr_t vgt_reg_info_general[] = {
+ {_PIPEADSL, 4, F_DPY, 0, D_ALL, pipe_dsl_mmio_read, NULL},
+ {_PIPEACONF, 4, F_DPY, 0, D_ALL, NULL, pipe_conf_mmio_write},
+ {_PIPEASTAT, 4, F_DPY, 0, D_ALL, NULL, NULL},
+-{_PIPEA_FRMCOUNT_GM45, 4, F_DPY, 0, D_ALL, pipe_frmcount_mmio_read, NULL},
+-{_PIPEA_FLIPCOUNT_GM45, 4, F_VIRT, 0, D_ALL, NULL, NULL},
++{_PIPEA_FRMCOUNT_G4X, 4, F_DPY, 0, D_ALL, pipe_frmcount_mmio_read, NULL},
++{_PIPEA_FLIPCOUNT_G4X, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+ 
+ {PIPE_B_OFFSET, 4, F_DPY, 0, D_ALL, pipe_dsl_mmio_read, NULL},
+ {_REG_PIPEBCONF, 4, F_DPY, 0, D_ALL, NULL, pipe_conf_mmio_write},
+@@ -3318,8 +3318,8 @@ reg_attr_t vgt_reg_info_bdw[] = {
+ 
+ {0x1C054, 4, F_DOM0, 0, D_BDW_PLUS, NULL, NULL},
+ /* BDW */
+-{GEN8_PRIVATE_PAT, 4, F_PT, 0, D_BDW_PLUS, NULL, NULL},
+-{GEN8_PRIVATE_PAT + 4, 4, F_PT, 0, D_BDW_PLUS, NULL, NULL},
++{GEN8_PRIVATE_PAT_LO, 4, F_PT, 0, D_BDW_PLUS, NULL, NULL},
++{GEN8_PRIVATE_PAT_HI, 4, F_PT, 0, D_BDW_PLUS, NULL, NULL},
+ 
+ {GAMTARBMODE, 4, F_DOM0, 0, D_BDW_PLUS, NULL, NULL},
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/interrupt.c b/drivers/gpu/drm/i915/vgt/interrupt.c
+index 477f10e..e2e90f0 100644
+--- a/drivers/gpu/drm/i915/vgt/interrupt.c
++++ b/drivers/gpu/drm/i915/vgt/interrupt.c
+@@ -2153,20 +2153,6 @@ void *vgt_init_irq(struct pci_dev *pdev, struct drm_device *dev)
+ 		return NULL;
+ 	}
+ 
+-	/* ysun
+-	irq = bind_virq_to_irq(VIRQ_VGT_GFX, 0, false);
+-	if (irq < 0) {
+-		printk("vGT: fail to bind virq\n");
+-		return NULL;
+-	}
+-	*/
+-
+-	ret = request_irq(pdev->irq, vgt_interrupt, IRQF_SHARED, "vgt", pgt);
+-	if (ret < 0) {
+-		printk("vGT: error on request_irq (%d)\n", ret);
+-		//unbind_from_irq(irq);
+-		return NULL;
+-	}
+ 	irq = -1;
+ 	vgt_dbg(VGT_DBG_IRQ, "not requesting irq here!\n");
+ 	hstate->pirq = pdev->irq;
+diff --git a/drivers/gpu/drm/i915/vgt/mmio.c b/drivers/gpu/drm/i915/vgt/mmio.c
+old mode 100755
+new mode 100644
+diff --git a/drivers/gpu/drm/i915/vgt/reg.h b/drivers/gpu/drm/i915/vgt/reg.h
+index 8f3e733..9786aa7 100644
+--- a/drivers/gpu/drm/i915/vgt/reg.h
++++ b/drivers/gpu/drm/i915/vgt/reg.h
+@@ -885,11 +885,11 @@ union _TRANS_CONFIG
+ #define VGT_PIPEDSL(pipe)	_VGT_PIPE(pipe, _PIPEADSL, _REG_PIPEBDSL)
+ #define VGT_PIPECONF(pipe)	_VGT_PIPE(pipe, _PIPEACONF, _REG_PIPEBCONF)
+ #define VGT_PIPESTAT(pipe)	_VGT_PIPE(pipe, _PIPEASTAT, _REG_PIPEBSTAT)
+-#define VGT_PIPE_FRMCOUNT(pipe)	_VGT_PIPE(pipe, _PIPEA_FRMCOUNT_GM45, _REG_PIPEB_FRMCOUNT)
+-#define VGT_PIPE_FLIPCOUNT(pipe) _VGT_PIPE(pipe, _PIPEA_FLIPCOUNT_GM45, _REG_PIPEB_FLIPCOUNT)
++#define VGT_PIPE_FRMCOUNT(pipe)	_VGT_PIPE(pipe, _PIPEA_FRMCOUNT_G4X, _REG_PIPEB_FRMCOUNT)
++#define VGT_PIPE_FLIPCOUNT(pipe) _VGT_PIPE(pipe, _PIPEA_FLIPCOUNT_G4X, _REG_PIPEB_FLIPCOUNT)
+ 
+ #define VGT_PIPECONFPIPE(pipeconf) _VGT_GET_PIPE(pipeconf, _PIPEACONF, _REG_PIPEBCONF)
+-#define VGT_FRMCOUNTPIPE(frmcount) _VGT_GET_PIPE(frmcount, _PIPEA_FRMCOUNT_GM45, _REG_PIPEB_FRMCOUNT)
++#define VGT_FRMCOUNTPIPE(frmcount) _VGT_GET_PIPE(frmcount, _PIPEA_FRMCOUNT_G4X, _REG_PIPEB_FRMCOUNT)
+ 
+ /* For Gen 2 */
+ //#define	_REG_CURSIZE		CURSIZE
+diff --git a/drivers/gpu/drm/i915/vgt/trace.h b/drivers/gpu/drm/i915/vgt/trace.h
+index f9012d4..f3b4cda 100644
+--- a/drivers/gpu/drm/i915/vgt/trace.h
++++ b/drivers/gpu/drm/i915/vgt/trace.h
+@@ -27,7 +27,6 @@
+ 
+ #undef TRACE_SYSTEM
+ #define TRACE_SYSTEM vgt
+-//ysun #define TRACE_SYSTEM_STRING __stringify(TRACE_SYSTEM)
+ 
+ TRACE_EVENT(vgt_mmio_rw,
+ 		TP_PROTO(bool write, u32 vm_id, u32 offset, void *pd,
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+old mode 100755
+new mode 100644
+-- 
+1.7.10.4
+

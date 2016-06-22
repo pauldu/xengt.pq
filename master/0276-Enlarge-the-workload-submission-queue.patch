@@ -1,0 +1,48 @@
+From acf7351ffa2295c188e70bae7b3218fb4a4c0f1c Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Mon, 16 Nov 2015 08:43:39 +0800
+Subject: [PATCH 276/403] Enlarge the workload submission queue
+
+The original QUEUE maximum size is 2. (there is one more element for
+the convenience of empty/full handling) It is OK for most cases since
+the hardware EXECLIST number is 2.
+
+But recently we found more than 2 workloads are queued from guest
+driver. It is from the lite-restore case. Guest does not need to wait
+the finish of the previous submission and then give another
+submission. This normally should not happen if guest driver checks the
+status of previous submission.
+
+To be safe enough, this commit enlarges the queue size to allow
+maximum 5 submission queued.
+
+5 can be safe because: guest driver cannot submit too many
+lite-restore requests before receiving our CSB update. Otherwise,
+there will be CSB buffer overflow, and guest will miss some status
+update from hardware. Once we receive hardware interrupt and emulate
+CSB updates for guest, some queue entries will be free.
+
+V2:
+ - commit message update (after discussion with Kevin)
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/render.h |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/render.h b/drivers/gpu/drm/i915/vgt/render.h
+index 412317e..651ffe2 100644
+--- a/drivers/gpu/drm/i915/vgt/render.h
++++ b/drivers/gpu/drm/i915/vgt/render.h
+@@ -100,7 +100,7 @@ struct vgt_elsp_store {
+ 	uint32_t element[4];
+ };
+ 
+-#define EL_QUEUE_SLOT_NUM 3
++#define EL_QUEUE_SLOT_NUM 6
+ 
+ typedef struct {
+ 	vgt_ringbuffer_t	vring;		/* guest view ring */
+-- 
+1.7.10.4
+

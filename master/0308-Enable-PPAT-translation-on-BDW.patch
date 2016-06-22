@@ -1,0 +1,439 @@
+From f86cf9252c05e87163db6c051e0346e6926b650c Mon Sep 17 00:00:00 2001
+From: Xu Han <xu.han@intel.com>
+Date: Thu, 31 Dec 2015 21:17:30 +0800
+Subject: [PATCH 308/403] Enable PPAT translation on BDW
+
+V5:
+* Update PPAT translation mapping table when the vreg initiallze.
+* Dump more PPAT register information, when PPAT translation is not
+  excatly match.
+
+V4:
+* Performance optimization:
+  1.Add PPAT translation mapping table to each VM for accelerate.
+  2.Build PPAT translation mapping table when guest PPAT register
+    is written.
+* Accuracy optimization:
+  1.Initial Host Linux PPAT register according to platform. This value
+    if different on eDRAM/non-eDRAM platform.
+  2.Make PPAT translation is follow exactly match rules.
+  3.Keep non-exactly match rule, in order to handle un-expected case,
+    and write warning message.
+
+V3:
+* Add PPATT index 0 Cache Attribute check when PPAT register is written.
+
+V2:
+* Translate rules:
+  1.If Target Cache and Cache Attribute exactly match, translate it.
+  2.If they are not exactly match, find which has same Cache Attribute.
+  3.Target Cache is accepted to mismatch, and LRU Age is igron.
+
+V1:
+* Configure values of physical PPAT to contain both Windows driver
+  and Linux driver values. Host Linux PPAT order is not change, and
+  insert Windows PPAT to un-used place.
+* Translate virtual PPAT index to shadow PPAT index when building
+  shadow page table.
+* Change PPAT register handler method from F_PT to F_DOM0.
+
+Signed-off-by: Xu Han <xu.han@intel.com>
+---
+ drivers/gpu/drm/i915/i915_gem_gtt.c |   26 +++++++
+ drivers/gpu/drm/i915/vgt/debugfs.c  |   13 ++++
+ drivers/gpu/drm/i915/vgt/gtt.c      |   68 ++++++++++++++++-
+ drivers/gpu/drm/i915/vgt/gtt.h      |    2 +
+ drivers/gpu/drm/i915/vgt/handlers.c |  141 ++++++++++++++++++++++++++++++++++-
+ drivers/gpu/drm/i915/vgt/mmio.c     |    5 ++
+ drivers/gpu/drm/i915/vgt/reg.h      |    2 +
+ drivers/gpu/drm/i915/vgt/vgt.h      |   12 +++
+ 8 files changed, 266 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/i915_gem_gtt.c b/drivers/gpu/drm/i915/i915_gem_gtt.c
+index cdcd556..31e7d18 100644
+--- a/drivers/gpu/drm/i915/i915_gem_gtt.c
++++ b/drivers/gpu/drm/i915/i915_gem_gtt.c
+@@ -2914,6 +2914,32 @@ static void bdw_setup_private_ppat(struct drm_i915_private *dev_priv)
+ 	      GEN8_PPAT(6, GEN8_PPAT_WB | GEN8_PPAT_LLCELLC | GEN8_PPAT_AGE(2)) |
+ 	      GEN8_PPAT(7, GEN8_PPAT_WB | GEN8_PPAT_LLCELLC | GEN8_PPAT_AGE(3));
+ 
++	if (i915_host_mediate) {
++		/*
++		* Item 0, 1, 2, 3, 4 are host Linux PPAT, no order change.
++		* Item 5, 6, 7 are Windows PPAT.
++		*/
++		if (dev_priv->ellc_size == 0) {
++			pat = GEN8_PPAT(0, GEN8_PPAT_WB | GEN8_PPAT_LLC) |
++			GEN8_PPAT(1, GEN8_PPAT_WC | GEN8_PPAT_LLCELLC) |
++			GEN8_PPAT(2, GEN8_PPAT_WT | GEN8_PPAT_LLCELLC) |
++			GEN8_PPAT(3, GEN8_PPAT_UC)|
++			GEN8_PPAT(4, GEN8_PPAT_WB | GEN8_PPAT_LLCELLC | GEN8_PPAT_AGE(1))|
++			GEN8_PPAT(5, GEN8_PPAT_WC | GEN8_PPAT_LLCeLLC | GEN8_PPAT_AGE(1))|
++			GEN8_PPAT(6, GEN8_PPAT_WB | GEN8_PPAT_LLCeLLC | GEN8_PPAT_AGE(1))|
++			GEN8_PPAT(7, GEN8_PPAT_UC | GEN8_PPAT_LLCeLLC | GEN8_PPAT_AGE(1));
++		} else {
++			pat = GEN8_PPAT(0, GEN8_PPAT_WB | GEN8_PPAT_LLC) |
++			GEN8_PPAT(1, GEN8_PPAT_WC | GEN8_PPAT_LLCELLC) |
++			GEN8_PPAT(2, GEN8_PPAT_WT | GEN8_PPAT_LLCELLC) |
++			GEN8_PPAT(3, GEN8_PPAT_UC)|
++			GEN8_PPAT(4, GEN8_PPAT_WB | GEN8_PPAT_LLCELLC | GEN8_PPAT_AGE(1))|
++			GEN8_PPAT(5, GEN8_PPAT_WC | GEN8_PPAT_ELLC_OVERRIDE | GEN8_PPAT_AGE(1))|
++			GEN8_PPAT(6, GEN8_PPAT_WB | GEN8_PPAT_ELLC_OVERRIDE | GEN8_PPAT_AGE(1))|
++			GEN8_PPAT(7, GEN8_PPAT_UC | GEN8_PPAT_ELLC_OVERRIDE | GEN8_PPAT_AGE(1));
++		}
++	}
++
+ 	if (!USES_PPGTT(dev_priv->dev))
+ 		/* Spec: "For GGTT, there is NO pat_sel[2:0] from the entry,
+ 		 * so RTL will always use the value corresponding to
+diff --git a/drivers/gpu/drm/i915/vgt/debugfs.c b/drivers/gpu/drm/i915/vgt/debugfs.c
+index 0aa4631..b9c0bd1 100644
+--- a/drivers/gpu/drm/i915/vgt/debugfs.c
++++ b/drivers/gpu/drm/i915/vgt/debugfs.c
+@@ -238,6 +238,19 @@ static struct dentry *vgt_debugfs_create_blob(const char *name, mode_t mode,
+ 	return debugfs_create_file(name, mode, parent, p, &u32_array_fops);
+ }
+ 
++void gen8_dump_ppat_registers(struct vgt_device *vgt)
++{
++	vgt_info("Linux host ppat register:\n"
++			"    0x40e0: %08x\n"
++			"    0x40e4: %08x\n"
++			"Guest VM(%d) ppat register:\n"
++			"    0x40e0: %08x\n"
++			"    0x40e4: %08x\n",
++			__vreg(vgt_dom0, _REG_GEN8_PRIVATE_PAT), __vreg(vgt_dom0, _REG_GEN8_PRIVATE_PAT + 4),
++			vgt->vgt_id,
++			__vreg(vgt, _REG_GEN8_PRIVATE_PAT), __vreg(vgt, _REG_GEN8_PRIVATE_PAT + 4));
++}
++
+ static inline char *reg_show_reg_owner(struct pgt_device *pdev, int i)
+ {
+ 	char *str;
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index fe5bd48..0ee852a 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -310,6 +310,70 @@ static void gtt_entry_clear_present(gtt_entry_t *e)
+ }
+ 
+ /*
++For Gen8 platform.
++PAT: bit 7, PCD: bit 4, PWT: bit 3.
++index: index = 4*PAT+2*PCD+PWT
++*/
++static unsigned long gen8_get_pat_index(gtt_entry_t *e)
++{
++	u8 index = 0;
++
++	if (_PAGE_PWT & e->val64)
++		index |= (1 << 0);
++
++	if (_PAGE_PCD & e->val64)
++		index |= (1 << 1);
++
++	if (_PAGE_PAT & e->val64)
++		index |= (1 << 2);
++
++	return index;
++}
++
++static void gen8_set_pat_index(gtt_entry_t *e, unsigned long index)
++{
++	e->val64 &= ~(_PAGE_PWT | _PAGE_PCD | _PAGE_PAT);
++
++	if (index & (1 << 0))
++		e->val64 |= _PAGE_PWT;
++
++	if (index & (1 << 1))
++		e->val64 |= _PAGE_PCD;
++
++	if (index & (1 << 2))
++		e->val64 |= _PAGE_PAT;
++}
++
++static inline bool translate_ppat(struct vgt_device *vgt,
++		gtt_entry_t *p, gtt_entry_t *m)
++{
++	struct vgt_gtt_pte_ops *ops = vgt->pdev->gtt.pte_ops;
++	struct vgt_ppat_table *pt = &vgt->ppat_table;
++	u8 p_index, m_index;
++
++	if (pt->is_vaild == false)
++		return true;
++
++	p_index = ops->get_pat_index(p);
++	if (p_index >= VGT_MAX_PPAT_TABLE_SIZE) {
++		vgt_err("VM(%d): ppat index(%d) is over size(%d).\n",
++				vgt->vm_id, p_index, VGT_MAX_PPAT_TABLE_SIZE);
++		return false;
++	}
++
++	m_index = pt->mapping_table[p_index];
++	if (m_index == -1) {
++		vgt_err("VM(%d): ppat index(%d) is missing mapping.\n",
++				vgt->vm_id, p_index);
++		gen8_dump_ppat_registers(vgt);
++		return false;
++	}
++
++	ops->set_pat_index(m, m_index);
++	return true;
++}
++
++/*
+  * Per-platform GMA routines.
+  */
+ static unsigned long gma_to_ggtt_pte_index(unsigned long gma)
+@@ -359,6 +423,8 @@ struct vgt_gtt_pte_ops gen8_gtt_pte_ops = {
+ 	.test_pse = gen8_gtt_test_pse,
+ 	.get_pfn = gen8_gtt_get_pfn,
+ 	.set_pfn = gen8_gtt_set_pfn,
++	.get_pat_index = gen8_get_pat_index,
++	.set_pat_index = gen8_set_pat_index,
+ };
+ 
+ struct vgt_gtt_gma_ops gen8_gtt_gma_ops = {
+@@ -390,7 +456,7 @@ static bool gtt_entry_p2m(struct vgt_device *vgt, gtt_entry_t *p, gtt_entry_t *m
+ 
+         ops->set_pfn(m, mfn);
+ 
+-        return true;
++	return translate_ppat(vgt, p, m);
+ }
+ 
+ /*
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.h b/drivers/gpu/drm/i915/vgt/gtt.h
+index 7531b97..968c6c1 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.h
++++ b/drivers/gpu/drm/i915/vgt/gtt.h
+@@ -108,6 +108,8 @@ struct vgt_gtt_pte_ops {
+ 	bool (*test_pse)(gtt_entry_t *e);
+ 	void (*set_pfn)(gtt_entry_t *e, unsigned long pfn);
+ 	unsigned long (*get_pfn)(gtt_entry_t *e);
++	void (*set_pat_index)(gtt_entry_t *e, unsigned long index);
++	unsigned long (*get_pat_index)(gtt_entry_t *e);
+ };
+ 
+ struct vgt_gtt_gma_ops {
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index eeef3d8..ca0bbf8 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -2595,6 +2595,143 @@ out:
+ }
+ 
+ 
++/* BDW PAT index definion.
++PAT_INDEX_H(0x40E4)
++Bit[63:56]: PAT Index#7 definition for page tables.
++Bit[55:48]: PAT Index#6 definition for page tables.
++Bit[47:40]: PAT Index#5 definition for page tables.
++Bit[39:32]: PAT Index#4 definition for page tables.
++PAT_INDEX_L(0x40E0)
++Bit[31:24]: PAT Index#3 definition for page tables.
++Bit[23:16]: PAT Index#2 definition for page tables.
++Bit[15:8]: PAT Index#1 definition for page tables.
++Bit[7:0]: PAT Index#0 definition for page tables.
++*/
++
++static inline bool gen8_translate_ppat(struct vgt_device *vgt,
++		u8 p_index, u8 *m_index)
++{
++	u8 pat_index, pat_reg_index;
++	unsigned long v_pat_value, s_pat_value;
++	unsigned long v_cache_attr, s_cache_attr;
++	unsigned long v_tc, s_tc;
++	unsigned long val;
++	bool found = false;
++
++	/*
++	Translate rules:
++	1.If Target Cache and Cache Attribute exactly match, translate it.
++	2.If they are not exactly match, find which has same Cache Attribute.
++	3.Target Cache is accepted to mismatch, and LRU Age is igron.
++	*/
++
++	*m_index = -1;
++
++	pat_index = p_index;
++	if (pat_index > VGT_MAX_PPAT_TABLE_SIZE) {
++		vgt_err("Invalid guest PAT index: %x\n", pat_index);
++		return false;
++	}
++
++	/* Find the Hi/Lo register for the index. */
++	pat_reg_index = pat_index / 4;
++	/* Find the offset within the register. */
++	pat_index -= pat_reg_index * 4;
++
++	val = __vreg(vgt, _REG_GEN8_PRIVATE_PAT + pat_reg_index * 4);
++	v_pat_value = (val >> (pat_index * 8)) & 0xf;
++
++	v_cache_attr = v_pat_value & 0x3;
++	v_tc = v_pat_value >> 2 & 0x3;
++
++	for (pat_reg_index = 0; pat_reg_index < 2; pat_reg_index++) {
++		val = __vreg(vgt_dom0, _REG_GEN8_PRIVATE_PAT + pat_reg_index * 4);
++		for (pat_index = 0; pat_index < 4; pat_index++) {
++			s_pat_value = (val >> (pat_index * 8)) & 0xf;
++			s_cache_attr = s_pat_value & 0x3;
++			s_tc = s_pat_value >> 2 & 0x3;
++
++			if (s_cache_attr != v_cache_attr)
++				continue;
++
++			/* Target Cache & Cache Attribute exactly match. */
++			if (s_tc == v_tc) {
++				*m_index = pat_reg_index * 4 + pat_index;
++				return true;
++			}
++
++			if (found)
++				continue;
++
++			/* Cache Attribute match, mark in case for not exactly
++			match. */
++			found = true;
++			*m_index = pat_reg_index * 4 + pat_index;
++		}
++	}
++
++	if (!found) {
++		vgt_err("fail to find guest PAT value from DOM0 PAT table.\n"
++			"ppat index: %d, ppat value: %lx. (cache targer: %lx, cache attribute: %lx)\n",
++			p_index, v_pat_value, v_tc, v_cache_attr);
++		return false;
++	}
++
++	vgt_warn("gen8_translate_ppat is not exactly match, mapping item: %d -> %d.\n"
++			"ppat value: %lx. (cache targer: %lx, cache attribute: %lx)\n",
++			p_index, *m_index, v_pat_value, v_tc, v_cache_attr);
++
++	return true;
++}
++
++
++bool gen8_ppat_update_mapping_table(struct vgt_device *vgt)
++{
++	struct vgt_ppat_table *pt = &vgt->ppat_table;
++	int i = 0;
++	bool ret = false;
++
++	pt->is_vaild = true;
++
++	for (; i < VGT_MAX_PPAT_TABLE_SIZE; i++) {
++		ret = gen8_translate_ppat(vgt, i, &(pt->mapping_table[i]));
++			if (ret)
++				vgt_info("ppat mapping table entry --> success: %d -> %d:\n",
++					i, pt->mapping_table[i]);
++			else
++				vgt_err("ppat mapping table entry: --> fail: %d -> %d:\n",
++					i, pt->mapping_table[i]);
++	}
++
++	gen8_dump_ppat_registers(vgt);
++
++	return true;
++}
++
++static bool gen8_ppat_write(struct vgt_device *vgt, unsigned int offset,
++			void *p_data, unsigned int bytes)
++{
++	unsigned int virtual = 0;
++	unsigned int shadow = 0;
++	bool ret = false;
++
++	ret = default_mmio_write(vgt, offset, p_data, bytes);
++
++	if (vgt->vgt_id == 0)
++		return ret;
++
++	virtual = __vreg(vgt, _REG_GEN8_PRIVATE_PAT);
++	shadow = __vreg(vgt_dom0, _REG_GEN8_PRIVATE_PAT);
++
++	gen8_ppat_update_mapping_table(vgt);
++
++        if ((virtual & 0x3) != (shadow & 0x3))
++                vgt_err("VM(%d) gen8_ppat_write, error value at ppat index 0.\n"
++                        , vgt->vgt_id);
++
++	return ret;
++}
++
+ /*
+  * Track policies of all captured registers
+  *
+@@ -3562,8 +3699,8 @@ reg_attr_t vgt_reg_info_bdw[] = {
+ 
+ {0x1C054, 4, F_DOM0, 0, D_BDW_PLUS, NULL, NULL},
+ /* BDW */
+-{GEN8_PRIVATE_PAT_LO, 4, F_PT, 0, D_BDW_PLUS, NULL, NULL},
+-{GEN8_PRIVATE_PAT_HI, 4, F_PT, 0, D_BDW_PLUS, NULL, NULL},
++{GEN8_PRIVATE_PAT_LO, 4, F_PT, 0, D_BDW_PLUS, NULL, gen8_ppat_write},
++{GEN8_PRIVATE_PAT_HI, 4, F_PT, 0, D_BDW_PLUS, NULL, gen8_ppat_write},
+ 
+ {GAMTARBMODE, 4, F_DOM0, 0, D_BDW_PLUS, NULL, NULL},
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/mmio.c b/drivers/gpu/drm/i915/vgt/mmio.c
+index 2ed1186..ac1fc90 100644
+--- a/drivers/gpu/drm/i915/vgt/mmio.c
++++ b/drivers/gpu/drm/i915/vgt/mmio.c
+@@ -856,6 +856,11 @@ void state_vreg_init(struct vgt_device *vgt)
+ 		 */
+ 		__vreg(vgt, FPGA_DBG) &= ~FPGA_DBG_RM_NOCLAIM;
+ 	}
++
++	if (vgt->vgt_id != 0) {
++		if (IS_BDWPLUS(vgt->pdev))
++			gen8_ppat_update_mapping_table(vgt);
++	}
+ }
+ 
+ /* TODO: figure out any security holes by giving the whole initial state */
+diff --git a/drivers/gpu/drm/i915/vgt/reg.h b/drivers/gpu/drm/i915/vgt/reg.h
+index 8c5a3f8..4e338f3 100644
+--- a/drivers/gpu/drm/i915/vgt/reg.h
++++ b/drivers/gpu/drm/i915/vgt/reg.h
+@@ -984,6 +984,8 @@ union _TRANS_CONFIG
+ #define _REG_DE_PIPE_IIR(pipe) (0x44408 + (0x10 * (pipe)))
+ #define _REG_DE_PIPE_IER(pipe) (0x4440c + (0x10 * (pipe)))
+ 
++#define _REG_GEN8_PRIVATE_PAT  0x40e0
++
+ #define _REG_RING_PDP_UDW(base, n)      (base + 0x270 + ((n) * 8 + 4))
+ #define _REG_RING_PDP_LDW(base, n)      (base + 0x270 + (n) * 8)
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index ffc28e6..4cfed5e 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -237,6 +237,16 @@ struct vgt_tailq {
+ };
+ #define vgt_tailq_idx(idx) ((idx) & VGT_TAILQ_IDX_MASK)
+ 
++#define VGT_MAX_PPAT_TABLE_SIZE 8
++
++struct vgt_ppat_table {
++	u8 mapping_table[VGT_MAX_PPAT_TABLE_SIZE];
++	bool is_vaild; /* indicate if ppat exist, not translate if zero. */
++};
++
++bool gen8_ppat_update_mapping_table(struct vgt_device *vgt);
++void gen8_dump_ppat_registers(struct vgt_device *vgt);
++
+ struct vgt_device {
+ 	enum pipe pipe_mapping[I915_MAX_PIPES];
+ 	int vgt_id;		/* 0 is always for dom0 */
+@@ -249,6 +259,8 @@ struct vgt_device {
+ 	struct gt_port		ports[I915_MAX_PORTS]; /* one port per PIPE */
+ 	struct vgt_i2c_edid_t	vgt_i2c_edid;	/* i2c bus state emulaton for reading EDID */
+ 
++	struct vgt_ppat_table	ppat_table;
++
+ 	uint64_t	aperture_base;
+ 	void		*aperture_base_va;
+ 	uint64_t	aperture_sz;
+-- 
+1.7.10.4
+

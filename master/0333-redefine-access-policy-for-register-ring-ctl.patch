@@ -1,0 +1,60 @@
+From 4a85cc17ffc07f4cfeb9fa6cf07544850d2721fc Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Fri, 8 Jan 2016 00:35:24 +0800
+Subject: [PATCH 333/403] redefine access policy for register ring ctl
+
+registers ring ctl should disallow HW access from MMIO/cmd
+in execlist mode.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |   14 +++++++++-----
+ 1 file changed, 9 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index d7fc229..3842c89 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -2820,22 +2820,26 @@ reg_attr_t vgt_reg_info_general[] = {
+ {_REG_RCS_HEAD, 4, F_RDR, 0, D_ALL, ring_mmio_read, ring_mmio_write},
+ {_REG_RCS_START, 4, F_RDR_ADRFIX, 0xFFFFF000, D_ALL,
+ 	ring_mmio_read, ring_mmio_write},
+-{_REG_RCS_CTL, 4, F_RDR, 0, D_ALL, ring_mmio_read, ring_mmio_write},
++{_REG_RCS_CTL, 4, F_VIRT, 0, D_BDW_PLUS, ring_mmio_read, ring_mmio_write},
++{_REG_RCS_CTL, 4, F_RDR, 0, D_HSW, ring_mmio_read, ring_mmio_write},
+ {_REG_VCS_TAIL, 4, F_RDR, 0, D_ALL, ring_mmio_read, ring_mmio_write},
+ {_REG_VCS_HEAD, 4, F_RDR, 0, D_ALL, ring_mmio_read, ring_mmio_write},
+ {_REG_VCS_START, 4, F_RDR_ADRFIX, 0xFFFFF000, D_ALL,
+ 	ring_mmio_read, ring_mmio_write},
+-{_REG_VCS_CTL, 4, F_RDR, 0, D_ALL, ring_mmio_read, ring_mmio_write},
++{_REG_VCS_CTL, 4, F_VIRT, 0, D_BDW_PLUS, ring_mmio_read, ring_mmio_write},
++{_REG_VCS_CTL, 4, F_RDR, 0, D_HSW, ring_mmio_read, ring_mmio_write},
+ {_REG_BCS_TAIL, 4, F_RDR, 0, D_ALL, ring_mmio_read, ring_mmio_write},
+ {_REG_BCS_HEAD, 4, F_RDR, 0, D_ALL, ring_mmio_read, ring_mmio_write},
+ {_REG_BCS_START, 4, F_RDR_ADRFIX, 0xFFFFF000, D_ALL,
+ 	ring_mmio_read, ring_mmio_write},
+-{_REG_BCS_CTL, 4, F_RDR, 0, D_ALL, ring_mmio_read, ring_mmio_write},
++{_REG_BCS_CTL, 4, F_VIRT, 0, D_BDW_PLUS, ring_mmio_read, ring_mmio_write},
++{_REG_BCS_CTL, 4, F_RDR, 0, D_HSW, ring_mmio_read, ring_mmio_write},
+ 
+ {_REG_VECS_TAIL, 4, F_RDR, 0, D_ALL, ring_mmio_read, ring_mmio_write},
+ {_REG_VECS_HEAD, 4, F_RDR, 0, D_ALL, ring_mmio_read, ring_mmio_write},
+ {_REG_VECS_START, 4, F_RDR_ADRFIX, 0xFFFFF000, D_ALL, ring_mmio_read, ring_mmio_write},
+-{_REG_VECS_CTL, 4, F_RDR, 0, D_ALL, ring_mmio_read, ring_mmio_write},//for TLB
++{_REG_VECS_CTL, 4, F_VIRT, 0, D_BDW_PLUS, ring_mmio_read, ring_mmio_write},
++{_REG_VECS_CTL, 4, F_RDR, 0, D_HSW, ring_mmio_read, ring_mmio_write},
+ 
+ {ACTHD_I965, 4, F_RDR, 0, D_ALL, NULL, NULL},
+ {_REG_BCS_ACTHD, 4, F_RDR, 0, D_ALL, NULL, NULL},
+@@ -3636,7 +3640,7 @@ reg_attr_t vgt_reg_info_bdw[] = {
+ {_REG_VCS2_HEAD, 4, F_RDR, 0, D_BDW_PLUS, ring_mmio_read, ring_mmio_write},
+ {_REG_VCS2_START, 4, F_RDR_ADRFIX, 0xFFFFF000, D_BDW_PLUS,
+ 	ring_mmio_read, ring_mmio_write},
+-{_REG_VCS2_CTL, 4, F_RDR, 0, D_BDW_PLUS, ring_mmio_read, ring_mmio_write},
++{_REG_VCS2_CTL, 4, F_VIRT, 0, D_BDW_PLUS, ring_mmio_read, ring_mmio_write},
+ 
+ {_REG_VCS2_ACTHD, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
+ 
+-- 
+1.7.10.4
+

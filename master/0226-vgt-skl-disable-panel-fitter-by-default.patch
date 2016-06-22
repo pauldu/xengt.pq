@@ -1,0 +1,29 @@
+From ba03f772074bbfb7d9ac7fc1b8fd5db36ebf53f4 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Fri, 11 Sep 2015 17:35:20 +0800
+Subject: [PATCH 226/403] vgt/skl: disable panel fitter by default
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/vgt.c |    4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 1de4685..0563d56 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -716,8 +716,10 @@ static bool vgt_initialize_platform(struct pgt_device *pdev)
+ 			pdev->ring_xxx_bit[RING_BUFFER_VCS2] = 0;
+ 		}
+ 
+-		if (IS_SKL(pdev))
++		if (IS_SKL(pdev)) {
++			enable_panel_fitting = false;
+ 			vgt_get_memory_latency(pdev);
++		}
+ 	} else {
+ 		vgt_err("Unsupported platform.\n");
+ 		return false;
+-- 
+1.7.10.4
+

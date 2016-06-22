@@ -1,0 +1,45 @@
+From d5498c8f3397edb1545952c6753a2a1afff5ab30 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Mon, 3 Aug 2015 04:24:07 +0800
+Subject: [PATCH 212/403] vgt/skl: AUX channel interrupts have been moved into
+ DE PORT interrupt group
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/interrupt.c |   15 ++++++++++++---
+ 1 file changed, 12 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/interrupt.c b/drivers/gpu/drm/i915/vgt/interrupt.c
+index 764cd1a..7859ba3 100644
+--- a/drivers/gpu/drm/i915/vgt/interrupt.c
++++ b/drivers/gpu/drm/i915/vgt/interrupt.c
+@@ -1679,14 +1679,23 @@ static void vgt_gen8_init_irq(
+ 	SET_BIT_INFO(hstate, 21, DP_B_HOTPLUG, IRQ_INFO_PCH);
+ 	SET_BIT_INFO(hstate, 22, DP_C_HOTPLUG, IRQ_INFO_PCH);
+ 	SET_BIT_INFO(hstate, 23, DP_D_HOTPLUG, IRQ_INFO_PCH);
+-	SET_BIT_INFO(hstate, 25, AUX_CHANNEL_B, IRQ_INFO_PCH);
+-	SET_BIT_INFO(hstate, 26, AUX_CHANNEL_C, IRQ_INFO_PCH);
+-	SET_BIT_INFO(hstate, 27, AUX_CHANNEL_D, IRQ_INFO_PCH);
+ 
+ 	/* GEN8 interrupt PCU events */
+ 	SET_BIT_INFO(hstate, 24, PCU_THERMAL, IRQ_INFO_PCU);
+ 	SET_BIT_INFO(hstate, 25, PCU_PCODE2DRIVER_MAILBOX, IRQ_INFO_PCU);
+ 
++	if (IS_BDW(pdev)) {
++		SET_BIT_INFO(hstate, 25, AUX_CHANNEL_B, IRQ_INFO_PCH);
++		SET_BIT_INFO(hstate, 26, AUX_CHANNEL_C, IRQ_INFO_PCH);
++		SET_BIT_INFO(hstate, 27, AUX_CHANNEL_D, IRQ_INFO_PCH);
++	}
++
++	if (IS_SKL(pdev)) {
++		SET_BIT_INFO(hstate, 25, AUX_CHANNEL_B, IRQ_INFO_DE_PORT);
++		SET_BIT_INFO(hstate, 26, AUX_CHANNEL_C, IRQ_INFO_DE_PORT);
++		SET_BIT_INFO(hstate, 27, AUX_CHANNEL_D, IRQ_INFO_DE_PORT);
++	}
++
+ 	irq_based_ctx_switch = false;
+ }
+ 
+-- 
+1.7.10.4
+

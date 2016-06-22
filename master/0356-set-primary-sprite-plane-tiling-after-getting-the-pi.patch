@@ -1,0 +1,41 @@
+From cf89343feef20c103dbc39f563c22d5ced0de9f6 Mon Sep 17 00:00:00 2001
+From: Xiaoguang Chen <xiaoguang.chen@intel.com>
+Date: Thu, 25 Feb 2016 17:28:39 +0800
+Subject: [PATCH 356/403] set primary/sprite plane tiling after getting the
+ pixel format
+
+previously the setting to the tiled field of a plane is ommitted
+after getting the pixel format of a plane.
+And the guest fb tiling get a random setting when the primary
+plane's tiled is not set which may lead to the composite
+display works abnormal.
+
+Signed-off-by: zhiyuan lv <zhiyuan.lv@intel.com>
+Signed-off-by: xiaoguang chen <xiaoguang.chen@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/fb_decoder.c |    2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/fb_decoder.c b/drivers/gpu/drm/i915/vgt/fb_decoder.c
+index 3337aba..89020c9 100644
+--- a/drivers/gpu/drm/i915/vgt/fb_decoder.c
++++ b/drivers/gpu/drm/i915/vgt/fb_decoder.c
+@@ -229,6 +229,7 @@ int vgt_decode_primary_plane_format(struct vgt_device *vgt,
+ 		return -EINVAL;
+ 	}
+ 
++	plane->tiled = com_plane_fmt.tiled;
+ 	plane->hw_format = com_plane_fmt.fmt_index;
+ 	plane->bpp = com_plane_fmt.gen_pixel_format.bpp;
+ 	plane->drm_format = com_plane_fmt.gen_pixel_format.drm_format;
+@@ -338,6 +339,7 @@ int vgt_decode_sprite_plane_format(struct vgt_device *vgt,
+ 		return -EINVAL;
+ 	}
+ 
++	plane->tiled = com_plane_fmt.tiled;
+ 	plane->hw_format = com_plane_fmt.fmt_index;
+ 	plane->bpp = com_plane_fmt.gen_pixel_format.bpp;
+ 	plane->drm_format = com_plane_fmt.gen_pixel_format.drm_format;
+-- 
+1.7.10.4
+

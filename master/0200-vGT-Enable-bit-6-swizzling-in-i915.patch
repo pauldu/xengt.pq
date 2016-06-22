@@ -1,0 +1,35 @@
+From d75c614211fe90d8309da772ef8eaaa9b414b058 Mon Sep 17 00:00:00 2001
+From: Kevin Tian <kevin.tian@intel.com>
+Date: Wed, 11 Nov 2015 16:46:55 +0800
+Subject: [PATCH 200/403] vGT: Enable bit-6 swizzling in i915
+
+to sync with Windows side setting. Inconsistent swizzling sitting is
+not acceptable as it needs reflected in both display/render engine.
+
+by ktian1
+
+Signed-off-by: Kevin Tian <kevin.tian@intel.com>
+---
+ drivers/gpu/drm/i915/i915_gem_fence.c |    6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/i915_gem_fence.c b/drivers/gpu/drm/i915/i915_gem_fence.c
+index 40a10b2..e006064 100644
+--- a/drivers/gpu/drm/i915/i915_gem_fence.c
++++ b/drivers/gpu/drm/i915/i915_gem_fence.c
+@@ -592,6 +592,12 @@ i915_gem_detect_bit_6_swizzle(struct drm_device *dev)
+ 				swizzle_y = I915_BIT_6_SWIZZLE_NONE;
+ 			}
+ 		}
++		/* FIXME: Linux and Windows have different swizzling setting
++		 * which would cause trouble. Now hardcode Linux side to sync
++		 * with Windows side. Need better cleanup in the future
++		 */
++		swizzle_x = I915_BIT_6_SWIZZLE_9_10;
++		swizzle_y = I915_BIT_6_SWIZZLE_9;
+ 	} else if (IS_GEN5(dev)) {
+ 		/* On Ironlake whatever DRAM config, GPU always do
+ 		 * same swizzling setup.
+-- 
+1.7.10.4
+

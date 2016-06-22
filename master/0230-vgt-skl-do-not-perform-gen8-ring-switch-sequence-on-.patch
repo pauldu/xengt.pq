@@ -1,0 +1,27 @@
+From 5791eb8eaffceb5b3f83853f058b46ea3688ffd2 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Fri, 6 Nov 2015 04:55:02 +0800
+Subject: [PATCH 230/403] vgt/skl: do not perform gen8 ring switch sequence on
+ gen8+
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/render.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index 6fe7482..fb18655 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -630,7 +630,7 @@ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ 
+ 		if (IS_PREBDW(pdev))
+ 			gen7_ring_switch(pdev, i, prev, next);
+-		else
++		else if (IS_BDW(pdev))
+ 			gen8_ring_switch(pdev, i, prev, next);
+ 	}
+ 
+-- 
+1.7.10.4
+

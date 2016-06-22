@@ -1,0 +1,25 @@
+From cec109ba5a6c3ef2f31cfbd0c2c18c6a834ccab9 Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Mon, 29 Feb 2016 17:30:19 +0800
+Subject: [PATCH 369/403] Revert "fix an compile warning"
+
+This reverts commit 06206050193396d4996d31a4baeaf539e3b689e1.
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |    1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index b0a7d56..eb4896d 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -1336,6 +1336,7 @@ static int vgt_handle_mi_display_flip(struct parser_exec_state *s, bool resubmit
+ 	enum vgt_plane_type plane;
+ 	int i, length, rc = 0;
+ 	struct fb_notify_msg msg;
++	uint32_t value;
+ 	int surf_size = 0;
+ 	uint32_t plane_select_mask, plane_select_shift;
+ 	uint32_t tile_mask, plane_tile_mask, stride_shift;
+-- 
+1.7.10.4
+

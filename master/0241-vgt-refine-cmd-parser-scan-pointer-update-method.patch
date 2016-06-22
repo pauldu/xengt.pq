@@ -1,0 +1,108 @@
+From 911e9f75a50305194b119dbf81ce60ad2aea32d4 Mon Sep 17 00:00:00 2001
+From: Weinan Li <weinan.z.li@intel.com>
+Date: Tue, 8 Dec 2015 15:25:58 +0800
+Subject: [PATCH 241/403] vgt: refine cmd parser scan pointer update method.
+
+In the previous implementation, GVT-g guesses the context status via the
+ring head/tail pointer inside the ring context. Command scanner would
+choose different scan polices according to that status.
+
+But the head/tail pointer of preemption and lite-restore may look the same
+from the context since the new windows driver change its behavior of using
+ring buffer. With the new windows driver, some lite restore and
+resubmission cases may have same ring head, tail, last head situation,
+so can't use it to choose correct scan police, and will lead the command
+scanner to scan at an invalid offset.
+
+We purpose a better way to handle the command scan by emulating the HW
+internal behaviors.
+
+In the first submission, we remember the command scan head just like HW, if
+the context gets switched out, we invalidate the command scan head pointer
+in GVT-g, just like HW. As in lite-restore case, because the context would
+not be switched out, we continue using the last scan head until this
+context gets switched out.
+
+This patch can fix BUG #899 and revert the previous workaround commit
+f5b660d3
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+Signed-off-by: Weinan Li <weinan.z.li@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |   25 +++++++++++++++++--------
+ drivers/gpu/drm/i915/vgt/execlists.h |    1 +
+ 2 files changed, 18 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 1cdb457..b30cac8 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -1123,6 +1123,7 @@ static void vgt_emulate_context_status_change(struct vgt_device *vgt,
+ 	struct vgt_exec_list *el_slot = NULL;
+ 	struct execlist_context *el_ctx = NULL;
+ 	uint32_t ctx_id = ctx_status->context_id;
++	bool lite_restore;
+ 
+ 	ring_state = &vgt->rb[ring_id];
+ 	if (vgt_el_slots_number(ring_state) > 1) {
+@@ -1144,12 +1145,24 @@ static void vgt_emulate_context_status_change(struct vgt_device *vgt,
+ 	ASSERT((el_slot_ctx_idx == 0) || (el_slot_ctx_idx == 1));
+ 	el_ctx = el_slot->el_ctxs[el_slot_ctx_idx];
+ 
++	lite_restore = ctx_status->preempted && ctx_status->lite_restore;
++
+ 	if (CTX_IS_SCHEDULED_OUT(ctx_status)) {
+ 		char str[64];
+ 		snprintf(str, 64, "finish_running. status[0x%x]", ctx_status->ldw);
+ 		trace_ctx_lifecycle(vgt->vm_id, ring_id,
+ 			el_ctx->guest_context.lrca,
+ 			str);
++
++		if (!lite_restore) {
++			el_ctx->scan_head_valid = false;
++
++			if (ctx_status->preempted && el_slot_ctx_idx == 0) {
++				if (el_slot->el_ctxs[1])
++					el_slot->el_ctxs[1]->scan_head_valid = false;
++			}
++		}
++
+ 		if ((((el_slot_ctx_idx == 0) || (el_slot->el_ctxs[0] == NULL)) &&
+ 			((el_slot_ctx_idx == 1) || (el_slot->el_ctxs[1] == NULL))) ||
+ 			(ctx_status->preempted)) {
+@@ -1433,16 +1446,12 @@ static void vgt_update_ring_info(struct vgt_device *vgt,
+ 		IS_PREEMPTION_RESUBMISSION(vring->head, vring->tail,
+ 		el_ctx->last_scan_head), current_foreground_vm(vgt->pdev) == vgt);
+ #endif
+-	if ((el_ctx->last_guest_head == vring->head)
+-		&& !IS_PREEMPTION_RESUBMISSION(vring->head, vring->tail,
+-			el_ctx->last_scan_head)) {
+-		/* For lite-restore case from Guest, Headers are fixed,
+-		 HW only resample tail */
+-		vgt->rb[ring_id].last_scan_head = el_ctx->last_scan_head;
+-	}
+-	else {
++	if (!el_ctx->scan_head_valid) {
+ 		vgt->rb[ring_id].last_scan_head = vring->head;
+ 		el_ctx->last_guest_head = vring->head;
++		el_ctx->scan_head_valid = true;
++	} else {
++		vgt->rb[ring_id].last_scan_head = el_ctx->last_scan_head;
+ 	}
+ 
+ 	vgt_scan_vring(vgt, ring_id);
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.h b/drivers/gpu/drm/i915/vgt/execlists.h
+index 857847e..8547cef 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.h
++++ b/drivers/gpu/drm/i915/vgt/execlists.h
+@@ -191,6 +191,7 @@ struct execlist_context {
+ 	 */
+ 	vgt_reg_t last_guest_head;
+ 	vgt_reg_t last_scan_head;
++	bool scan_head_valid;
+ 	uint64_t request_id;
+ 	//uint64_t cmd_nr;
+ 	//vgt_reg_t uhptr;
+-- 
+1.7.10.4
+

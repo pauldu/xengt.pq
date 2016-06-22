@@ -1,0 +1,30 @@
+From a62b7b5e42909834967ce874277614873be93706 Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Fri, 29 Jan 2016 14:40:59 +0800
+Subject: [PATCH 340/403] vgt/skl: remove one F_PT reg for skl
+
+0xd08 only functional before A0, but still read by driver when it
+boot, take it as VIRT
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 7dd4d82..fc450fc 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -4020,7 +4020,7 @@ reg_attr_t vgt_reg_info_skl[] = {
+ {0xc800, 0x7f8, F_RDR, 0, D_SKL, NULL, NULL},
+ {0xb020, 0x80, F_RDR, 0, D_SKL, NULL, NULL},
+ 
+-{0xd08, 4, F_PT, 0, D_SKL, NULL, NULL},
++{0xd08, 4, F_VIRT, 0, D_SKL, NULL, NULL},
+ {0x20e0, 4, F_PT, 0, D_SKL, NULL, NULL},
+ {0x20ec, 4, F_PT, 0, D_SKL, NULL, NULL},
+ 
+-- 
+1.7.10.4
+

@@ -1,0 +1,135 @@
+From dcd8090ff52b0d8680b7e993c338dc98a0543542 Mon Sep 17 00:00:00 2001
+From: Yipeng Zhang <yipeng.zhang@intel.com>
+Date: Fri, 29 Jan 2016 04:36:29 -0500
+Subject: [PATCH 336/403] Add kvmgt support in vgt_perf
+
+Signed-off-by: Yipeng Zhang <yipeng.zhang@intel.com>
+---
+ tools/vgt/vgt_perf |   76 +++++++++++++++++++++++++++++++++++-----------------
+ 1 file changed, 51 insertions(+), 25 deletions(-)
+
+diff --git a/tools/vgt/vgt_perf b/tools/vgt/vgt_perf
+index 7162bff..019eb868 100755
+--- a/tools/vgt/vgt_perf
++++ b/tools/vgt/vgt_perf
+@@ -28,7 +28,7 @@ parser.add_option("-i", "--vmid", dest="vmid", type="int",
+ parser.add_option("-t", "--timeout", dest="timeout", type="int",
+ 		   help="Timeout in seconds")
+ parser.add_option("-v", "--verbose", dest="verbose",
+-		   help="pring status message", action="store_true")
++		   help="print status message", action="store_true")
+ 
+ (options, args) = parser.parse_args()
+ if options.verbose:
+@@ -44,11 +44,42 @@ class Tee(object):
+ 
+ tag = long(time.time())
+ e = {}
+-e["log_top"] = "/tmp/xengt.top.%ld" % tag
+-e["log_xentop"] = '/tmp/xengt.xentop.%ld' % tag
+-e["log_gpu"] = '/tmp/xengt.gpu.%ld' % tag
+-e["log_file"] = '/tmp/xengt.log.%ld' % tag
+-e["log_vm"] = '/tmp/xengt.vm.%ld' % tag
++# check environment
++path_vgt = "/sys/kernel/debug/vgt"
++path_gpu = "/sys/kernel/debug/dri/0/i915_cur_delayinfo"
++xen_flag = True
++e["sample_top"] = True
++e["sample_vm"] = True
++e["sample_gpu"] = True
++e["sample_mmio"] = True
++
++if os.path.exists(path_vgt):
++	if os.path.isfile("/var/run/xenstored.pid"):
++		print "Running in XenGT environment..."
++	else:
++		xen_flag = False
++		print "Running in KVMGT environment..."
++		e["sample_vm"] = False
++		e["sample_mmio"] = False
++elif os.path.exists(path_gpu):
++	print "Running in Native or VM environment..."
++	e["sample_vm"] = False
++	e["sample_mmio"] = False
++else:
++	print "Running in VT-d environment"
++	e["sample_gpu"] = False
++	e["sample_mmio"] = False
++
++if xen_flag:
++	e["log_top"] = "/tmp/xengt.top.%ld" % tag
++	e["log_xentop"] = '/tmp/xengt.xentop.%ld' % tag
++	e["log_gpu"] = '/tmp/xengt.gpu.%ld' % tag
++	e["log_file"] = '/tmp/xengt.log.%ld' % tag
++	e["log_vm"] = '/tmp/xengt.vm.%ld' % tag
++else:
++	e["log_top"] = "/tmp/kvmgt.top.%ld" % tag
++	e["log_gpu"] = '/tmp/kvmgt.gpu.%ld' % tag
++	e["log_file"] = '/tmp/kvmgt.log.%ld' % tag
+ 
+ # output to both console and logfile
+ e["logf"] = open(e["log_file"], "w")
+@@ -80,25 +111,6 @@ def err_exit(e, msg):
+ 	e["logf"].close()
+ 	sys.exit()
+ 
+-# check environment
+-path_vgt = "/sys/kernel/debug/vgt"
+-path_gpu = "/sys/kernel/debug/dri/0/i915_cur_delayinfo"
+-e["sample_top"] = True
+-e["sample_vm"] = True
+-e["sample_gpu"] = True
+-e["sample_mmio"] = True
+-
+-if os.path.exists(path_vgt):
+-	print "Running in XenGT environment..."
+-elif os.path.exists(path_gpu):
+-	print "Running in Native or VM environment..."
+-	e["sample_vm"] = False
+-	e["sample_mmio"] = False
+-else:
+-	print "Running in VT-d environment"
+-	e["sample_gpu"] = False
+-	e["sample_mmio"] = False
+-
+ cpu_num = 0
+ cpu_mhz = ""
+ for line in fileinput.input("/proc/cpuinfo"):
+@@ -367,6 +379,7 @@ def show_result(e, s, r, time):
+ 
+ 	if e["sample_top"]:
+ 		print "----"
++		total_usage = 0
+ 		print "[top]%16s : %2.2f%%" % ("Total CPU%", (100.0 - r['dom0_idle']) * e["cpu_num"])
+ 		count = 6
+ 		for cmd, val in sorted(r['procs'].iteritems(), key=lambda(k, v): (v, k), reverse=True):
+@@ -374,6 +387,9 @@ def show_result(e, s, r, time):
+ 				break
+ 			count -= 1
+ 			print "[top]%16s : %s%%" % (cmd, val)
++			total_usage += val
++		print "----"
++		print "[top]%16s : %2.2f%%" % ("Total CPU usage%", total_usage)
+ 
+ 	if not e["sample_mmio"]:
+ 		return
+@@ -543,6 +559,16 @@ if e["sample_vm"]:
+ 	e["p_xentop"] = subprocess.Popen(args, stdout = e["xentop_file"])
+ 
+ if e["sample_gpu"]:
++	if os.path.isfile('/usr/bin/gpu_freq'):
++		os.remove('/usr/bin/gpu_freq')
++	f = open('/usr/bin/gpu_freq', "w")
++	#f.write("\#/bin/sh")
++	#f.write("\n")
++	if os.path.exists(path_gpu):
++		f.write(' while true; do cat /sys/kernel/debug/dri/0/i915_cur_delayinfo | grep CAGF; sleep 1; done')
++	else:
++		f.write(' while true; do cat /sys/kernel/debug/dri/0/i915_frequency_info | grep CAGF; sleep 1; done')
++	f.close()
+ 	line = "/bin/sh /usr/bin/gpu_freq"
+ 	args = shlex.split(line)
+ 	e["gpu_file"] = open(e["log_gpu"], "w")
+-- 
+1.7.10.4
+

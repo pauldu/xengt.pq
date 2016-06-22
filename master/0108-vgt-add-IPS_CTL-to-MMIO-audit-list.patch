@@ -1,0 +1,44 @@
+From 8bb2399974575a61fa2cd44ff2e15408684966c0 Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Fri, 3 Jul 2015 10:25:35 +0800
+Subject: [PATCH 108/403] vgt: add IPS_CTL to MMIO audit list
+
+corresponding defintion in i915:
+ #define IPS_CTL		0x43408
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |    2 ++
+ drivers/gpu/drm/i915/vgt/reg.h      |    3 +++
+ 2 files changed, 5 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 14df79d..9f3bc5c 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -3121,6 +3121,8 @@ reg_attr_t vgt_base_reg_info[] = {
+ {_REG_DPFC_CONTROL_SA, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+ {_REG_DPFC_CPU_FENCE_OFFSET_SA, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+ 
++{_REG_IPS_CTL, 4, F_DOM0, 0, D_HSW_PLUS, NULL, NULL},
++
+ {_REG_CSC_A_COEFFICIENTS, 4*6, F_DPY, 0, D_ALL, NULL, NULL},
+ {_REG_CSC_A_MODE, 4, F_DPY, 0, D_ALL, NULL, NULL},
+ {_REG_PRECSC_A_HIGH_COLOR_CHANNEL_OFFSET, 4, F_DPY, 0, D_ALL, NULL, NULL},
+diff --git a/drivers/gpu/drm/i915/vgt/reg.h b/drivers/gpu/drm/i915/vgt/reg.h
+index 50dad26..b184062 100644
+--- a/drivers/gpu/drm/i915/vgt/reg.h
++++ b/drivers/gpu/drm/i915/vgt/reg.h
+@@ -1069,6 +1069,9 @@ static inline uint32_t __RING_REG(int32_t ring_id, uint32_t rcs_reg)
+ #define DISPLAY_MAXWM	0x7f	/* bit 16:22 */
+ #define CURSOR_MAXWM	0x1f	/* bit 4:0 */
+ 
++/*Intermediate Pixel Storage*/
++#define _REG_IPS_CTL		0x43408
++
+ union PCH_PP_CONTROL
+ {
+ 	uint32_t data;
+-- 
+1.7.10.4
+

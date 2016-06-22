@@ -1,0 +1,27 @@
+From eb3abf18edd241ff9403e338a81723f7fe52f92f Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Thu, 14 May 2015 16:10:12 +0800
+Subject: [PATCH 076/403] vgt: increase the size of command string buffer to
+ 256
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/trace.h |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/trace.h b/drivers/gpu/drm/i915/vgt/trace.h
+index bfbb288..f9012d4 100644
+--- a/drivers/gpu/drm/i915/vgt/trace.h
++++ b/drivers/gpu/drm/i915/vgt/trace.h
+@@ -61,7 +61,7 @@ TRACE_EVENT(vgt_mmio_rw,
+ 				__entry->bytes)
+ );
+ 
+-#define MAX_CMD_STR_LEN	200
++#define MAX_CMD_STR_LEN	256
+ TRACE_EVENT(vgt_command,
+ 		TP_PROTO(u8 vm_id, u8 ring_id, u32 ip_gma, u32 *cmd_va, u32 cmd_len, bool ring_buffer_cmd, cycles_t cost_pre_cmd_handler, cycles_t cost_cmd_handler),
+ 
+-- 
+1.7.10.4
+

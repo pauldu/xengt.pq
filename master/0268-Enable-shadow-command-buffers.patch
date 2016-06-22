@@ -1,0 +1,447 @@
+From 545f2ed1c0ad225457ea47303e5e3425de193386 Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Tue, 20 Oct 2015 12:55:39 +0800
+Subject: [PATCH 268/403] Enable shadow command buffers
+
+Let command scan and patch list apply to shadow command buffers, and
+enable shadow command buffers.
+
+In order to support this, the command scan basic utilities are changes.
+The previous functions like cmd_val() etc. works for normal gma,
+which gets gpa from guest GTT table, and then va from gpa-to-va mapping.
+The access to the va address needs to call mtp API. With shadow command
+buffer, the rb/bb are in reserved aperture. The access is through aperture
+va directly.
+
+The command scan for dom0 is removed. In earlier XenGT implementation
+we need to noopify Dom0's display commands in command buffer when dom0
+is not foreground VM. But in BDW, when execlist mode is enabled,
+"mmio_flip" will be used and command buffer does not need any patching
+work.
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Signed-off-by: Fred Gao <fred.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |  108 ++++++++++++++++++++-------------
+ drivers/gpu/drm/i915/vgt/cmd_parser.h |    1 +
+ drivers/gpu/drm/i915/vgt/execlists.c  |   14 +++--
+ drivers/gpu/drm/i915/vgt/vgt.c        |   10 +--
+ drivers/gpu/drm/i915/vgt/vgt.h        |    7 ++-
+ 5 files changed, 86 insertions(+), 54 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index 969db50..c3dc381 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -146,11 +146,6 @@ static inline int add_patch_entry(struct parser_exec_state *s,
+ 	patch->addr = addr;
+ 	patch->new_val = val;
+ 
+-#if 0
+-	hypervisor_read_va(s->vgt, addr, &patch->old_val,
+-			sizeof(patch->old_val), 1);
+-#endif
+-
+ 	patch->request_id = s->request_id;
+ 
+ 	list->tail = next;
+@@ -218,19 +213,12 @@ static void apply_patch_entry(struct vgt_device *vgt, struct cmd_patch_info *pat
+ {
+ 	ASSERT(patch->addr);
+ 
+-	hypervisor_write_va(vgt, patch->addr, &patch->new_val,
++	if (shadow_cmd_buffer)
++		*((uint32_t *)patch->addr) = patch->new_val;
++	else
++		hypervisor_write_va(vgt, patch->addr, &patch->new_val,
+ 				sizeof(patch->new_val), 1);
+-	clflush(patch->addr);
+-}
+-
+-#if 0
+-static void revert_batch_entry(struct batch_info *info)
+-{
+-	ASSERT(info->addr);
+-
+-	*(uint32_t *)info->addr = info->old_val;
+ }
+-#endif
+ 
+ /*
+  * Apply all patch entries with request ID before or
+@@ -555,7 +543,10 @@ static inline uint32_t cmd_val(struct parser_exec_state *s, int index)
+ 		ret = *cmd_buf_ptr(s, index);
+ 	} else {
+ 		addr = cmd_ptr(s, index);
+-		hypervisor_read_va(s->vgt, addr, &ret, sizeof(ret), 1);
++		if (s->shadow)
++			ret = *addr;
++		else
++			hypervisor_read_va(s->vgt, addr, &ret, sizeof(ret), 1);
+ 	}
+ 
+ 	return ret;
+@@ -609,6 +600,20 @@ static inline struct vgt_mm *parser_exec_state_to_mm(struct parser_exec_state *s
+ 		return s->vgt->rb[s->ring_id].active_ppgtt_mm;
+ }
+ 
++/* get the system virtual address of reserved aperture */
++static inline void *rsvd_gma_to_sys_va(struct pgt_device *pdev, unsigned long rsvd_gma)
++{
++	int rsvd_page_idx;
++	void *page_va;
++	void *rsvd_va;
++
++	rsvd_page_idx = aperture_page_idx(pdev, rsvd_gma);
++	page_va = page_address(aperture_page(pdev, rsvd_page_idx));
++	rsvd_va = page_va + (rsvd_gma & (PAGE_SIZE - 1));
++
++	return rsvd_va;
++}
++
+ static int ip_gma_set(struct parser_exec_state *s, unsigned long ip_gma)
+ {
+ 	unsigned long gma_next_page;
+@@ -622,7 +627,10 @@ static int ip_gma_set(struct parser_exec_state *s, unsigned long ip_gma)
+ 	}
+ 
+ 	s->ip_gma = ip_gma;
+-	s->ip_va = vgt_gma_to_va(parser_exec_state_to_mm(s), ip_gma);
++	if (s->shadow)
++		s->ip_va = rsvd_gma_to_sys_va(s->vgt->pdev, ip_gma);
++	else
++		s->ip_va = vgt_gma_to_va(parser_exec_state_to_mm(s), ip_gma);
+ 	if (s->ip_va == NULL) {
+ 		vgt_err("ERROR: gma %lx is invalid, fail to set\n", s->ip_gma);
+ 		dump_stack();
+@@ -640,7 +648,11 @@ static int ip_gma_set(struct parser_exec_state *s, unsigned long ip_gma)
+ 	else
+ 		gma_next_page = ((ip_gma >> PAGE_SHIFT) + 1) << PAGE_SHIFT;
+ 
+-	s->ip_va_next_page = vgt_gma_to_va(parser_exec_state_to_mm(s), gma_next_page);
++	if (s->shadow)
++		s->ip_va_next_page = rsvd_gma_to_sys_va(s->vgt->pdev, gma_next_page);
++	else
++		s->ip_va_next_page = vgt_gma_to_va(parser_exec_state_to_mm(s),
++							gma_next_page);
+ 	if (s->ip_va_next_page == NULL) {
+ 		vgt_err("ERROR: next page gma %lx is invalid, fail to set\n",gma_next_page);
+ 		dump_stack();
+@@ -648,10 +660,11 @@ static int ip_gma_set(struct parser_exec_state *s, unsigned long ip_gma)
+ 		return -EFAULT;
+ 	}
+ 
+-	if (s->ip_buf) {
++	if (!s->shadow) {
+ 		hypervisor_read_va(s->vgt, s->ip_va, s->ip_buf,
+ 				s->ip_buf_len * sizeof(uint32_t), 1);
+-		hypervisor_read_va(s->vgt, s->ip_va_next_page, s->ip_buf + s->ip_buf_len * sizeof(uint32_t),
++		hypervisor_read_va(s->vgt, s->ip_va_next_page,
++				s->ip_buf + s->ip_buf_len * sizeof(uint32_t),
+ 				PAGE_SIZE, 1);
+ 		s->ip_buf_va = s->ip_buf;
+ 	}
+@@ -659,19 +672,19 @@ static int ip_gma_set(struct parser_exec_state *s, unsigned long ip_gma)
+ 	return 0;
+ }
+ 
+-static inline int ip_gma_advance(struct parser_exec_state *s, unsigned int len)
++static inline int ip_gma_advance(struct parser_exec_state *s, unsigned int dw_len)
+ {
+ 	int rc = 0;
+-	if (s->ip_buf_len > len) {
++	if (s->ip_buf_len > dw_len) {
+ 		/* not cross page, advance ip inside page */
+-		s->ip_gma += len*sizeof(uint32_t);
+-		s->ip_va += len;
++		s->ip_gma += dw_len * sizeof(uint32_t);
++		s->ip_va += dw_len;
+ 		if (s->ip_buf)
+-			s->ip_buf_va += len;
+-		s->ip_buf_len -= len;
++			s->ip_buf_va += dw_len;
++		s->ip_buf_len -= dw_len;
+ 	} else {
+ 		/* cross page, reset ip_va */
+-		rc = ip_gma_set(s, s->ip_gma + len*sizeof(uint32_t));
++		rc = ip_gma_set(s, s->ip_gma + dw_len * sizeof(uint32_t));
+ 	}
+ 	return rc;
+ }
+@@ -965,7 +978,6 @@ static inline unsigned long vgt_get_gma_from_bb_start(
+ 	uint32_t opcode;
+ 	void *va;
+ 
+-	ASSERT(g_gm_is_valid(vgt, ip_gma));
+ 	if (g_gm_is_valid(vgt, ip_gma)) {
+ 		bb_start_gma = 0;
+ 		va = vgt_gma_to_va(vgt->gtt.ggtt_mm, ip_gma);
+@@ -1679,6 +1691,7 @@ static int batch_buffer_needs_scan(struct parser_exec_state *s)
+ static int vgt_perform_bb_shadow(struct parser_exec_state *s)
+ {
+ 	struct vgt_device *vgt = s->vgt;
++	unsigned long *reloc_va;
+ 	unsigned long bb_start_gma = 0;
+ 	unsigned long bb_start_aligned;
+ 	uint32_t bb_start_offset;
+@@ -1690,7 +1703,8 @@ static int vgt_perform_bb_shadow(struct parser_exec_state *s)
+ 	unsigned long bb_guest_gma;
+ 	int i;
+ 
+-	bb_start_gma = get_gma_bb_from_cmd(s, 1);
++	reloc_va = rsvd_gma_to_sys_va(vgt->pdev, s->ip_gma + 4);
++	bb_start_gma = *reloc_va;
+ 
+ 	bb_start_offset = bb_start_gma & (PAGE_SIZE - 1);
+ 	bb_start_aligned = bb_start_gma - bb_start_offset;
+@@ -1750,7 +1764,8 @@ static int vgt_perform_bb_shadow(struct parser_exec_state *s)
+ 				s->ip_gma, bb_size);
+ 			goto shadow_err;
+ 		}
+-		shadow_bb_va = v_aperture(vgt->pdev, s_cmd_page->bound_gma);
++
++		shadow_bb_va = rsvd_gma_to_sys_va(vgt->pdev, s_cmd_page->bound_gma);
+ 
+ 		hypervisor_read_va(vgt, guest_bb_va, shadow_bb_va,
+ 				   PAGE_SIZE, 1);
+@@ -1760,7 +1775,7 @@ static int vgt_perform_bb_shadow(struct parser_exec_state *s)
+ 	}
+ 
+ 	/* perform relocation for mi_batch_buffer_start */
+-	//*reloc_va = shadow_bb_start_gma;
++	*reloc_va = shadow_bb_start_gma;
+ 	trace_shadow_bb_relocate(vgt->vm_id, s->ring_id,
+ 			      s->el_ctx->guest_context.lrca,
+ 			      s->ip_gma + 4, bb_start_gma, shadow_bb_start_gma, bb_size);
+@@ -1811,7 +1826,7 @@ static int vgt_cmd_handler_mi_batch_buffer_start(struct parser_exec_state *s)
+ 	}
+ 
+ 	if (batch_buffer_needs_scan(s)) {
+-		if (shadow_ring_buffer) {
++		if (shadow_cmd_buffer) {
+ 			rc = vgt_perform_bb_shadow(s);
+ 			if (rc)
+ 				return rc;
+@@ -2724,7 +2739,8 @@ static inline bool gma_out_of_range(unsigned long gma, unsigned long gma_head, u
+ 
+ #define MAX_PARSER_ERROR_NUM	10
+ 
+-static int __vgt_scan_vring(struct vgt_device *vgt, int ring_id, vgt_reg_t head, vgt_reg_t tail, vgt_reg_t base, vgt_reg_t size)
++static int __vgt_scan_vring(struct vgt_device *vgt, int ring_id, vgt_reg_t head,
++			vgt_reg_t tail, vgt_reg_t base, vgt_reg_t size, bool shadow)
+ {
+ 	unsigned long gma_head, gma_tail, gma_bottom;
+ 	struct parser_exec_state s;
+@@ -2752,20 +2768,22 @@ static int __vgt_scan_vring(struct vgt_device *vgt, int ring_id, vgt_reg_t head,
+ 
+ 	s.request_id = rs->request_id;
+ 	s.el_ctx = rs->el_ctx;
++	s.shadow = shadow;
+ 
+ 	if (bypass_scan_mask & (1 << ring_id)) {
+ 		add_tail_entry(&s, tail, 100, 0, 0);
+ 		return 0;
+ 	}
+ 
+-	if (cmd_parser_ip_buf) {
++	if (!shadow) {
+ 		s.ip_buf = kmalloc(PAGE_SIZE * 2, GFP_ATOMIC);
+ 		if (!s.ip_buf) {
+ 			vgt_err("fail to allocate buffer page.\n");
+ 			return -ENOMEM;
+ 		}
+-	} else
+-		s.ip_buf = s.ip_buf_va = NULL;
++	} else {
++		s.ip_buf = NULL;
++	}
+ 
+ 	rc = ip_gma_set(&s, base + head);
+ 	if (rc < 0)
+@@ -2856,6 +2874,7 @@ static int vgt_copy_rb_to_shadow(struct vgt_device *vgt,
+ 		void *ip_va, *ip_sva;
+ 		uint32_t ip_buf_len;
+ 		uint32_t copy_len;
++
+ 		ip_va = vgt_gma_to_va(vgt->gtt.ggtt_mm, vbase + rb_offset);
+ 		if (ip_va == NULL) {
+ 			vgt_err("VM-%d(ring-%d): gma %lx is invalid!\n",
+@@ -2870,9 +2889,8 @@ static int vgt_copy_rb_to_shadow(struct vgt_device *vgt,
+ 		else
+ 			copy_len = ip_buf_len;
+ 
+-		ip_sva = (uint32_t *)v_aperture(vgt->pdev, sbase + rb_offset);
+-		hypervisor_read_va(vgt, ip_va, ip_sva,
+-				   copy_len, 1);
++		ip_sva = rsvd_gma_to_sys_va(vgt->pdev, sbase + rb_offset);
++		hypervisor_read_va(vgt, ip_va, ip_sva, copy_len, 1);
+ 
+ 		left_len -= copy_len;
+ 		rb_offset = (rb_offset + copy_len) & (rb_size - 1);
+@@ -2892,6 +2910,7 @@ int vgt_scan_vring(struct vgt_device *vgt, int ring_id)
+ 	vgt_ringbuffer_t *vring = &rs->vring;
+ 	int ret = 0;
+ 	cycles_t t0, t1;
++	uint32_t rb_base;
+ 	struct vgt_statistics *stat = &vgt->stat;
+ 
+ 	t0 = get_cycles();
+@@ -2906,17 +2925,20 @@ int vgt_scan_vring(struct vgt_device *vgt, int ring_id)
+ 	stat->vring_scan_cnt++;
+ 	rs->request_id++;
+ 
++	rb_base = vring->start;
++
+ 	/* copy the guest rb into shadow rb */
+-	if (shadow_ring_buffer) {
++	if (shadow_cmd_buffer) {
+ 		ret = vgt_copy_rb_to_shadow(vgt, rs->el_ctx,
+ 				    rs->last_scan_head,
+ 				    vring->tail & RB_TAIL_OFF_MASK);
++		rb_base = rs->el_ctx->shadow_rb.shadow_rb_base;
+ 	}
+ 
+ 	if (ret == 0) {
+ 		ret = __vgt_scan_vring(vgt, ring_id, rs->last_scan_head,
+-			vring->tail & RB_TAIL_OFF_MASK,
+-			vring->start, _RING_CTL_BUF_SIZE(vring->ctl));
++			vring->tail & RB_TAIL_OFF_MASK, rb_base,
++			_RING_CTL_BUF_SIZE(vring->ctl), shadow_cmd_buffer);
+ 
+ 		rs->last_scan_head = vring->tail;
+ 	}
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.h b/drivers/gpu/drm/i915/vgt/cmd_parser.h
+index 246d6dc..fa5edd8 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.h
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.h
+@@ -487,6 +487,7 @@ struct parser_exec_state {
+ 	void *ip_buf;
+ 
+ 	struct execlist_context *el_ctx;
++	bool shadow;
+ };
+ 
+ #define CMD_TAIL_NUM	1024
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index c6ffe99..091cffe 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -708,6 +708,9 @@ static void vgt_patch_guest_context(struct execlist_context *el_ctx)
+ 	ROOTP_CTX_STATE_2_CTX_STATE(guest_state, shadow_state, 1);
+ 	ROOTP_CTX_STATE_2_CTX_STATE(guest_state, shadow_state, 2);
+ 	ROOTP_CTX_STATE_2_CTX_STATE(guest_state, shadow_state, 3);
++
++	if (shadow_cmd_buffer)
++		guest_state->rb_start.val = el_ctx->shadow_rb.shadow_rb_base;
+ }
+ 
+ /* context shadow: context creation/destroy in execlist */
+@@ -1439,7 +1442,7 @@ static void vgt_create_shadow_rb(struct vgt_device *vgt,
+ 	unsigned long rb_gma;
+ 	struct reg_state_ctx_header *reg_state;
+ 
+-	if (!shadow_ring_buffer)
++	if (!shadow_cmd_buffer)
+ 		return;
+ 
+ 	ASSERT(el_ctx->shadow_rb.shadow_rb_base == 0);
+@@ -1476,7 +1479,7 @@ static void vgt_destroy_shadow_rb(struct vgt_device *vgt,
+ 				  struct execlist_context *el_ctx)
+ {
+ 	unsigned long hpa;
+-	if (!shadow_ring_buffer)
++	if (!shadow_cmd_buffer)
+ 		return;
+ 
+ 	if (el_ctx->shadow_rb.ring_size == 0)
+@@ -1501,7 +1504,7 @@ static void vgt_release_shadow_cmdbuf(struct vgt_device *vgt,
+ 	/* unbind the shadow bb from GGTT */
+ 	struct shadow_cmd_page *s_page, *next;
+ 
+-	if (!shadow_ring_buffer)
++	if (!shadow_cmd_buffer)
+ 		return;
+ 
+ 	if (!s_buf || s_buf->n_pages == 0) {
+@@ -1704,8 +1707,11 @@ void vgt_submit_execlist(struct vgt_device *vgt, enum vgt_ring_id ring_id)
+ 				sizeof(struct ctx_desc_format));
+ 
+ 		ASSERT_VM(ring_id == ctx->ring_id, vgt);
++
++		if (vgt->vm_id)
++			vgt_manipulate_cmd_buf(vgt, ctx);
++
+ 		vgt_update_shadow_ctx_from_guest(vgt, ctx);
+-		vgt_manipulate_cmd_buf(vgt, ctx);
+ 
+ 		trace_ctx_lifecycle(vgt->vm_id, ring_id,
+ 			ctx->guest_context.lrca, "schedule_to_run");
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index de57321..de4ab32 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -157,9 +157,6 @@ module_param_named(bypass_scan, bypass_scan_mask, int, 0600);
+ bool bypass_dom0_addr_check = false;
+ module_param_named(bypass_dom0_addr_check, bypass_dom0_addr_check, bool, 0600);
+ 
+-bool cmd_parser_ip_buf = true;
+-module_param_named(cmd_parser_ip_buf, cmd_parser_ip_buf, bool, 0600);
+-
+ bool enable_panel_fitting = true;
+ module_param_named(enable_panel_fitting, enable_panel_fitting, bool, 0600);
+ 
+@@ -191,8 +188,8 @@ module_param_named(vgt_preliminary_hw_support, vgt_preliminary_hw_support, bool,
+ int shadow_execlist_context = 0;
+ module_param_named(shadow_execlist_context, shadow_execlist_context, int, 0400);
+ 
+-int shadow_ring_buffer = 0;
+-module_param_named(shadow_ring_buffer, shadow_ring_buffer, int, 0400);
++int shadow_cmd_buffer = 1;
++module_param_named(shadow_cmd_buffer, shadow_cmd_buffer, int, 0400);
+ 
+ /* Very frequent set/clear write protection can see wrong write trap even if
+ + * write protection has been cleared. Below option is to disable the context
+@@ -947,6 +944,9 @@ static int vgt_initialize(struct pci_dev *dev)
+ 		current_config_owner(pdev) = vgt_dom0;
+ 	}
+ 
++	if (!IS_BDW(pdev) || bypass_scan_mask)
++		shadow_cmd_buffer = 0;
++
+ 	pdev->ctx_check = 0;
+ 	pdev->ctx_switch = 0;
+ 	pdev->magic = 0;
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 43dfd48..c65724c 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -97,14 +97,13 @@ extern int reset_dur_threshold;
+ extern int reset_max_threshold;
+ extern bool vgt_lock_irq;
+ extern int shadow_execlist_context;
+-extern int shadow_ring_buffer;
++extern int shadow_cmd_buffer;
+ extern bool wp_submitted_ctx;
+ extern bool propagate_monitor_to_guest;
+ extern bool irq_based_ctx_switch;
+ extern int preallocated_shadow_pages;
+ extern int preallocated_oos_pages;
+ extern bool spt_out_of_sync;
+-extern bool cmd_parser_ip_buf;
+ extern bool timer_based_qos;
+ extern int tbs_period_ms;
+ extern bool opregion_present;
+@@ -879,6 +878,10 @@ extern void state_sreg_init(struct vgt_device *vgt);
+ #define aperture_2_gm(pdev, addr)	(addr - phys_aperture_base(pdev))
+ #define v_aperture(pdev, addr)		(phys_aperture_vbase(pdev) + (addr))
+ 
++#define aperture_page_idx(pdev, gma)	(((gma) - aperture_2_gm(pdev, pdev->rsvd_aperture_base)) >> GTT_PAGE_SHIFT)
++#define aperture_page(pdev, idx)	 ((*pdev->rsvd_aperture_pages)[idx])
++
++
+ #define vm_aperture_sz(pdev)		(pdev->vm_aperture_sz)
+ #define vm_gm_sz(pdev)			(pdev->vm_gm_sz)
+ #define vm_gm_hidden_sz(pdev)		(vm_gm_sz(pdev) - vm_aperture_sz(pdev))
+-- 
+1.7.10.4
+

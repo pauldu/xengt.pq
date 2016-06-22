@@ -1,0 +1,29 @@
+From a0a4879f95d8eae53373afe102b3db58b02b55be Mon Sep 17 00:00:00 2001
+From: Yi Sun <yi.sun@intel.com>
+Date: Thu, 24 Dec 2015 13:12:28 +0800
+Subject: [PATCH 246/403] Remove i915_check_vgpu in intel_uncore_init.
+
+We move i915_check_vgpu after intel_uncore_init, or it would cause
+kernel panic while booting.
+
+Signed-off-by: Yi Sun <yi.sun@intel.com>
+---
+ drivers/gpu/drm/i915/intel_uncore.c |    2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/intel_uncore.c b/drivers/gpu/drm/i915/intel_uncore.c
+index 2543b9a..497d4d8 100644
+--- a/drivers/gpu/drm/i915/intel_uncore.c
++++ b/drivers/gpu/drm/i915/intel_uncore.c
+@@ -1237,8 +1237,6 @@ void intel_uncore_init(struct drm_device *dev)
+ {
+ 	struct drm_i915_private *dev_priv = dev->dev_private;
+ 
+-	i915_check_vgpu(dev);
+-
+ 	intel_uncore_ellc_detect(dev);
+ 	intel_uncore_fw_domains_init(dev);
+ 	__intel_uncore_early_sanitize(dev, false);
+-- 
+1.7.10.4
+

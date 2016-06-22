@@ -1,0 +1,88 @@
+From 432d10fbf9caab13bfe5313961dd73a00b04c0d1 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Fri, 23 Oct 2015 04:11:38 +0800
+Subject: [PATCH 228/403] vgt/skl: add SKL s/r register list
+
+Introduce the register save/restore list collected from vgt_report tool
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/render.c |   48 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 48 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index 3d64f64..2282f63 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -203,6 +203,46 @@ vgt_reg_t vgt_gen8_render_regs[] = {
+         _REG_BCS_EXECLIST_STATUS,
+ };
+ 
++vgt_reg_t vgt_gen9_render_regs[] = {
++	_REG_HWS_PGA,
++	0x12080,
++	0x1a080,
++	0x1c080,
++	0x22080,
++
++	GEN8_PRIVATE_PAT_LO,
++	GEN8_PRIVATE_PAT_HI,
++
++	0x7004,
++	0x7014,
++	0x7300,
++	0xe100,
++	0xe180,
++	0xe184,
++	0xe188,
++	0xe194,
++	0xe4f0,
++
++	0x4de0,
++	0x4de4,
++	0x4de8,
++	0x4dec,
++	0x4df0,
++	0x4df4,
++
++	0x24d0,
++	0x24d4,
++	0x24d8,
++	0x24dc,
++
++	/* Execlist Status Registers */
++	_REG_RCS_EXECLIST_STATUS,
++	_REG_VCS_EXECLIST_STATUS,
++	_REG_VECS_EXECLIST_STATUS,
++	_REG_VCS2_EXECLIST_STATUS,
++	_REG_BCS_EXECLIST_STATUS,
++};
++
+ static vgt_reg_t *vgt_get_extra_ctx_regs(void)
+ {
+ 	return &vgt_gen8_render_regs[0];
+@@ -254,6 +294,10 @@ static void vgt_rendering_save_mmio(struct vgt_device *vgt)
+ 		__vgt_rendering_save(vgt,
+ 				vgt_get_extra_ctx_regs_num(),
+ 				vgt_get_extra_ctx_regs());
++	else if (IS_SKL(pdev))
++		__vgt_rendering_save(vgt,
++				ARRAY_NUM(vgt_gen9_render_regs),
++				&vgt_gen9_render_regs[0]);
+ 
+ 	pdev->in_ctx_switch = 0;
+ }
+@@ -313,6 +357,10 @@ static void vgt_rendering_restore_mmio(struct vgt_device *vgt)
+ 		__vgt_rendering_restore(vgt,
+ 				vgt_get_extra_ctx_regs_num(),
+ 				vgt_get_extra_ctx_regs());
++	else if (IS_SKL(pdev))
++		__vgt_rendering_restore(vgt,
++				ARRAY_NUM(vgt_gen9_render_regs),
++				&vgt_gen9_render_regs[0]);
+ }
+ 
+ void vgt_ring_init(struct pgt_device *pdev, int id)
+-- 
+1.7.10.4
+

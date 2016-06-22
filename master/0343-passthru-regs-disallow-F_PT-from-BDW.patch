@@ -1,0 +1,36 @@
+From 3eb6d60bb27b9488dc2c8cc685e296fdeba3f174 Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Wed, 23 Dec 2015 10:14:32 +0800
+Subject: [PATCH 343/403] passthru regs: disallow F_PT from BDW
+
+F_PT only need keep for HSW, misuse it after BDW is disallowed.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/mmio.c |   10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/mmio.c b/drivers/gpu/drm/i915/vgt/mmio.c
+index 1c7f281..afe92ec 100644
+--- a/drivers/gpu/drm/i915/vgt/mmio.c
++++ b/drivers/gpu/drm/i915/vgt/mmio.c
+@@ -642,8 +642,14 @@ static void vgt_set_reg_attr(struct pgt_device *pdev,
+ 	reg_set_owner(pdev, reg, attr->flags & VGT_REG_OWNER);
+ 	if (attr->flags & VGT_REG_PT_READONLY)
+ 		reg_set_pt_readonly(pdev, reg);
+-	if (attr->flags & VGT_REG_PASSTHROUGH)
+-		reg_set_passthrough(pdev, reg);
++	if (attr->flags & VGT_REG_PASSTHROUGH) {
++		if (IS_HSW(pdev)) {
++			reg_set_passthrough(pdev, reg);
++		} else {
++			vgt_err("vGT: pass through register 0x%x is not allowed\n", reg);
++			ASSERT(0);
++		}
++	}
+ 	if (attr->flags & VGT_REG_ADDR_FIX ) {
+ 		if (!attr->addr_mask)
+ 			printk("vGT: ZERO addr fix mask for %x\n", reg);
+-- 
+1.7.10.4
+

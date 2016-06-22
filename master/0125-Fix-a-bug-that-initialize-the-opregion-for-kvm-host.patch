@@ -1,0 +1,40 @@
+From ef000577410d4f0e2b7305bcb69ed50f7774b1e9 Mon Sep 17 00:00:00 2001
+From: Xiaoguang Chen <xiaoguang.chen@intel.com>
+Date: Tue, 14 Jul 2015 17:25:24 +0800
+Subject: [PATCH 125/403] Fix a bug that initialize the opregion for kvm host
+
+While doing porting I mistookly put the opregion init codes to the
+wrong place and lead to several error messages printed which may
+confuse us.
+Opregion initialization is only needed for HVM.
+
+Signed-off-by: Jike Song <jike.song@intel.com>
+Signed-off-by: Xiaoguang Chen <xiaoguang.chen@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/instance.c |   10 +++++-----
+ 1 file changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/instance.c b/drivers/gpu/drm/i915/vgt/instance.c
+index ea4d7e7..ba932dd 100644
+--- a/drivers/gpu/drm/i915/vgt/instance.c
++++ b/drivers/gpu/drm/i915/vgt/instance.c
+@@ -288,11 +288,11 @@ int create_vgt_instance(struct pgt_device *pdev, struct vgt_device **ptr_vgt, vg
+ 			current_config_owner(pdev) = vgt;
+ 			current_foreground_vm(pdev) = vgt;
+ 		}
+-	}
+-	if (!vgt_in_xen) {
+-		vgt_info("kvmgt:emulating a writing 0xfc opregion for VM%d\n",
+-					vgt->vm_id);
+-		vgt_hvm_opregion_init(vgt, 0);
++		if (!vgt_in_xen) {
++			vgt_info("kvmgt:emulating a writing 0xfc opregion for VM%d\n",
++						vgt->vm_id);
++			vgt_hvm_opregion_init(vgt, 0);
++		}
+ 	}
+ 	bitmap_zero(vgt->enabled_rings, MAX_ENGINES);
+ 	bitmap_zero(vgt->started_rings, MAX_ENGINES);
+-- 
+1.7.10.4
+

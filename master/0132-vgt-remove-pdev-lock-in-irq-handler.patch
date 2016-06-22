@@ -1,0 +1,43 @@
+From 8cfcfd3b5e350dfcd133b414c701205685020280 Mon Sep 17 00:00:00 2001
+From: "Zheng, Xiao" <xiao.zheng@intel.com>
+Date: Mon, 20 Jul 2015 19:18:55 +0800
+Subject: [PATCH 132/403] vgt: remove pdev->lock in irq handler
+
+The fix is to enhance stability test [MTBF]:
+there is a deadlock case that irq handler will try to hold pdev->lock.
+meanwhile same CPU core may already hold this lock in previously MMIO access
+
+Signed-off-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/interrupt.c |    7 +++----
+ 1 file changed, 3 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/interrupt.c b/drivers/gpu/drm/i915/vgt/interrupt.c
+index 4820f5d..7760faa 100644
+--- a/drivers/gpu/drm/i915/vgt/interrupt.c
++++ b/drivers/gpu/drm/i915/vgt/interrupt.c
+@@ -1912,10 +1912,10 @@ irqreturn_t vgt_interrupt(int irq, void *data)
+ 	struct pgt_device *pdev = i915_drm_to_pgt(data);
+ 	struct vgt_irq_host_state *hstate = pdev->irq_hstate;
+ 	irqreturn_t ret;
+-	int cpu;
+-
+-	cpu = vgt_enter();
+ 
++	/******************  PLEASE NOTE!!! **********************
++	 * we should not try to hold any pdev->lock in irq env   *
++	 *********************************************************/
+ 	pdev->stat.irq_num++;
+ 	pdev->stat.last_pirq = get_cycles();
+ 
+@@ -1941,7 +1941,6 @@ out:
+ 
+ 	pdev->stat.pirq_cycles += get_cycles() - pdev->stat.last_pirq;
+ 
+-	vgt_exit(cpu);
+ 	return IRQ_HANDLED;
+ }
+ 
+-- 
+1.7.10.4
+

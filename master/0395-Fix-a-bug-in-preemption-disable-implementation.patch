@@ -1,0 +1,31 @@
+From a9f94679885fb60649b002482cc58fc53e9a2f38 Mon Sep 17 00:00:00 2001
+From: Pei Zhang <pei.zhang@intel.com>
+Date: Tue, 5 Apr 2016 16:27:58 +0800
+Subject: [PATCH 395/403] Fix a bug in preemption-disable implementation
+
+Exclude the rb mode HW from the preemption-disable logic.
+
+V2. add enable_execlist judgement.
+
+Signed-off-by: Pei Zhang <pei.zhang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/vgt.c |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 6074d26..52a0345 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -389,7 +389,8 @@ static void vgt_processe_hi_priority_request(struct pgt_device *pdev)
+ 		vgt_unlock_dev(pdev, cpu);
+ 	}
+ 
+-	if (!ctx_switch_requested(pdev)) {
++	if (!ctx_switch_requested(pdev) &&
++		pdev->enable_execlist) {
+ 		vgt_lock_dev(pdev, cpu);
+ 		vgt_kick_off_execlists(current_render_owner(pdev));
+ 		vgt_unlock_dev(pdev, cpu);
+-- 
+1.7.10.4
+

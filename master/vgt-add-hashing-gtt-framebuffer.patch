@@ -1,0 +1,79 @@
+diff --git a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
+index b272718..6060fff 100644
+--- a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
++++ b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
+@@ -140,6 +140,11 @@ static int vgt_decode_information(struct drm_device *dev,
+ 	struct vgt_primary_plane_format *p;
+ 	struct vgt_cursor_plane_format *c;
+ 	struct vgt_pipe_format *pipe;
++	uint32_t gtt_fbstart;
++	uint32_t gtt_pte;
++	int i;
++	uint64_t gtt_hash =0;
++	uint32_t __iomem *gtt_base = dev_priv->gtt.gsm;	/* mappable_base; */
+ 
+ 	if (vgt_decode_fb_format(vmid, &fb))
+ 		return -EINVAL;
+@@ -185,7 +190,7 @@ static int vgt_decode_information(struct drm_device *dev,
+ 		return -EINVAL;
+ 	}
+ 
+-	args->size = (((args->width * args->height * args->bpp) / 8) +
++	args->size = ((args->stride * roundup(args->height, 8)) +
+ 		      (PAGE_SIZE - 1)) >> PAGE_SHIFT;
+ 
+ 	if (args->start & (PAGE_SIZE - 1)) {
+@@ -199,6 +204,41 @@ static int vgt_decode_information(struct drm_device *dev,
+ 		DRM_DEBUG_DRIVER("VGT: Invalid GTT offset or size\n");
+ 		return -EINVAL;
+ 	}
++
++
++	DRM_DEBUG_DRIVER("VGT GEM: Surface size = %d\n",
++			 (int)(args->size * PAGE_SIZE));
++
++	gtt_fbstart = args->start >> PAGE_SHIFT;
++
++	DRM_DEBUG_DRIVER("VGT GEM: gtt start addr %p\n",gtt_base);
++	DRM_DEBUG_DRIVER("VGT GEM: fb start %x\n", gtt_fbstart);
++
++	if (INTEL_INFO(dev)->gen >= 8)
++		gtt_base += (gtt_fbstart * 2);
++	else
++		gtt_base += gtt_fbstart;
++
++	DRM_DEBUG_DRIVER("VGT GEM: gtt + fb start %p\n", gtt_base);
++
++	for (i = 0; i < args->size; i++) {
++		uint64_t overflow;
++
++		if (INTEL_INFO(dev)->gen >= 8)
++			gtt_pte = readl(&gtt_base[i*2]);
++		else
++			gtt_pte = readl(&gtt_base[i]);
++
++		gtt_hash = (gtt_hash << 4) + gtt_pte;
++		overflow = gtt_hash & (0xful << 32);
++		if (overflow != 0) {
++			gtt_hash ^= overflow >> 32;
++			gtt_hash ^= overflow;
++		}
++	}
++	DRM_DEBUG_DRIVER("VGT GEM: gtt_hash=0x%x\n", (unsigned int)gtt_hash);
++	args->hash = gtt_hash;
++
+ 	return 0;
+ }
+ 
+diff --git a/include/uapi/drm/i915_drm.h b/include/uapi/drm/i915_drm.h
+index 32bf107..d763d0f 100644
+--- a/include/uapi/drm/i915_drm.h
++++ b/include/uapi/drm/i915_drm.h
+@@ -1163,6 +1163,7 @@ struct drm_i915_gem_vgtbuffer {
+ #define I915_VGTBUFFER_QUERY_ONLY (1<<1)
+ #define I915_VGTBUFFER_CHECK_CAPABILITY (1<<2)
+ #define I915_VGTBUFFER_UNSYNCHRONIZED 0x80000000
++        __u32 hash;
+ 	/**
+ 	 * Returned handle for the object.
+ 	 *

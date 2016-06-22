@@ -1,0 +1,33 @@
+From c80998bd0972e1881eea95005963d2876e20abc3 Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Tue, 22 Dec 2015 09:46:07 +0800
+Subject: [PATCH 306/403] Re-enable vgtbuffer
+
+The IOCTL interface was disabled in one of kernel rebase due to the
+broken functionality. It is now back to work with new implementation.
+So re-enable it again.
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+
+Conflicts:
+	drivers/gpu/drm/i915/i915_dma.c
+---
+ drivers/gpu/drm/i915/i915_dma.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/i915_dma.c b/drivers/gpu/drm/i915/i915_dma.c
+index 9de1cc7..864a55e 100644
+--- a/drivers/gpu/drm/i915/i915_dma.c
++++ b/drivers/gpu/drm/i915/i915_dma.c
+@@ -1359,7 +1359,7 @@ const struct drm_ioctl_desc i915_ioctls[] = {
+ 	DRM_IOCTL_DEF_DRV(I915_GEM_USERPTR, i915_gem_userptr_ioctl, DRM_RENDER_ALLOW),
+ 	DRM_IOCTL_DEF_DRV(I915_GEM_CONTEXT_GETPARAM, i915_gem_context_getparam_ioctl, DRM_RENDER_ALLOW),
+ 	DRM_IOCTL_DEF_DRV(I915_GEM_CONTEXT_SETPARAM, i915_gem_context_setparam_ioctl, DRM_RENDER_ALLOW),
+-//	DRM_IOCTL_DEF_DRV(I915_GEM_VGTBUFFER, i915_gem_vgtbuffer_ioctl, DRM_UNLOCKED | DRM_RENDER_ALLOW),
++	DRM_IOCTL_DEF_DRV(I915_GEM_VGTBUFFER, i915_gem_vgtbuffer_ioctl, DRM_RENDER_ALLOW),
+ };
+ 
+ int i915_max_ioctl = ARRAY_SIZE(i915_ioctls);
+-- 
+1.7.10.4
+

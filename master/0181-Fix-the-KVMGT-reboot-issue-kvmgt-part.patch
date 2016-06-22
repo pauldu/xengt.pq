@@ -1,0 +1,30 @@
+From c9bd36de0a6f80343d456a1709a0ed64b1ef0225 Mon Sep 17 00:00:00 2001
+From: Min He <min.he@intel.com>
+Date: Wed, 23 Sep 2015 21:15:33 +0800
+Subject: [PATCH 181/403] Fix the KVMGT reboot issue - (kvmgt part)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+In KVMGT, there’s an issue that guest OS cannot reboot normally. This fix is to resolve the reboot issue in kvm.
+The reason why we need these extra steps in kvm is that:
+ --When rebooting a guest OS, Xen will destroy the existing qemu process and start a new one, so VGT related traps can be free correctly.
+ --But in kvm, the same qemu process will be remained, so VGT traps like mmio trap and PPGTT wp pages will remain working during the reboot of the guest OS, which will cause the guest fail to reboot.
+
+In this fix, we have two parts: kvm part and qemu part.
+
+This patch in kvm implemented a function to unset the mmio trap area in kvm, and called to it when releasing vgt instance.
+
+Signed-off-by: Min He <min.he@intel.com>
+diff --git a/drivers/gpu/drm/i915/vgt/instance.c b/drivers/gpu/drm/i915/vgt/instance.c
+index 7a686a5..af17632 100644
+--- a/drivers/gpu/drm/i915/vgt/instance.c
++++ b/drivers/gpu/drm/i915/vgt/instance.c
+@@ -351,6 +351,7 @@ void vgt_release_instance(struct vgt_device *vgt)
+ 
+ 	printk("prepare to destroy vgt (%d)\n", vgt->vgt_id);
+ 
++	vgt_hvm_set_trap_area(vgt, 0);
+ 	/* destroy vgt_mmio_device */
+ 	vgt_destroy_mmio_dev(vgt);
+ 

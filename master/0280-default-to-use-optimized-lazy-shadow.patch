@@ -1,0 +1,30 @@
+From 5b33d6d6e6c2ecb56fd6cea4d4906fd9100f2e1c Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Tue, 27 Oct 2015 17:09:58 +0800
+Subject: [PATCH 280/403] default to use optimized lazy shadow
+
+Comparing the performance impact of normal shadowing, lazy shadowing
+and optimized lazy shadowing, the last one wins. So make it as the
+default option.
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/vgt.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index e54c5b7..4126161 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -185,7 +185,7 @@ module_param_named(vgt_lock_irq, vgt_lock_irq, bool, 0400);
+ bool vgt_preliminary_hw_support = true;
+ module_param_named(vgt_preliminary_hw_support, vgt_preliminary_hw_support, bool, 0400);
+ 
+-int shadow_execlist_context = 0;
++int shadow_execlist_context = 3;
+ module_param_named(shadow_execlist_context, shadow_execlist_context, int, 0400);
+ 
+ int shadow_cmd_buffer = 1;
+-- 
+1.7.10.4
+

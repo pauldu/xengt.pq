@@ -1,0 +1,127 @@
+From 5570eeb37c4f62a86d3721cc230c80a0cff05aa1 Mon Sep 17 00:00:00 2001
+From: Weinan Li <weinan.z.li@intel.com>
+Date: Fri, 9 Oct 2015 15:41:32 +0800
+Subject: [PATCH 186/403] vgt: Keep only intel_lr_context_descriptor() for
+ calculating execlist context descriptor.
+
+There is one extra page reserved for GUC before LRC, refine the code to fit it.
+It cause i915 driver can't create lr context with
+intel_lr_context_notify_vgt().
+Corresponding bug number in bugzilla is: #862.
+
+Signed-off-by: Weinan Li <weinan.z.li@intel.com>
+---
+ drivers/gpu/drm/i915/intel_lrc.c |   63 +++++++++-----------------------------
+ 1 file changed, 14 insertions(+), 49 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/intel_lrc.c b/drivers/gpu/drm/i915/intel_lrc.c
+index 9c26f24..4ded456 100644
+--- a/drivers/gpu/drm/i915/intel_lrc.c
++++ b/drivers/gpu/drm/i915/intel_lrc.c
+@@ -290,37 +290,6 @@ static bool disable_lite_restore_wa(struct intel_engine_cs *ring)
+ 		IS_BXT_REVID(dev, 0, BXT_REVID_A0)) &&
+ 	       (ring->id == VCS || ring->id == VCS2);
+ }
+-static uint64_t execlists_ctx_descriptor(struct intel_engine_cs *ring,
+-		struct drm_i915_gem_object *ctx_obj)
+-{
+-	struct drm_device *dev = ring->dev;
+-	uint64_t desc;
+-	uint64_t lrca = i915_gem_obj_ggtt_offset(ctx_obj);
+-
+-	WARN_ON(lrca & 0xFFFFFFFF00000FFFULL);
+-
+-	desc = GEN8_CTX_VALID;
+-	desc |= LEGACY_32B_CONTEXT << GEN8_CTX_MODE_SHIFT;
+-	if (IS_GEN8(ctx_obj->base.dev))
+-		desc |= GEN8_CTX_L3LLC_COHERENT;
+-	desc |= GEN8_CTX_PRIVILEGE;
+-	desc |= lrca;
+-	desc |= (u64)intel_execlists_ctx_id(ctx_obj) << GEN8_CTX_ID_SHIFT;
+-
+-	/* TODO: WaDisableLiteRestore when we start using semaphore
+-	 *          * signalling between Command Streamers */
+-	/* desc |= GEN8_CTX_FORCE_RESTORE; */
+-
+-	/* WaEnableForceRestoreInCtxtDescForVCS:skl */
+-	if (IS_GEN9(dev) &&
+-			INTEL_REVID(dev) <= SKL_REVID_B0 &&
+-			(ring->id == BCS || ring->id == VCS ||
+-			 ring->id == VECS || ring->id == VCS2))
+-		desc |= GEN8_CTX_FORCE_RESTORE;
+-
+-	return desc;
+-}
+-
+ uint64_t intel_lr_context_descriptor(struct intel_context *ctx,
+ 				     struct intel_engine_cs *ring)
+ {
+@@ -2263,14 +2232,14 @@ make_rpcs(struct drm_device *dev)
+ 	return rpcs;
+ }
+ 
+-static void intel_lr_context_notify_vgt(struct drm_i915_gem_object *ctx_obj,
++static void intel_lr_context_notify_vgt(struct intel_context *ctx,
+ 					struct intel_engine_cs *ring,
+ 					int msg)
+ {
+ 	struct drm_device *dev = ring->dev;
+ 	struct drm_i915_private *dev_priv = dev->dev_private;
+ 
+-	u64 tmp = execlists_ctx_descriptor(ring, ctx_obj);
++	u64 tmp = intel_lr_context_descriptor(ctx, ring);
+ 
+ 	I915_WRITE(vgt_info_off(execlist_context_descriptor_lo),
+ 			tmp & 0xffffffff);
+@@ -2411,19 +2380,6 @@ populate_lr_context(struct intel_context *ctx, struct drm_i915_gem_object *ctx_o
+ 		reg_state[CTX_R_PWR_CLK_STATE+1] = make_rpcs(dev);
+ 	}
+ 
+-	if (intel_vgpu_active(dev)) {
+-		/* Allocate VMA instantly. */
+-		ret = i915_gem_obj_ggtt_pin(ctx_obj,
+-				GEN8_LR_CONTEXT_ALIGN, 0);
+-		if (ret) {
+-			DRM_DEBUG_DRIVER("Pin LRC backing obj failed: %d\n",
+-					ret);
+-			return ret;
+-		}
+-		intel_lr_context_notify_vgt(ctx_obj, ring,
+-				VGT_G2V_EXECLIST_CONTEXT_ELEMENT_CREATE);
+-	}
+-
+ 	kunmap_atomic(reg_state);
+ 
+ 	ctx_obj->dirty = 1;
+@@ -2454,7 +2410,7 @@ void intel_lr_context_free(struct intel_context *ctx)
+ 			struct intel_engine_cs *ring = ringbuf->ring;
+ 
+ 			if (intel_vgpu_active(ringbuf->ring->dev)) {
+-				intel_lr_context_notify_vgt(ctx_obj, ring,
++				intel_lr_context_notify_vgt(ctx, ring,
+ 						VGT_G2V_EXECLIST_CONTEXT_ELEMENT_DESTROY);
+ 				i915_gem_object_ggtt_unpin(ctx_obj);
+ 			}
+@@ -2564,8 +2520,17 @@ int intel_lr_context_deferred_alloc(struct intel_context *ctx,
+ 	ctx->engine[ring->id].ringbuf = ringbuf;
+ 	ctx->engine[ring->id].state = ctx_obj;
+ 
+-	intel_lr_context_notify_vgt(ctx_obj, ring,
+-			VGT_G2V_EXECLIST_CONTEXT_ELEMENT_CREATE);
++	if (intel_vgpu_active(ring->dev)) {
++		/* Allocate VMA instantly. */
++		ret = i915_gem_obj_ggtt_pin(ctx_obj, GEN8_LR_CONTEXT_ALIGN, 0);
++		if (ret) {
++			DRM_DEBUG_DRIVER("Pin LRC backing obj failed: %d\n",
++					ret);
++			return ret;
++		}
++		intel_lr_context_notify_vgt(ctx, ring,
++				VGT_G2V_EXECLIST_CONTEXT_ELEMENT_CREATE);
++	}
+ 
+ 	if (ctx != ring->default_context && ring->init_context) {
+ 		struct drm_i915_gem_request *req;
+-- 
+1.7.10.4
+

@@ -1,0 +1,64 @@
+From 3e5baeb50d77ba3fabc503f2c110b4ada3608be8 Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Fri, 30 Oct 2015 15:43:53 +0800
+Subject: [PATCH 198/403] fix some misc program error
+
+fix some errors point out by VPG,
+memory leak in cmd parser
+logical error in sysfs.c
+duplicate error check logic in display_flip
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |    7 ++-----
+ drivers/gpu/drm/i915/vgt/sysfs.c      |    2 +-
+ 2 files changed, 3 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index c4e6b7e..e1b610a 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -1125,6 +1125,7 @@ static int vgt_handle_mi_display_flip(struct parser_exec_state *s, bool resubmit
+ 
+ 
+ 	if (!display_flip_decode_plane_info(plane_code, &pipe, &plane)) {
++		vgt_warn("Invalid pipe/plane in MI_DISPLAY_FLIP!\n");
+ 		goto wrong_command;
+ 	}
+ 
+@@ -1138,11 +1139,6 @@ static int vgt_handle_mi_display_flip(struct parser_exec_state *s, bool resubmit
+ 		goto wrong_command;
+ 	}
+ 
+-	if ((pipe == I915_MAX_PIPES) || (plane == MAX_PLANE)) {
+-		vgt_warn("Invalid pipe/plane in MI_DISPLAY_FLIP!\n");
+-		goto wrong_command;
+-	}
+-
+ 	if (!resubmitted) {
+ 		if (!vgt_flip_parameter_check(s, plane_code, stride_val, surf_val))
+ 			goto wrong_command;
+@@ -2377,6 +2373,7 @@ static int cmd_hash_init(struct pgt_device *pdev)
+ 		info = vgt_find_cmd_entry_any_ring(e->info->opcode, e->info->rings);
+ 		if (info) {
+ 			vgt_err("%s %s duplicated\n", e->info->name, info->name);
++			kfree(e);
+ 			return -EINVAL;
+ 		}
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/sysfs.c b/drivers/gpu/drm/i915/vgt/sysfs.c
+index b044c6d..d5527e1 100644
+--- a/drivers/gpu/drm/i915/vgt/sysfs.c
++++ b/drivers/gpu/drm/i915/vgt/sysfs.c
+@@ -64,7 +64,7 @@ static ssize_t vgt_create_instance_store(struct kobject *kobj, struct kobj_attri
+ 
+ 		if (param_cnt == 5) {
+ 			/* -1/0/1 means: not-specified, non-primary, primary */
+-			if (vp.vgt_primary < -1 && vp.vgt_primary > 1)
++			if (vp.vgt_primary < -1 || vp.vgt_primary > 1)
+ 				return -EINVAL;
+ 		} else {
+ 			vp.vgt_primary = -1; /* no valid value specified. */
+-- 
+1.7.10.4
+

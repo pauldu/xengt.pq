@@ -1,0 +1,92 @@
+From 0c0d2375109e93d6995b0396c322809800a24365 Mon Sep 17 00:00:00 2001
+From: Pei Zhang <pei.zhang@intel.com>
+Date: Tue, 1 Mar 2016 09:21:28 +0800
+Subject: [PATCH 376/403] Fix the el context find logic in vgt
+
+v3. change the commit description based on impaction.
+v2. add the shadow patch mode judge, and modify commit description.
+
+Function show_batchbuffer is used to dump the batch buffer content based
+on the execlist context. All the execlist contexts are saved in a hash
+list which could be searched with the lrca value read from MMIO. Current
+code doesn't consider the shadow context condition and would fail to
+find out the execlist context under some conditions. This patch would
+fix this issue.
+
+Signed-off-by: Pei Zhang <pei.zhang@intel.com>
+Signed-off-by: Fred Gao <fred.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |   14 ++++++++++++++
+ drivers/gpu/drm/i915/vgt/utility.c   |   12 +++++++++---
+ drivers/gpu/drm/i915/vgt/vgt.h       |    4 +++-
+ 3 files changed, 26 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index a11794c..4e5a3b8 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -1343,6 +1343,20 @@ static void vgt_emulate_submit_execlist(struct vgt_device *vgt, int ring_id,
+ 	return;
+ }
+ 
++struct execlist_context *execlist_shadow_context_find(struct vgt_device *vgt,
++				uint32_t shadow_lrca)
++{
++	int i;
++	struct execlist_context *el_ctx;
++
++	hash_for_each(vgt->gtt.el_ctx_hash_table, i, el_ctx, node) {
++		if (el_ctx->shadow_lrca == shadow_lrca)
++			return el_ctx;
++	}
++
++	return NULL;
++}
++
+ struct execlist_context * execlist_context_find(struct vgt_device *vgt,
+ 				uint32_t guest_lrca)
+ {
+diff --git a/drivers/gpu/drm/i915/vgt/utility.c b/drivers/gpu/drm/i915/vgt/utility.c
+index 5d24eeb..acba19c 100644
+--- a/drivers/gpu/drm/i915/vgt/utility.c
++++ b/drivers/gpu/drm/i915/vgt/utility.c
+@@ -237,12 +237,18 @@ static void show_batchbuffer(struct pgt_device *pdev, int ring_id, u64 addr,
+ 	} else if (is_execlist_mode(pdev, ring_id)) {
+ 		struct execlist_context *el_ctx;
+ 		u32 lrca = VGT_MMIO_READ(pdev, _REG_CUR_DESC(ring_id));
++		bool has_shadow = vgt_require_shadow_context(vgt) &&
++					(!hvm_render_owner) &&
++					(shadow_execlist_context != PATCH_WITHOUT_SHADOW);
+ 
+ 		lrca >>= GTT_PAGE_SHIFT;
+-		el_ctx = execlist_context_find(vgt, lrca);
++
++		if (has_shadow)
++			el_ctx = execlist_shadow_context_find(vgt, lrca);
++		else
++			el_ctx = execlist_context_find(vgt, lrca);
+ 		if (!el_ctx) {
+-			printk("cannot find ctx with lrca 0x%x\n",
+-				lrca);
++			printk("cannot find ctx with lrca 0x%x\n", lrca);
+ 			return;
+ 		}
+ 		mm = el_ctx->ppgtt_mm;
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 2fbc6ee..86cdf90 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -1879,7 +1879,9 @@ void vgt_emulate_context_switch_event(struct pgt_device *pdev, enum vgt_ring_id
+ void vgt_submit_execlist(struct vgt_device *vgt, enum vgt_ring_id ring_id);
+ void vgt_kick_off_execlists(struct vgt_device *vgt);
+ bool vgt_idle_execlist(struct pgt_device *pdev, enum vgt_ring_id ring_id);
+-struct execlist_context * execlist_context_find(struct vgt_device *vgt, uint32_t guest_lrca);
++struct execlist_context *execlist_context_find(struct vgt_device *vgt, uint32_t guest_lrca);
++struct execlist_context *execlist_shadow_context_find(struct vgt_device *vgt,
++				uint32_t guest_lrca);
+ 
+ bool vgt_g2v_execlist_context_create(struct vgt_device *vgt);
+ bool vgt_g2v_execlist_context_destroy(struct vgt_device *vgt);
+-- 
+1.7.10.4
+

@@ -1,0 +1,15 @@
+diff --git a/drivers/gpu/drm/i915/vgt/reg.h b/drivers/gpu/drm/i915/vgt/reg.h
+index 7b4c7e1..97452fc 100644
+--- a/drivers/gpu/drm/i915/vgt/reg.h
++++ b/drivers/gpu/drm/i915/vgt/reg.h
+@@ -893,8 +893,8 @@ union _TRANS_CONFIG
+ #define	_REGBIT_CFG_SWSCI_SCI_TRIGGER		1
+ #define VGT_REG_CFG_OPREGION			0xFC
+ 
+-#define VGT_OPREGION_PAGES			2
+-#define VGT_OPREGION_PORDER			1
++#define VGT_OPREGION_PAGES			3
++#define VGT_OPREGION_PORDER			2
+ #define VGT_OPREGION_SIZE			(8 * 1024)
+ #define VGT_OPREGION_REG_CLID			0x1AC
+ #define VGT_OPREGION_REG_SCIC			0x200

@@ -1,0 +1,204 @@
+From 4cfab7dd4a9bc33b74e3fe8ef5cd912eae2a31bf Mon Sep 17 00:00:00 2001
+From: "Zheng, Xiao" <xiao.zheng@intel.com>
+Date: Fri, 12 Jun 2015 14:37:31 +0800
+Subject: [PATCH 101/403] vgt: change time based scheduler timer to be
+ configurable
+
+BDW Time based scheduler changed to 1ms, HSW still 15ms
+kernel bootup parameters example: xen_vgt.tbs_period_ms=1
+
+Signed-off-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/instance.c |    3 +--
+ drivers/gpu/drm/i915/vgt/sched.c    |   22 +++++++++++-------
+ drivers/gpu/drm/i915/vgt/vgt.c      |    4 ++++
+ drivers/gpu/drm/i915/vgt/vgt.h      |   43 +++++++++++++++++++++++++++++------
+ 4 files changed, 55 insertions(+), 17 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/instance.c b/drivers/gpu/drm/i915/vgt/instance.c
+index 8bab2ab9..d9edc76 100644
+--- a/drivers/gpu/drm/i915/vgt/instance.c
++++ b/drivers/gpu/drm/i915/vgt/instance.c
+@@ -314,8 +314,7 @@ int create_vgt_instance(struct pgt_device *pdev, struct vgt_device **ptr_vgt, vg
+ 	*ptr_vgt = vgt;
+ 
+ 	/* initialize context scheduler infor */
+-	if (event_based_qos)
+-		vgt_init_sched_info(vgt);
++	vgt_init_sched_info(vgt);
+ 
+ 	if (shadow_tail_based_qos)
+ 		vgt_init_rb_tailq(vgt);
+diff --git a/drivers/gpu/drm/i915/vgt/sched.c b/drivers/gpu/drm/i915/vgt/sched.c
+index 63762d8..fcc3bda 100644
+--- a/drivers/gpu/drm/i915/vgt/sched.c
++++ b/drivers/gpu/drm/i915/vgt/sched.c
+@@ -37,11 +37,10 @@ static void vgt_hrtimer_init(struct pgt_device *pdev,
+ 	struct vgt_hrtimer *hrtimer = &vgt_hrtimer;
+ 	hrtimer_init(&hrtimer->timer, CLOCK_MONOTONIC, HRTIMER_MODE_ABS);
+ 	hrtimer->timer.function = function;
+-	hrtimer->period = period;
+ 	vgt_hrtimer_pdev = pdev;
+ 
+ 	hrtimer_start(&hrtimer->timer,
+-			ktime_add_ns(ktime_get(), hrtimer->period),
++			ktime_add_ns(ktime_get(), period),
+ 			HRTIMER_MODE_ABS);
+ }
+ 
+@@ -114,7 +113,12 @@ static enum hrtimer_restart vgt_tbs_timer_fn(struct hrtimer *data)
+ 	if (vgt_nr_in_runq(pdev) > 1) {
+ 		vgt_raise_request(pdev, VGT_REQUEST_SCHED);
+ 	}
+-	hrtimer_add_expires_ns(&hrtimer->timer, hrtimer->period);
++	/* we are safe to schedule next timeout with current vgt value
++	 * (before ctx switch). If ctx switch successfully, we will cancel
++	 * this timer and start new one with next vgt's tbs_period.
++	 */
++	hrtimer_add_expires_ns(&hrtimer->timer,
++		ctx_tbs_period(current_render_owner(pdev)));
+ 	return HRTIMER_RESTART;
+ }
+ 
+@@ -456,6 +460,7 @@ static enum hrtimer_restart vgt_poll_rb_tail(struct hrtimer *data)
+ 			struct vgt_hrtimer, timer);
+ 	struct pgt_device *pdev = vgt_hrtimer_pdev;
+ 	int cpu;
++	u64 hrtimer_period = VGT_TAILQ_RB_POLLING_PERIOD;
+ 
+ 	ASSERT(pdev);
+ 
+@@ -490,11 +495,11 @@ reload_timer:
+ 	 */
+ 	if (vgt_removal_req == true) {
+ 		vgt_removal_req = false;
+-		hrtimer->period = (VGT_TAILQ_RB_POLLING_PERIOD << 3);
++		hrtimer_period = (VGT_TAILQ_RB_POLLING_PERIOD << 3);
+ 	} else
+-		hrtimer->period = VGT_TAILQ_RB_POLLING_PERIOD;
++		hrtimer_period = VGT_TAILQ_RB_POLLING_PERIOD;
+ 
+-	hrtimer_add_expires_ns(&hrtimer->timer, hrtimer->period);
++	hrtimer_add_expires_ns(&hrtimer->timer, hrtimer_period);
+ 
+ 	return HRTIMER_RESTART;
+ }
+@@ -522,9 +527,10 @@ void vgt_initialize_ctx_scheduler(struct pgt_device *pdev)
+ 		timer_based_qos = false;
+ 
+ 	if (timer_based_qos) {
++		ASSERT(current_render_owner(pdev));
+ 		vgt_hrtimer_init(pdev,
+ 				vgt_tbs_timer_fn,
+-				VGT_TBS_DEFAULT_PERIOD);
++				ctx_tbs_period(current_render_owner(pdev)));
+ 	}
+ }
+ 
+@@ -777,7 +783,7 @@ void vgt_sched_update_next(struct vgt_device *vgt)
+ {
+ 	if (timer_based_qos)
+ 		hrtimer_start(&vgt_hrtimer.timer,
+-			ktime_add_ns(ktime_get(), vgt_hrtimer.period),
++			ktime_add_ns(ktime_get(), ctx_tbs_period(vgt)),
+ 			HRTIMER_MODE_ABS);
+ 
+ 	/* setup countdown for next vgt context */
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 6c50ae2..d84c80c 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -77,6 +77,10 @@ bool event_based_qos = false;
+ module_param_named(event_based_qos, event_based_qos, bool, 0600);
+ MODULE_PARM_DESC(event_based_qos, "Use event based QoS scheduler (default: false)");
+ 
++int tbs_period_ms = -1;
++module_param_named(tbs_period_ms, tbs_period_ms, int, 0600);
++MODULE_PARM_DESC(event_based_qos, "Set the time based QoS scheduler timer in unit of ms (default: BDW 1ms, HSW 15ms)");
++
+ bool shadow_tail_based_qos = false;
+ module_param_named(shadow_tail_based_qos, shadow_tail_based_qos, bool, 0600);
+ MODULE_PARM_DESC(shadow_tail_based_qos, "Use Shadow tail based QoS scheduler (default: false)");
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 3973706..539a3ea 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -93,6 +93,8 @@ extern int preallocated_shadow_pages;
+ extern int preallocated_oos_pages;
+ extern bool spt_out_of_sync;
+ extern bool cmd_parser_ip_buf;
++extern bool timer_based_qos;
++extern int tbs_period_ms;
+ 
+ enum vgt_event_type {
+ 	// GT
+@@ -825,13 +827,15 @@ struct vgt_sched_info {
+ 	int32_t weight;
+ 	int64_t time_slice;
+ 	/* more properties and policies should be added in*/
++	u64 tbs_period;  /* default: VGT_TBS_DEFAULT_PERIOD(1ms) */
+ };
+ 
+-#define VGT_TBS_DEFAULT_PERIOD (15 * 1000000) /* 15 ms */
++#define VGT_TBS_PERIOD_MAX 15
++#define VGT_TBS_PERIOD_MIN 1
++#define VGT_TBS_DEFAULT_PERIOD(x) ((x) * 1000000) /* 15 ms */
+ 
+ struct vgt_hrtimer {
+ 	struct hrtimer timer;
+-	u64 period;
+ };
+ 
+ #define VGT_TAILQ_RB_POLLING_PERIOD (2 * 1000000)
+@@ -2159,6 +2163,7 @@ static inline unsigned long __REG_READ(struct pgt_device *pdev,
+ #define ctx_remain_time(vgt) ((vgt)->sched_info.time_slice)
+ #define ctx_actual_end_time(vgt) ((vgt)->sched_info.actual_end_time)
+ #define ctx_rb_empty_delay(vgt) ((vgt)->sched_info.rb_empty_delay)
++#define ctx_tbs_period(vgt) ((vgt)->sched_info.tbs_period)
+ 
+ #define vgt_get_cycles() ({		\
+ 	cycles_t __ret;				\
+@@ -2213,11 +2218,35 @@ static inline int vgt_nr_in_runq(struct pgt_device *pdev)
+ 
+ static inline void vgt_init_sched_info(struct vgt_device *vgt)
+ {
+-	ctx_remain_time(vgt) = VGT_DEFAULT_TSLICE;
+-	ctx_start_time(vgt) = 0;
+-	ctx_end_time(vgt) = 0;
+-	ctx_actual_end_time(vgt) = 0;
+-	ctx_rb_empty_delay(vgt) = 0;
++	if (event_based_qos) {
++		ctx_remain_time(vgt) = VGT_DEFAULT_TSLICE;
++		ctx_start_time(vgt) = 0;
++		ctx_end_time(vgt) = 0;
++		ctx_actual_end_time(vgt) = 0;
++		ctx_rb_empty_delay(vgt) = 0;
++	}
++
++	if (timer_based_qos) {
++
++		if (tbs_period_ms == -1) {
++			tbs_period_ms = IS_BDW(vgt->pdev) ?
++				VGT_TBS_PERIOD_MIN : VGT_TBS_PERIOD_MAX;
++		}
++
++		if (tbs_period_ms > VGT_TBS_PERIOD_MAX
++			|| tbs_period_ms < VGT_TBS_PERIOD_MIN) {
++			vgt_err("Invalid tbs_period=%d parameters. "
++				"Best value between <%d..%d>\n",
++				VGT_TBS_PERIOD_MIN, VGT_TBS_PERIOD_MAX,
++				tbs_period_ms);
++			tbs_period_ms = IS_BDW(vgt->pdev) ?
++				VGT_TBS_PERIOD_MIN : VGT_TBS_PERIOD_MAX;
++		}
++
++		ctx_tbs_period(vgt) = VGT_TBS_DEFAULT_PERIOD(tbs_period_ms);
++		vgt_info("VM-%d setup timebased schedule period %d ms\n",
++			vgt->vm_id, tbs_period_ms);
++	}
+ }
+ 
+ /* main context scheduling process */
+-- 
+1.7.10.4
+

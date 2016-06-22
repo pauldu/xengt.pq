@@ -1,0 +1,39 @@
+From 10be0e5ce114ebb81a7ce201b6b482e9236962c2 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Wed, 15 Apr 2015 04:47:08 +0800
+Subject: [PATCH 041/403] vgt: remove 0xb10c from register save/restore list.
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/intel_pm.c   |    2 ++
+ drivers/gpu/drm/i915/vgt/render.c |    1 -
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/intel_pm.c b/drivers/gpu/drm/i915/intel_pm.c
+index 78d40d4..cdb0c5b 100644
+--- a/drivers/gpu/drm/i915/intel_pm.c
++++ b/drivers/gpu/drm/i915/intel_pm.c
+@@ -6513,6 +6513,8 @@ static void broadwell_init_clock_gating(struct drm_device *dev)
+ 	 */
+ 	I915_WRITE(HSW_GTT_CACHE_EN, GTT_CACHE_EN_ALL);
+ 
++	I915_WRITE(0xb10c, (I915_READ(0xb10c) & ~(0xf << 20)) | (0x8 << 20));
++
+ 	lpt_init_clock_gating(dev);
+ }
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index c07496b..99fd8b7 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -1703,7 +1703,6 @@ static struct reg_mask_t gen8_rcs_reset_mmio[] = {
+ 	{0x7010, 1},
+ 
+ 	{0xb110, 0},
+-	{0xb10c, 0},
+ 
+ 	{0x83a4, 1},
+ };
+-- 
+1.7.10.4
+

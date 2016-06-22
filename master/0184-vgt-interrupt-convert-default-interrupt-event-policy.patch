@@ -1,0 +1,106 @@
+From c643079da2c83d8830121793499eb1585434a5c8 Mon Sep 17 00:00:00 2001
+From: "Niu,Bing" <bing.niu@intel.com>
+Date: Mon, 21 Sep 2015 18:44:32 -0400
+Subject: [PATCH 184/403] vgt:interrupt convert default interrupt event policy
+ as DOM0 only
+
+Right now, most interrupts are virtualized for WMs. only DOM0
+will bind to physical interrupts. so set interrupt event default policy
+to EVENT_FW_DOM0. And update render related events as EVENT_FW_ALL.
+
+Signed-off-by: Niu,Bing <bing.niu@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/interrupt.c |   70 ++++++++++------------------------
+ 1 file changed, 21 insertions(+), 49 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/interrupt.c b/drivers/gpu/drm/i915/vgt/interrupt.c
+index 918301d..f3f8e05 100644
+--- a/drivers/gpu/drm/i915/vgt/interrupt.c
++++ b/drivers/gpu/drm/i915/vgt/interrupt.c
+@@ -1959,7 +1959,7 @@ static void vgt_init_events(
+ 	for (i = 0; i < EVENT_MAX; i++) {
+ 		hstate->events[i].info = NULL;
+ 		/* Default forwarding to all VMs (render and most display events) */
+-		SET_POLICY_ALL(hstate, i);
++		SET_POLICY_DOM0(hstate, i);
+ 		hstate->events[i].p_handler = vgt_handle_default_event_phys;
+ 		hstate->events[i].v_handler = vgt_handle_default_event_virt;;
+ 	}
+@@ -1996,54 +1996,26 @@ static void vgt_init_events(
+ 	SET_V_HANDLER(hstate, RCS_PIPE_CONTROL, vgt_handle_ring_empty_notify_virt);
+ 	SET_V_HANDLER(hstate, VCS_MI_FLUSH_DW, vgt_handle_ring_empty_notify_virt);
+ 	SET_V_HANDLER(hstate, VECS_MI_FLUSH_DW, vgt_handle_ring_empty_notify_virt);
+-
+-	/* for engine specific reset */
+-	SET_POLICY_DOM0(hstate, RCS_WATCHDOG_EXCEEDED);
+-	SET_POLICY_DOM0(hstate, VCS_WATCHDOG_EXCEEDED);
+-
+-	/* ACPI OpRegion belongs to dom0 */
+-	SET_POLICY_DOM0(hstate, GSE);
+-
+-	/* render-p/c fully owned by Dom0 */
+-	SET_POLICY_DOM0(hstate, GV_DOWN_INTERVAL);
+-	SET_POLICY_DOM0(hstate, GV_UP_INTERVAL);
+-	SET_POLICY_DOM0(hstate, RP_DOWN_THRESHOLD);
+-	SET_POLICY_DOM0(hstate, RP_UP_THRESHOLD);
+-	SET_POLICY_DOM0(hstate, FREQ_DOWNWARD_TIMEOUT_RC6);
+-	SET_POLICY_DOM0(hstate, PCU_THERMAL);
+-	SET_POLICY_DOM0(hstate, PCU_PCODE2DRIVER_MAILBOX);
+-
+-	/* Audio owned by Dom0 */
+-	SET_POLICY_DOM0(hstate, AUDIO_CP_CHANGE_TRANSCODER_A);
+-	SET_POLICY_DOM0(hstate, AUDIO_CP_REQUEST_TRANSCODER_A);
+-	SET_POLICY_DOM0(hstate, AUDIO_CP_CHANGE_TRANSCODER_B);
+-	SET_POLICY_DOM0(hstate, AUDIO_CP_REQUEST_TRANSCODER_B);
+-	SET_POLICY_DOM0(hstate, AUDIO_CP_CHANGE_TRANSCODER_C);
+-	SET_POLICY_DOM0(hstate, AUDIO_CP_REQUEST_TRANSCODER_C);
+-
+-	/* Aux Channel owned by Dom0 */
+-	SET_POLICY_DOM0(hstate, AUX_CHANNEL_A);
+-	SET_POLICY_DOM0(hstate, AUX_CHENNEL_B);
+-	SET_POLICY_DOM0(hstate, AUX_CHENNEL_C);
+-	SET_POLICY_DOM0(hstate, AUX_CHENNEL_D);
+-
+-	/* Monitor interfaces are controlled by XenGT driver */
+-	SET_POLICY_DOM0(hstate, DP_A_HOTPLUG);
+-	SET_POLICY_DOM0(hstate, DP_B_HOTPLUG);
+-	SET_POLICY_DOM0(hstate, DP_C_HOTPLUG);
+-	SET_POLICY_DOM0(hstate, DP_D_HOTPLUG);
+-	SET_POLICY_DOM0(hstate, SDVO_B_HOTPLUG);
+-	SET_POLICY_DOM0(hstate, CRT_HOTPLUG);
+-
+-	SET_POLICY_DOM0(hstate, GMBUS);
+-	/* phsical vBlank only to DOM0, VM's vBlank is vir*/
+-	SET_POLICY_DOM0(hstate, PIPE_A_VBLANK);
+-	SET_POLICY_DOM0(hstate, PIPE_B_VBLANK);
+-	SET_POLICY_DOM0(hstate, PIPE_C_VBLANK);
+-
+-	SET_POLICY_DOM0(hstate, PRIMARY_A_FLIP_DONE);
+-	SET_POLICY_DOM0(hstate, PRIMARY_B_FLIP_DONE);
+-	SET_POLICY_DOM0(hstate, PRIMARY_C_FLIP_DONE);
++	/*for render related*/
++	SET_POLICY_ALL(hstate,RCS_MI_USER_INTERRUPT);
++	SET_POLICY_ALL(hstate,RCS_PIPE_CONTROL);
++	SET_POLICY_ALL(hstate,RCS_AS_CONTEXT_SWITCH);
++
++	SET_POLICY_ALL(hstate,BCS_MI_USER_INTERRUPT);
++	SET_POLICY_ALL(hstate,BCS_MI_FLUSH_DW);
++	SET_POLICY_ALL(hstate,BCS_AS_CONTEXT_SWITCH);
++	
++	SET_POLICY_ALL(hstate,VCS_MI_USER_INTERRUPT);
++	SET_POLICY_ALL(hstate,VCS_MI_FLUSH_DW);
++	SET_POLICY_ALL(hstate,VCS_AS_CONTEXT_SWITCH);
++	
++	SET_POLICY_ALL(hstate,VCS2_MI_USER_INTERRUPT);
++	SET_POLICY_ALL(hstate,VCS2_MI_FLUSH_DW);
++	SET_POLICY_ALL(hstate,VCS2_AS_CONTEXT_SWITCH);
++
++	SET_POLICY_ALL(hstate,VECS_MI_USER_INTERRUPT);
++	SET_POLICY_ALL(hstate,VECS_MI_FLUSH_DW);
++	SET_POLICY_ALL(hstate,VECS_AS_CONTEXT_SWITCH);
+ }
+ static enum hrtimer_restart vgt_dpy_timer_fn(struct hrtimer *data)
+ {
+-- 
+1.7.10.4
+

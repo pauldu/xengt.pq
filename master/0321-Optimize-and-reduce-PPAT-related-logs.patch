@@ -1,0 +1,177 @@
+From a3e122a3c314e3463323fc155819fab230939feb Mon Sep 17 00:00:00 2001
+From: Xu Han <xu.han@intel.com>
+Date: Tue, 12 Jan 2016 13:52:56 +0800
+Subject: [PATCH 321/403] Optimize and reduce PPAT related logs.
+
+V5:
+* Dump ppat entry value, instead of mapping table match status description.
+
+V4:
+* Remove "ca_match" status counting, and related prompt message.
+
+V3:
+* Remove logs when we do the ppat translate, and show mapping table after all
+  ppat indexes translated.
+
+V2:
+* Reduce duplicate check and log in V1.
+
+V1:
+* Change function gen8_translate_ppat return type from bool to enum, it would
+  indecate ppat translate status precisely.
+
+* When the gen8_dump_ppat_registers execute, it would check each ppat index match
+  status, and print detailed info. Sample as below.
+
+[  100.341476] --- VM(1) ppat mapping table ---
+[  100.346428] guest entry(0) [tc: 1, ca: 3] -> host entry(0) [tc: 1, ca: 3].
+[  100.354312] guest entry(1) [tc: 2, ca: 1] -> host entry(1) [tc: 2, ca: 1].
+[  100.362188] guest entry(2) [tc: 2, ca: 2] -> host entry(2) [tc: 2, ca: 2].
+[  100.370051] guest entry(3) [tc: 0, ca: 0] -> host entry(3) [tc: 0, ca: 0].
+[  100.377936] guest entry(4) [tc: 0, ca: 3] -> host entry(0) [tc: 1, ca: 3].
+[  100.385800] guest entry(5) [tc: 0, ca: 3] -> host entry(0) [tc: 1, ca: 3].
+[  100.393689] guest entry(6) [tc: 0, ca: 3] -> host entry(0) [tc: 1, ca: 3].
+[  100.401550] guest entry(7) [tc: 0, ca: 3] -> host entry(0) [tc: 1, ca: 3].
+[  100.409495] Linux host ppat register:
+[  100.409495]     0x40e0: 000a0907, 0x40e4: 1c1f1d1b
+[  100.409495] Guest VM(1) ppat register:
+[  100.409495]     0x40e0: 000a0907, 0x40e4: 03030303
+[  100.429436] --- VM(1) ppat mapping table ---
+[  100.434368] guest entry(0) [tc: 1, ca: 3] -> host entry(0) [tc: 1, ca: 3].
+[  100.442245] guest entry(1) [tc: 2, ca: 1] -> host entry(1) [tc: 2, ca: 1].
+[  100.450101] guest entry(2) [tc: 2, ca: 2] -> host entry(2) [tc: 2, ca: 2].
+[  100.457980] guest entry(3) [tc: 0, ca: 0] -> host entry(3) [tc: 0, ca: 0].
+[  100.465851] guest entry(4) [tc: 2, ca: 3] -> host entry(4) [tc: 2, ca: 3].
+[  100.473737] guest entry(5) [tc: 2, ca: 3] -> host entry(4) [tc: 2, ca: 3].
+[  100.481620] guest entry(6) [tc: 2, ca: 3] -> host entry(4) [tc: 2, ca: 3].
+[  100.489481] guest entry(7) [tc: 2, ca: 3] -> host entry(4) [tc: 2, ca: 3].
+[  100.497425] Linux host ppat register:
+[  100.497425]     0x40e0: 000a0907, 0x40e4: 1c1f1d1b
+[  100.497425] Guest VM(1) ppat register:
+[  100.497425]     0x40e0: 000a0907, 0x40e4: 3b2b1b0b
+
+Signed-off-by: Xu Han <xu.han@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/debugfs.c  |   49 +++++++++++++++++++++++++++++++----
+ drivers/gpu/drm/i915/vgt/handlers.c |   20 +++++---------
+ 2 files changed, 51 insertions(+), 18 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/debugfs.c b/drivers/gpu/drm/i915/vgt/debugfs.c
+index b9c0bd1..3f90737 100644
+--- a/drivers/gpu/drm/i915/vgt/debugfs.c
++++ b/drivers/gpu/drm/i915/vgt/debugfs.c
+@@ -238,17 +238,56 @@ static struct dentry *vgt_debugfs_create_blob(const char *name, mode_t mode,
+ 	return debugfs_create_file(name, mode, parent, p, &u32_array_fops);
+ }
+ 
++inline void gen8_get_ppat_value_by_index(struct vgt_device *vgt, u8 index,
++		u8 *ppat_target_cache, u8 *ppat_cache_attr)
++{
++	u8 pat_index = index, pat_reg_index = 0;
++	unsigned long val = 0;
++	unsigned long pat_value = 0;
++
++	/* Find the Hi/Lo register for the index. */
++	pat_reg_index = pat_index / 4;
++	/* Find the offset within the register. */
++	pat_index -= pat_reg_index * 4;
++
++	val = __vreg(vgt, _REG_GEN8_PRIVATE_PAT + pat_reg_index * 4);
++	pat_value = (val >> (pat_index * 8)) & 0xf;
++
++	*ppat_target_cache = pat_value >> 2 & 0x3;
++	*ppat_cache_attr = pat_value & 0x3;
++}
++
+ void gen8_dump_ppat_registers(struct vgt_device *vgt)
+ {
+-	vgt_info("Linux host ppat register:\n"
+-			"    0x40e0: %08x\n"
+-			"    0x40e4: %08x\n"
++	struct vgt_ppat_table *pt = &vgt->ppat_table;
++	int guest_index = 0, host_index = 0;
++	u8 guest_tc = 0, guest_ca = 0;
++	u8 host_tc = 0, host_ca = 0;
++
++	printk("--- VM(%d) ppat mapping table ---\n", vgt->vgt_id);
++
++	for (; guest_index < VGT_MAX_PPAT_TABLE_SIZE; guest_index++) {
++		host_index = pt->mapping_table[guest_index];
++
++		if (host_index == -1) {
++			printk("guest entry(%d) -> NA.\n", guest_index);
++		} else {
++			gen8_get_ppat_value_by_index(vgt, guest_index, &guest_tc, &guest_ca);
++			gen8_get_ppat_value_by_index(vgt_dom0, host_index, &host_tc, &host_ca);
++			printk("guest entry(%d) [tc: %d, ca: %d] -> host entry(%d) [tc: %d, ca: %d].\n",
++					guest_index, guest_tc, guest_ca,
++					host_index, host_tc, host_ca);
++		}
++	}
++
++	printk("Linux host ppat register:\n"
++			"    0x40e0: %08x, 0x40e4: %08x\n"
+ 			"Guest VM(%d) ppat register:\n"
+-			"    0x40e0: %08x\n"
+-			"    0x40e4: %08x\n",
++			"    0x40e0: %08x, 0x40e4: %08x\n",
+ 			__vreg(vgt_dom0, _REG_GEN8_PRIVATE_PAT), __vreg(vgt_dom0, _REG_GEN8_PRIVATE_PAT + 4),
+ 			vgt->vgt_id,
+ 			__vreg(vgt, _REG_GEN8_PRIVATE_PAT), __vreg(vgt, _REG_GEN8_PRIVATE_PAT + 4));
++
+ }
+ 
+ static inline char *reg_show_reg_owner(struct pgt_device *pdev, int i)
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 0dc5981..d7fed14 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -2671,16 +2671,9 @@ static inline bool gen8_translate_ppat(struct vgt_device *vgt,
+ 	}
+ 
+ 	if (!found) {
+-		vgt_err("fail to find guest PAT value from DOM0 PAT table.\n"
+-			"ppat index: %d, ppat value: %lx. (cache targer: %lx, cache attribute: %lx)\n",
+-			p_index, v_pat_value, v_tc, v_cache_attr);
+ 		return false;
+ 	}
+ 
+-	vgt_warn("gen8_translate_ppat is not exactly match, mapping item: %d -> %d.\n"
+-			"ppat value: %lx. (cache targer: %lx, cache attribute: %lx)\n",
+-			p_index, *m_index, v_pat_value, v_tc, v_cache_attr);
+-
+ 	return true;
+ }
+ 
+@@ -2690,21 +2683,22 @@ bool gen8_ppat_update_mapping_table(struct vgt_device *vgt)
+ 	struct vgt_ppat_table *pt = &vgt->ppat_table;
+ 	int i = 0;
+ 	bool ret = false;
++	int cnt_failed = 0;
+ 
+ 	pt->is_vaild = true;
+ 
+ 	for (; i < VGT_MAX_PPAT_TABLE_SIZE; i++) {
+ 		ret = gen8_translate_ppat(vgt, i, &(pt->mapping_table[i]));
+-			if (ret)
+-				vgt_info("ppat mapping table entry --> success: %d -> %d:\n",
+-					i, pt->mapping_table[i]);
+-			else
+-				vgt_err("ppat mapping table entry: --> fail: %d -> %d:\n",
+-					i, pt->mapping_table[i]);
++		if (ret == false) {
++			cnt_failed++;
++		}
+ 	}
+ 
+ 	gen8_dump_ppat_registers(vgt);
+ 
++	if (cnt_failed)
++		return false;
++
+ 	return true;
+ }
+ 
+-- 
+1.7.10.4
+

@@ -1,0 +1,68 @@
+From 87943196f16cb87fee34c8e74a1ecc644eae51f7 Mon Sep 17 00:00:00 2001
+From: Fred Gao <fred.gao@intel.com>
+Date: Fri, 27 Nov 2015 10:49:12 +0800
+Subject: [PATCH 283/403] Fix some issues in command parser while booting on
+ hsw
+
+This commit disables some security check on HSW, which otherwise causes
+problem in using XenGT on HSW. Another change is for "if-else" to add
+ "{" to avoid the compiler's complain.
+
+Signed-off-by: Fred Gao <fred.gao@intel.com>
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |   16 ++++++++++++----
+ 1 file changed, 12 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index 2cba015..21b28411 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -813,6 +813,9 @@ static int cmd_reg_handler(struct parser_exec_state *s,
+ 	struct pgt_device *pdev = vgt->pdev;
+ 	int rc = -1;
+ 
++	if (!IS_BDW(s->vgt->pdev))
++		return 0;
++
+ 	if (!reg_is_mmio(pdev, offset + 3)) {
+ 		rc = -1;
+ 		goto reg_handle;
+@@ -1327,18 +1330,20 @@ static int vgt_handle_mi_display_flip(struct parser_exec_state *s, bool resubmit
+ 
+ 		if (plane == PRIMARY_PLANE) {
+ 			struct vgt_primary_plane_format pri_fmt;
+-			if (!vgt_decode_primary_plane_format(vgt, real_pipe, &pri_fmt))
++			if (!vgt_decode_primary_plane_format(vgt, real_pipe, &pri_fmt)) {
+ 				if (pri_fmt.enabled)
+ 					surf_size = pri_fmt.height * pri_fmt.stride;
+-			else
++			} else {
+ 				return -1;
++			}
+ 		} else {
+ 			struct vgt_sprite_plane_format spr_fmt;
+-			if (!vgt_decode_sprite_plane_format(vgt, real_pipe, &spr_fmt))
++			if (!vgt_decode_sprite_plane_format(vgt, real_pipe, &spr_fmt)) {
+ 				if (spr_fmt.enabled)
+ 					surf_size = spr_fmt.height * spr_fmt.width * spr_fmt.bpp / 8 ;
+-			else
++			} else {
+ 				return -1;
++			}
+ 		}
+ 		rc = cmd_address_audit(s, surf_val & BIT_RANGE_MASK(31, 12), surf_size, false);
+ 		if (rc < 0)
+@@ -1498,6 +1503,9 @@ static inline int cmd_address_audit(struct parser_exec_state *s, unsigned long g
+ 	int i;
+ 	int rc = 0;
+ 
++	if (!IS_BDW(s->vgt->pdev))
++		return 0;
++
+ 	if (op_size > max_surface_size) {
+ 		vgt_err("cmd_parser: misusage of the address audit or malicious %s detected!\n", s->info->name);
+ 		return -1;
+-- 
+1.7.10.4
+

@@ -1,0 +1,50 @@
+From 4796bb0d76e0cee141a886c1f0e34f7eca558141 Mon Sep 17 00:00:00 2001
+From: Niu Bing <bing.niu@intel.com>
+Date: Wed, 15 Jul 2015 20:52:08 +0800
+Subject: [PATCH 127/403] vgt: set port A hotplug status properly for HSW
+
+Add new register definitation bit for HSW display port
+A hotplug status.
+
+This patch introduces new register defination bit:
+
+XenGT:
+_REGBIT_DP_A_HOTPLUG_IVB (1 << 27)
+
+i915:
+DE_DP_A_HOTPLUG_IVB (1 << 27)
+
+Signed-off-by: Niu Bing <bing.niu@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/display.c |    2 +-
+ drivers/gpu/drm/i915/vgt/reg.h     |    1 +
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/display.c b/drivers/gpu/drm/i915/vgt/display.c
+index 2801970..a89abec 100644
+--- a/drivers/gpu/drm/i915/vgt/display.c
++++ b/drivers/gpu/drm/i915/vgt/display.c
+@@ -367,7 +367,7 @@ void vgt_update_monitor_status(struct vgt_device *vgt)
+ 	if (dpy_has_monitor_on_port(vgt, PORT_A)) {
+ 		__vreg(vgt, _REG_DDI_BUF_CTL_A) |= _DDI_BUFCTL_DETECT_MASK;
+ 		if (IS_PREBDW(vgt->pdev))
+-			__vreg(vgt, _REG_DEISR) |= _REGBIT_DP_A_HOTPLUG;
++			__vreg(vgt, _REG_DEISR) |= _REGBIT_DP_A_HOTPLUG_IVB;
+ 		else
+ 			__vreg(vgt, _REG_DE_PORT_ISR) |= _REGBIT_PORT_DP_A_HOTPLUG; 
+ 	}
+diff --git a/drivers/gpu/drm/i915/vgt/reg.h b/drivers/gpu/drm/i915/vgt/reg.h
+index b184062..027fe34 100644
+--- a/drivers/gpu/drm/i915/vgt/reg.h
++++ b/drivers/gpu/drm/i915/vgt/reg.h
+@@ -1623,6 +1623,7 @@ static inline int port_type_to_port(int port_sel)
+ #define        _REGSHIFT_MASTER_INTERRUPT	31
+ #define        _REGBIT_MASTER_INTERRUPT	(1 << 31)
+ #define        _REGBIT_DP_A_HOTPLUG		(1 << 19)
++#define        _REGBIT_DP_A_HOTPLUG_IVB		(1 << 27)
+ #define        _REGBIT_PIPE_A_VBLANK		(1 << 7)
+ #define        _REGSHIFT_PCH			21
+ #define        _REGBIT_PCH			(1 << 21)
+-- 
+1.7.10.4
+

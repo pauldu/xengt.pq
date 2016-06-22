@@ -1,0 +1,90 @@
+diff --git a/drivers/gpu/drm/i915/i915_gem.c b/drivers/gpu/drm/i915/i915_gem.c
+index 963b774..ca95e1b 100644
+--- a/drivers/gpu/drm/i915/i915_gem.c
++++ b/drivers/gpu/drm/i915/i915_gem.c
+@@ -4129,21 +4129,23 @@ i915_gem_object_do_pin(struct drm_i915_gem_object *obj,
+ 			return -EBUSY;
+ 
+ 		if (i915_vma_misplaced(vma, alignment, flags)) {
+-			WARN(vma->pin_count,
+-			     "bo is already pinned in %s with incorrect alignment:"
+-			     " offset=%08x %08x, req.alignment=%x, req.map_and_fenceable=%d,"
+-			     " obj->map_and_fenceable=%d\n",
+-			     ggtt_view ? "ggtt" : "ppgtt",
+-			     upper_32_bits(vma->node.start),
+-			     lower_32_bits(vma->node.start),
+-			     alignment,
+-			     !!(flags & PIN_MAPPABLE),
+-			     obj->map_and_fenceable);
+-			ret = i915_vma_unbind(vma);
+-			if (ret)
+-				return ret;
++			if (!vma->pin_count) {
++				WARN(vma->pin_count,
++				     "bo is already pinned in %s with incorrect alignment:"
++				     " offset=%08x %08x, req.alignment=%x, req.map_and_fenceable=%d,"
++				     " obj->map_and_fenceable=%d\n",
++				     ggtt_view ? "ggtt" : "ppgtt",
++				     upper_32_bits(vma->node.start),
++				     lower_32_bits(vma->node.start),
++				     alignment,
++				     !!(flags & PIN_MAPPABLE),
++				     obj->map_and_fenceable);
++				ret = i915_vma_unbind(vma);
++				if (ret)
++					return ret;
+ 
+-			vma = NULL;
++				vma = NULL;
++			}
+ 		}
+ 	}
+ 
+@@ -4469,7 +4471,7 @@ void i915_gem_free_object(struct drm_gem_object *gem_obj)
+ 	    obj->tiling_mode != I915_TILING_NONE)
+ 		i915_gem_object_unpin_pages(obj);
+ 
+-	if (WARN_ON(obj->pages_pin_count))
++	if (obj->pages_pin_count)
+ 		obj->pages_pin_count = 0;
+ 	if (discard_backing_storage(obj))
+ 		obj->madv = I915_MADV_DONTNEED;
+diff --git a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
+index 6060fff..c3b6df5 100644
+--- a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
++++ b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
+@@ -171,6 +171,8 @@ static int vgt_decode_information(struct drm_device *dev,
+ 		args->hw_format = p->hw_format;
+ 		args->drm_format = p->drm_format;
+ 		args->tiled = vgt_get_tiling_mode(dev, p->tiled);
++		args->size = ((p->stride * roundup(p->height, 8)) +
++			      (PAGE_SIZE - 1)) >> PAGE_SHIFT;
+ 	} else if ((args->plane_id) == I915_VGT_PLANE_CURSOR) {
+ 		c = &pipe->cursor;
+ 		args->enabled = c->enabled;
+@@ -184,15 +186,14 @@ static int vgt_decode_information(struct drm_device *dev,
+ 		args->stride = c->width * (c->bpp / 8);
+ 		args->bpp = c->bpp;
+ 		args->tiled = 0;
++		args->size = (((c->width * c->height * c->bpp) / 8) +
++			      (PAGE_SIZE - 1)) >> PAGE_SHIFT;
+ 	} else {
+ 		DRM_DEBUG_DRIVER("VGT_GEM: Invalid plaine_id: %d\n",
+ 				 args->plane_id);
+ 		return -EINVAL;
+ 	}
+ 
+-	args->size = ((args->stride * roundup(args->height, 8)) +
+-		      (PAGE_SIZE - 1)) >> PAGE_SHIFT;
+-
+ 	if (args->start & (PAGE_SIZE - 1)) {
+ 		DRM_DEBUG_DRIVER("VGT_GEM: Not aligned fb start address: "
+ 				 "0x%x\n", args->start);
+@@ -287,6 +288,7 @@ i915_gem_vgtbuffer_ioctl(struct drm_device *dev, void *data,
+ 	ret = drm_gem_handle_create(file, &obj->base, &handle);
+ 	if (ret) {
+ 		/* TODO: Double confirm the error handling path */
++		i915_gem_object_unpin_pages(obj);
+ 		i915_gem_object_free(obj);
+ 		return ret;
+ 	}

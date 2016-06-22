@@ -1,0 +1,32 @@
+From 69bb05c68bb657ce74448941329a8a83d45b4f51 Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Thu, 28 May 2015 14:19:17 +0800
+Subject: [PATCH 097/403] Revise the condition of EXECLIST idle check
+
+The function is to check whether all the CSB entries related to the workload
+submission have been handled before context switch. Here we should not check
+whether read_ptr is DEFAULT_INV. Instead, we should only check write_ptr, which
+indicates the hardware update of CSB.
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |    3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 418af95..f2cf475 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -1475,8 +1475,7 @@ bool vgt_idle_execlist(struct pgt_device *pdev, enum vgt_ring_id ring_id)
+ 	ctx_ptr_reg = el_ring_mmio(ring_id, _EL_OFFSET_STATUS_PTR);
+ 	ctx_st_ptr.dw = VGT_MMIO_READ(pdev, ctx_ptr_reg);
+ 
+-	if (ctx_st_ptr.status_buf_write_ptr == DEFAULT_INV_SR_PTR
+-			|| ctx_st_ptr.status_buf_read_ptr == DEFAULT_INV_SR_PTR)
++	if (ctx_st_ptr.status_buf_write_ptr == DEFAULT_INV_SR_PTR)
+ 		return true;
+ 
+ 	if (ctx_st_ptr.status_buf_read_ptr != ctx_st_ptr.status_buf_write_ptr)
+-- 
+1.7.10.4
+

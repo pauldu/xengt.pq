@@ -1,0 +1,28 @@
+From 2db3a8e9473232e4cba7e057a3f0a03b4d93dd36 Mon Sep 17 00:00:00 2001
+From: Yi Sun <yi.sun@intel.com>
+Date: Wed, 9 Mar 2016 11:31:23 +0800
+Subject: [PATCH 385/403] Enable GVT-g only on x86_64 platform.
+
+Nowadays, GVT-g only supports x86_64 platform.
+
+Signed-off-by: Yi Sun <yi.sun@intel.com>
+---
+ drivers/gpu/drm/i915/Kconfig |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/Kconfig b/drivers/gpu/drm/i915/Kconfig
+index 2b5b90e..e3afb98 100644
+--- a/drivers/gpu/drm/i915/Kconfig
++++ b/drivers/gpu/drm/i915/Kconfig
+@@ -50,7 +50,7 @@ config DRM_I915_PRELIMINARY_HW_SUPPORT
+ 
+ config I915_VGT
+ 	bool "iGVT-g vGT driver of i915"
+-	depends on DRM_I915
++	depends on DRM_I915 && X86_64
+ 	select IRQ_WORK
+ 	default y
+ 	help
+-- 
+1.7.10.4
+

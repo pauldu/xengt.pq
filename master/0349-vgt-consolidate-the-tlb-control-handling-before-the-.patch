@@ -1,0 +1,157 @@
+From 5547ef2111817552e66cc1eec620523958ef564e Mon Sep 17 00:00:00 2001
+From: Yulei Zhang <yulei.zhang@intel.com>
+Date: Sat, 6 Feb 2016 10:49:32 +0800
+Subject: [PATCH 349/403] vgt: consolidate the tlb control handling before the
+ workload      submit for WDDM2.0
+
+This will fix bug#979, bug#982 and bug#969
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |   39 ++++++++++++++++++++++++++++++++
+ drivers/gpu/drm/i915/vgt/handlers.c  |   41 +++++++++++++++++++++++++++++-----
+ drivers/gpu/drm/i915/vgt/instance.c  |    1 +
+ drivers/gpu/drm/i915/vgt/vgt.h       |    1 +
+ 4 files changed, 77 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index e8a8e1c..9665717 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -2037,6 +2037,43 @@ bool vgt_idle_execlist(struct pgt_device *pdev, enum vgt_ring_id ring_id)
+ 	return true;
+ }
+ 
++static inline bool handle_tlb_done(struct vgt_device *vgt, unsigned int offset)
++{
++	return (VGT_MMIO_READ(vgt->pdev, offset) == 0);
++}
++
++void handle_tlb_pending_event(struct vgt_device *vgt, enum vgt_ring_id ring_id)
++{
++	unsigned int offset;
++
++	if (test_and_clear_bit(ring_id, (void *)vgt->tlb_handle_pending)) {
++		switch (ring_id) {
++			case RING_BUFFER_RCS:
++				offset = 0x4260;
++				break;
++			case RING_BUFFER_BCS:
++				offset = 0x426c;
++				break;
++			case RING_BUFFER_VCS:
++				offset = 0x4264;
++				break;
++			case RING_BUFFER_VCS2:
++				offset = 0x4268;
++				break;
++			case RING_BUFFER_VECS:
++				offset = 0x4270;
++				break;
++			default:
++				return;
++		}
++		vgt_force_wake_get();
++		VGT_MMIO_WRITE(vgt->pdev, offset, 0x01);
++		if (wait_for_atomic(handle_tlb_done(vgt, offset), 50) != 0)
++			vgt_err("Timeout in handle ring (%d) tlb invalidate\n",
++				ring_id);
++		vgt_force_wake_put();
++	}
++}
+ void vgt_submit_execlist(struct vgt_device *vgt, enum vgt_ring_id ring_id)
+ {
+ 	int i;
+@@ -2109,6 +2146,8 @@ void vgt_submit_execlist(struct vgt_device *vgt, enum vgt_ring_id ring_id)
+ 			context_descs[i].lrca = ctx->shadow_lrca;
+ 	}
+ 
++	handle_tlb_pending_event(vgt, ring_id);
++
+ 	elsp_reg = el_ring_mmio(ring_id, _EL_OFFSET_SUBMITPORT);
+ 	/* mark it submitted even if it failed the validation */
+ 	execlist->status = EL_SUBMITTED;
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 4edf301..1fe104f 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -2804,6 +2804,37 @@ static bool vgt_reg_write_misc_ctl_handler(struct vgt_device *vgt, unsigned int
+ 	return true;
+ }
+ 
++static bool vgt_reg_tlb_control_handler(struct vgt_device *vgt, unsigned int offset,
++			void *p_data, unsigned int bytes)
++{
++	bool rc = true;
++	unsigned int id = 0;
++
++	switch (offset) {
++		case 0x4260:
++			id = RING_BUFFER_RCS;
++			break;
++		case 0x4264:
++			id = RING_BUFFER_VCS;
++			break;
++		case 0x4268:
++			id = RING_BUFFER_VCS2;
++			break;
++		case 0x426c:
++			id = RING_BUFFER_BCS;
++			break;
++		case 0x4270:
++			id = RING_BUFFER_VECS;
++			break;
++		default:
++			rc = false;
++			break;
++	}
++	set_bit(id, (void *)vgt->tlb_handle_pending);
++
++	return rc;
++}
++
+ /*
+  * Track policies of all captured registers
+  *
+@@ -3621,11 +3652,11 @@ reg_attr_t vgt_reg_info_general[] = {
+ /* BDW */
+ {0xe100, 4, F_RDR_MODE, 0, D_ALL, NULL, NULL},
+ 
+-{0x4260, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
+-{0x4264, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
+-{0x4268, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
+-{0x426c, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
+-{0x4270, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++{0x4260, 4, F_VIRT, 0, D_BDW_PLUS, NULL, vgt_reg_tlb_control_handler},
++{0x4264, 4, F_VIRT, 0, D_BDW_PLUS, NULL, vgt_reg_tlb_control_handler},
++{0x4268, 4, F_VIRT, 0, D_BDW_PLUS, NULL, vgt_reg_tlb_control_handler},
++{0x426c, 4, F_VIRT, 0, D_BDW_PLUS, NULL, vgt_reg_tlb_control_handler},
++{0x4270, 4, F_VIRT, 0, D_BDW_PLUS, NULL, vgt_reg_tlb_control_handler},
+ 
+ {_RING_FAULT_REG(RING_BUFFER_RCS), 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
+ };
+diff --git a/drivers/gpu/drm/i915/vgt/instance.c b/drivers/gpu/drm/i915/vgt/instance.c
+index a063041..345ff57 100644
+--- a/drivers/gpu/drm/i915/vgt/instance.c
++++ b/drivers/gpu/drm/i915/vgt/instance.c
+@@ -299,6 +299,7 @@ int create_vgt_instance(struct pgt_device *pdev, struct vgt_device **ptr_vgt, vg
+ 	}
+ 	bitmap_zero(vgt->enabled_rings, MAX_ENGINES);
+ 	bitmap_zero(vgt->started_rings, MAX_ENGINES);
++	bitmap_zero(vgt->tlb_handle_pending, MAX_ENGINES);
+ 
+ 	for (i = 0; i < MAX_ENGINES; ++ i) {
+ 		vgt->rb[i].csb_write_ptr = DEFAULT_INV_SR_PTR;
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index bbd34d7..2fbc6ee 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -285,6 +285,7 @@ struct vgt_device {
+ 
+ 	DECLARE_BITMAP(enabled_rings, MAX_ENGINES);
+ 	DECLARE_BITMAP(started_rings, MAX_ENGINES);
++	DECLARE_BITMAP(tlb_handle_pending, MAX_ENGINES);
+ 	struct vgt_vgtt_info gtt;
+ 
+ 	/* embedded context scheduler information */
+-- 
+1.7.10.4
+

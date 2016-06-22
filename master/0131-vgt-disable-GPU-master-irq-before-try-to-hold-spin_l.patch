@@ -1,0 +1,87 @@
+From 9d987ddf0afa7db86508484f319c366b1b11e313 Mon Sep 17 00:00:00 2001
+From: "Zheng, Xiao" <xiao.zheng@intel.com>
+Date: Mon, 20 Jul 2015 19:14:20 +0800
+Subject: [PATCH 131/403] vgt: disable GPU master irq before try to hold
+ spin_lock
+
+The fix is to enhance stability test [MTBF]:
+there is a potential deadlock happened that we hold the spin_lock and before we
+disable master irq, another new irq comes and same CPU core try to hold
+same spin_lock too.
+
+Signed-off-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/interrupt.c |   15 ++++-----------
+ 1 file changed, 4 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/interrupt.c b/drivers/gpu/drm/i915/vgt/interrupt.c
+index 9f0d6ea..4820f5d 100644
+--- a/drivers/gpu/drm/i915/vgt/interrupt.c
++++ b/drivers/gpu/drm/i915/vgt/interrupt.c
+@@ -1513,8 +1513,6 @@ static void vgt_base_disable_irq(struct vgt_irq_host_state *hstate)
+ {
+ 	struct pgt_device *pdev = hstate->pdev;
+ 
+-	ASSERT(spin_is_locked(&pdev->irq_lock));
+-
+ 	VGT_MMIO_WRITE(pdev, _REG_DEIER,
+ 			VGT_MMIO_READ(pdev, _REG_DEIER) & ~_REGBIT_MASTER_INTERRUPT);
+ }
+@@ -1523,8 +1521,6 @@ static void vgt_base_enable_irq(struct vgt_irq_host_state *hstate)
+ {
+ 	struct pgt_device *pdev = hstate->pdev;
+ 
+-	ASSERT(spin_is_locked(&pdev->irq_lock));
+-
+ 	VGT_MMIO_WRITE(pdev, _REG_DEIER,
+ 			VGT_MMIO_READ(pdev, _REG_DEIER) | _REGBIT_MASTER_INTERRUPT);
+ }
+@@ -1698,8 +1694,6 @@ static void vgt_gen8_disable_irq(struct vgt_irq_host_state *hstate)
+ {
+ 	struct pgt_device *pdev = hstate->pdev;
+ 
+-	ASSERT(spin_is_locked(&pdev->irq_lock));
+-
+ 	VGT_MMIO_WRITE(pdev, _REG_MASTER_IRQ,
+ 			(VGT_MMIO_READ(pdev, _REG_MASTER_IRQ)
+ 			 & ~_REGBIT_MASTER_IRQ_CONTROL));
+@@ -1710,8 +1704,6 @@ static void vgt_gen8_enable_irq(struct vgt_irq_host_state *hstate)
+ {
+ 	struct pgt_device *pdev = hstate->pdev;
+ 
+-	ASSERT(spin_is_locked(&pdev->irq_lock));
+-
+ 	VGT_MMIO_WRITE(pdev, _REG_MASTER_IRQ,
+ 			(VGT_MMIO_READ(pdev, _REG_MASTER_IRQ)
+ 			 | _REGBIT_MASTER_IRQ_CONTROL));
+@@ -1927,11 +1919,12 @@ irqreturn_t vgt_interrupt(int irq, void *data)
+ 	pdev->stat.irq_num++;
+ 	pdev->stat.last_pirq = get_cycles();
+ 
+-	spin_lock(&pdev->irq_lock);
+ 
+ 	/* avoid nested handling by disabling master interrupt */
+ 	hstate->ops->disable_irq(hstate);
+ 
++	spin_lock(&pdev->irq_lock);
++
+ 	ret = hstate->ops->irq_handler(hstate);
+ 	if (ret == IRQ_NONE) {
+ 		vgt_dbg(VGT_DBG_IRQ, "Spurious interrupt received (or shared vector)\n");
+@@ -1941,11 +1934,11 @@ irqreturn_t vgt_interrupt(int irq, void *data)
+ 	vgt_raise_request(pdev, VGT_REQUEST_IRQ);
+ 
+ out:
++	spin_unlock(&pdev->irq_lock);
++
+ 	/* re-enable master interrupt */
+ 	hstate->ops->enable_irq(hstate);
+ 
+-	spin_unlock(&pdev->irq_lock);
+-
+ 	pdev->stat.pirq_cycles += get_cycles() - pdev->stat.last_pirq;
+ 
+ 	vgt_exit(cpu);
+-- 
+1.7.10.4
+

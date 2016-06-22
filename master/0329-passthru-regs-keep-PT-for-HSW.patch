@@ -1,0 +1,49 @@
+From 1bbba00beabe2a112a367647fa28dd3a7aa0eb24 Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Thu, 28 Jan 2016 15:46:08 +0800
+Subject: [PATCH 329/403] passthru regs: keep PT for HSW
+
+As HSW has no requirement to remove PT regs, keep PT for HSW to
+avoid break.
+
+{0x2050, 4, F_PT, 0, D_ALL, NULL, NULL},
+{0x12050, 4, F_PT, 0, D_ALL, NULL, NULL},
+{0x22050, 4, F_PT, 0, D_ALL, NULL, NULL},
+{0x1A050, 4, F_PT, 0, D_HSW_PLUS, NULL, NULL},
+Description: not used in BDW.
+Conclusion: remove for BDW but keep for HSW.
+
+{0x2214, 4, F_PT, 0, D_HSW, NULL, NULL},
+{0x8000, 4, F_PT, 0, D_HSW, NULL, NULL},
+{0x8008, 4, F_PT, 0, D_HSW, NULL, NULL},
+{0x45260, 4, F_PT, 0, D_HSW, NULL, NULL},
+{0x13005c, 4, F_PT, 0, D_HSW, NULL, NULL},
+Description: HSW only, no need to care.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |    8 ++++----
+ 1 file changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index b673f44..863a459 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -2858,10 +2858,10 @@ reg_attr_t vgt_reg_info_general[] = {
+ {_REG_VBSYNC, 4, F_RDR, 0, D_ALL, NULL, NULL},
+ {_REG_VRSYNC, 4, F_RDR, 0, D_ALL, NULL, NULL},
+ 
+-{0x2050, 4, F_PT, 0, D_ALL, NULL, NULL},
+-{0x12050, 4, F_PT, 0, D_ALL, NULL, NULL},
+-{0x22050, 4, F_PT, 0, D_ALL, NULL, NULL},
+-{0x1A050, 4, F_PT, 0, D_ALL, NULL, NULL},
++{0x2050, 4, F_PT, 0, D_PRE_BDW, NULL, NULL},
++{0x12050, 4, F_PT, 0, D_PRE_BDW, NULL, NULL},
++{0x22050, 4, F_PT, 0, D_PRE_BDW, NULL, NULL},
++{0x1A050, 4, F_PT, 0, D_PRE_BDW, NULL, NULL},
+ 
+ {0x20dc, 4, F_RDR_MODE, 0, D_ALL, NULL, NULL},
+ {_3D_CHICKEN3, 4, F_RDR_MODE, 0, D_ALL, NULL, NULL},
+-- 
+1.7.10.4
+

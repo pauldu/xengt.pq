@@ -1,0 +1,54 @@
+From b1c2fc089b6cf619d96af00338bff11454fefd1a Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Tue, 17 Nov 2015 09:19:08 +0800
+Subject: [PATCH 201/403] fix some error report by klocwork
+
+1. miss unlock
+2. unnecessary NULL check
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/mmio.c   |    3 +--
+ drivers/gpu/drm/i915/vgt/render.c |    5 ++---
+ 2 files changed, 3 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/mmio.c b/drivers/gpu/drm/i915/vgt/mmio.c
+index 6d40be4..3582471 100644
+--- a/drivers/gpu/drm/i915/vgt/mmio.c
++++ b/drivers/gpu/drm/i915/vgt/mmio.c
+@@ -318,7 +318,7 @@ bool vgt_emulate_read(struct vgt_device *vgt, uint64_t pa, void *p_data,int byte
+ 
+ 	/* FENCE registers / GTT entries(sometimes) are accessed in 8 bytes. */
+ 	if (bytes > 8 || (offset & (bytes - 1)))
+-		goto err_common_chk;
++		goto err_mmio;
+ 
+ 	if (bytes > 4)
+ 		vgt_dbg(VGT_DBG_GENERIC,"vGT: capture >4 bytes read to %x\n", offset);
+@@ -374,7 +374,6 @@ bool vgt_emulate_read(struct vgt_device *vgt, uint64_t pa, void *p_data,int byte
+ 	return true;
+ err_mmio:
+ 	vgt_unlock_dev_flags(pdev, cpu, flags);
+-err_common_chk:
+ 	vgt_err("VM(%d): invalid MMIO offset(%08x), bytes(%d)!\n",
+ 		vgt->vm_id, offset, bytes);
+ 	show_debug(pdev);
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index cb8decf..3d64f64 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -537,9 +537,8 @@ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ 
+ 	vgt_sched_update_prev(prev, t0);
+ 
+-	if ( prev )
+-		prev->stat.allocated_cycles +=
+-			(t0 - prev->stat.schedule_in_time);
++	prev->stat.allocated_cycles +=
++		(t0 - prev->stat.schedule_in_time);
+ 	vgt_ctx_switch(pdev)++;
+ 
+ 	/* STEP-1: manually save render context */
+-- 
+1.7.10.4
+

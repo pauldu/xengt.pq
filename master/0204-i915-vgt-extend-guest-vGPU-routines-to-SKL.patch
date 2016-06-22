@@ -1,0 +1,30 @@
+From 6ec626da91e64728b8025a0e59422da095b9b8b9 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Tue, 24 Nov 2015 17:43:00 +0800
+Subject: [PATCH 204/403] i915/vgt: extend guest vGPU routines to SKL
+
+v3:
+Take Kevin's comment:
+- Split linux guest enabling patch into 3 patches.
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/i915_vgpu.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/i915_vgpu.c b/drivers/gpu/drm/i915/i915_vgpu.c
+index 7818316..aaa860b 100644
+--- a/drivers/gpu/drm/i915/i915_vgpu.c
++++ b/drivers/gpu/drm/i915/i915_vgpu.c
+@@ -66,7 +66,7 @@ void i915_check_vgpu(struct drm_device *dev)
+ 
+ 	BUILD_BUG_ON(sizeof(struct vgt_if) != VGT_PVINFO_SIZE);
+ 
+-	if (!IS_HASWELL(dev) && !IS_BROADWELL(dev))
++	if (!IS_HASWELL(dev) && !IS_BROADWELL(dev) && !IS_SKYLAKE(dev))
+ 		return;
+ 
+ 	magic = I915_READ64(vgtif_reg(magic));
+-- 
+1.7.10.4
+

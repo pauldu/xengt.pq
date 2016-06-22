@@ -1,0 +1,44 @@
+From 406bea7df7f26c62eeb9da78b67169bad91aa043 Mon Sep 17 00:00:00 2001
+From: Yi Sun <yi.sun@intel.com>
+Date: Mon, 22 Feb 2016 14:16:01 +0800
+Subject: [PATCH 365/403] Fix compile warning of -Wno-format
+
+v2. Convert ((pa & 0xfff) >> 2) to int instead of changing its format.
+
+Refine the print format to fix compile warning.
+
+Signed-off-by: Yi Sun <yi.sun@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/aperture_gm.c |    2 +-
+ drivers/gpu/drm/i915/vgt/trace.h       |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/aperture_gm.c b/drivers/gpu/drm/i915/vgt/aperture_gm.c
+index 9d47cc0..534f4fe4 100644
+--- a/drivers/gpu/drm/i915/vgt/aperture_gm.c
++++ b/drivers/gpu/drm/i915/vgt/aperture_gm.c
+@@ -341,7 +341,7 @@ void initialize_gm_fence_allocation_bitmaps(struct pgt_device *pdev)
+ 	struct vgt_device_info *info = &pdev->device_info;
+ 	unsigned long *gm_bitmap = pdev->gm_bitmap;
+ 
+-	vgt_info("total aperture: 0x%x bytes, total GM space: 0x%llx bytes\n",
++	vgt_info("total aperture: 0x%llx bytes, total GM space: 0x%llx bytes\n",
+ 		phys_aperture_sz(pdev), gm_sz(pdev));
+ 
+ 	ASSERT(phys_aperture_sz(pdev) % SIZE_1MB == 0);
+diff --git a/drivers/gpu/drm/i915/vgt/trace.h b/drivers/gpu/drm/i915/vgt/trace.h
+index 9e1f27c..1a7d7e4 100644
+--- a/drivers/gpu/drm/i915/vgt/trace.h
++++ b/drivers/gpu/drm/i915/vgt/trace.h
+@@ -341,7 +341,7 @@ TRACE_EVENT(ctx_write_trap,
+ 				 "EXECLIST Context write trapped: guest_lrca: "
+ 				 "<0x%x>, shadow_lrca: <0x%x>, "
+ 				 "addr: <0x%llx> idx[0x%x], bytes %i, val_32: <0x%x>\n",
+-				 guest_lrca, shadow_lrca, pa, ((pa & 0xfff) >> 2), bytes, val_32)
++				 guest_lrca, shadow_lrca, pa, (unsigned int)((pa & 0xfff) >> 2), bytes, val_32)
+ 		),
+ 
+ 		TP_printk("%s", __entry->buf)
+-- 
+1.7.10.4
+

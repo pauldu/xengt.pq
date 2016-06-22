@@ -1,0 +1,44 @@
+From 4dda89b335dd310241dc094969df00bf2efda737 Mon Sep 17 00:00:00 2001
+From: fred gao <fred.gao@intel.com>
+Date: Fri, 18 Dec 2015 14:48:53 +0800
+Subject: [PATCH 299/403] vgt/security: enable shadow security feature for SKL
+
+windows guests got stuck during boot ,
+because shadow_rb_base will set ring start to zero if not enabled.
+
+Signed-off-by: fred gao <fred.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |    3 ++-
+ drivers/gpu/drm/i915/vgt/vgt.c       |    2 +-
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 9c0c48f..213c431 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -745,7 +745,8 @@ static void update_shadow_regstate_from_guest(struct vgt_device *vgt,
+ 	memcpy(ref_ctx, src_ctx, sizeof(struct reg_state_ctx_header));
+ 
+ 	/* update the shadow fields */
+-	dest_ctx->rb_start.val = el_ctx->shadow_rb.shadow_rb_base;
++	if (shadow_cmd_buffer)
++		dest_ctx->rb_start.val = el_ctx->shadow_rb.shadow_rb_base;
+ 	ppgtt_update_shadow_ppgtt_for_ctx(vgt, el_ctx);
+ }
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 855f151..8d4bd6cb 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -942,7 +942,7 @@ static int vgt_initialize(struct pci_dev *dev)
+ 		current_config_owner(pdev) = vgt_dom0;
+ 	}
+ 
+-	if (!IS_BDW(pdev) || bypass_scan_mask)
++	if (!IS_BDWPLUS(pdev) || bypass_scan_mask)
+ 		shadow_cmd_buffer = 0;
+ 
+ 	pdev->ctx_check = 0;
+-- 
+1.7.10.4
+

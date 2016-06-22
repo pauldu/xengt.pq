@@ -1,0 +1,39 @@
+From 618c850dbb0aa58d82a167d7c0a9f755f30deeec Mon Sep 17 00:00:00 2001
+From: pei <pei.zhang@intel.com>
+Date: Fri, 19 Feb 2016 14:33:36 +0800
+Subject: [PATCH 351/403] Remove the incorrect interrupt register from reset
+ list
+
+During the vgt initialization and reset, the cached interrupt registers
+would be reset bassed on MMIO value for correspoinding imr and ier. But
+for GEN8_MASTER_INTERRUPT, it doesn't have the corresponding imr and ier
+registers. Current code doesn't see this and do the MMIO read operations
+for GEN8_MASTER_INETERRUPT which will cause a warning print because the
+accessed 'registers' are not claimed.
+
+Signed-off-by: min <min.he@intel.com>
+Signed-off-by: pei <pei.zhang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/interrupt.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/interrupt.c b/drivers/gpu/drm/i915/vgt/interrupt.c
+index 8f1a949..bd703c6 100644
+--- a/drivers/gpu/drm/i915/vgt/interrupt.c
++++ b/drivers/gpu/drm/i915/vgt/interrupt.c
+@@ -182,10 +182,10 @@ void reset_cached_interrupt_registers(struct pgt_device *pdev)
+ 
+ 	for (i = 0; i < IRQ_INFO_MAX; i++) {
+ 		info = hstate->info[i];
+-		if (!info)
++		if (!info || info->reg_base == GEN8_MASTER_IRQ)
+ 			continue;
+ 
+-		reg_base = hstate->info[i]->reg_base;
++		reg_base = info->reg_base;
+ 
+ 		imr = regbase_to_imr(reg_base);
+ 		ier = regbase_to_ier(reg_base);
+-- 
+1.7.10.4
+

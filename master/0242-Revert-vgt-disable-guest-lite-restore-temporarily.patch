@@ -1,0 +1,27 @@
+From 956b63c92a76cc08bc465b1b1b7da6247a729c3c Mon Sep 17 00:00:00 2001
+From: Weinan Li <weinan.z.li@intel.com>
+Date: Wed, 9 Dec 2015 14:17:40 +0800
+Subject: [PATCH 242/403] Revert "vgt: disable guest lite restore temporarily"
+
+This reverts commit f5b660d3b9451155f331c68abe62e9f0fcef76a4.
+
+Signed-off-by: Weinan Li <weinan.z.li@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/instance.c |    1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/instance.c b/drivers/gpu/drm/i915/vgt/instance.c
+index 4006eaf..aef29be 100644
+--- a/drivers/gpu/drm/i915/vgt/instance.c
++++ b/drivers/gpu/drm/i915/vgt/instance.c
+@@ -240,7 +240,6 @@ int create_vgt_instance(struct pgt_device *pdev, struct vgt_device **ptr_vgt, vg
+ 		__vreg(vgt, vgt_info_off(avail_rs.mappable_gmadr.size)) = vgt_aperture_sz(vgt);
+ 		__vreg(vgt, vgt_info_off(avail_rs.nonmappable_gmadr.base)) = vgt_hidden_gm_base(vgt);
+ 		__vreg(vgt, vgt_info_off(avail_rs.nonmappable_gmadr.size)) = vgt_hidden_gm_sz(vgt);
+-		__vreg(vgt, vgt_info_off(vgt_caps)) = (1 << 1);
+ 
+ 		__vreg(vgt, vgt_info_off(avail_rs.fence_num)) = vgt->fence_sz;
+ 		vgt_info("filling VGT_PVINFO_PAGE for dom%d:\n"
+-- 
+1.7.10.4
+

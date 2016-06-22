@@ -1,0 +1,85 @@
+From 19a8eaa1b32866462a51ffe88546e5c36d095886 Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Thu, 12 Mar 2015 14:32:33 +0800
+Subject: [PATCH 009/403] Reset execlist related internal structure after s3
+
+After S3 resume, the CSB is reset by hardware. The vgt structure
+needs to be reset as well.
+
+This commit can fix bug #726
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/render.c |    9 +--------
+ drivers/gpu/drm/i915/vgt/vgt.c    |    6 ++++++
+ drivers/gpu/drm/i915/vgt/vgt.h    |   13 +++++++++++++
+ 3 files changed, 20 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index 2fb4fe1..1a6632d 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -1773,18 +1773,11 @@ static bool gen8_reset_engine(int ring_id,
+ 		VGT_POST_READ(pdev, r->reg);
+ 	}
+ 
+-	pdev->el_read_ptr[ring_id] = DEFAULT_INV_SR_PTR;
+-	pdev->el_cache_write_ptr[ring_id] = DEFAULT_INV_SR_PTR;
+-	vgt_clear_submitted_el_record(pdev, ring_id);
+-	/* reset read ptr in MMIO as well */
+-	VGT_MMIO_WRITE(pdev, el_ring_mmio(ring_id, _EL_OFFSET_STATUS_PTR),
+-			((_CTXBUF_READ_PTR_MASK << 16) |
+-			(DEFAULT_INV_SR_PTR << _CTXBUF_READ_PTR_SHIFT)));
++	reset_el_structure(pdev, ring_id);
+ 
+ 	return true;
+ }
+ 
+-
+ static bool gen8_init_null_context(struct pgt_device *pdev, int id)
+ {
+ 	/* disable null context right now */
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index a4ce453..472af99 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -989,6 +989,12 @@ int vgt_resume(struct pci_dev *pdev)
+ 	recalculate_and_update_ier(pgt, _REG_PMIER);
+ 	recalculate_and_update_ier(pgt, _REG_SDEIER);
+ 
++	if (pgt->enable_execlist) {
++		enum vgt_ring_id ring_id;
++		for (ring_id = 0; ring_id < MAX_ENGINES; ++ ring_id)
++			reset_el_structure(pgt, ring_id);
++	}
++
+ 	spin_unlock(&pgt->lock);
+ 
+ 	return 0;
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 9d6837e..fe196c6 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -2901,6 +2901,19 @@ bool vgt_g2v_execlist_context_destroy(struct vgt_device *vgt);
+ 
+ bool vgt_batch_ELSP_write(struct vgt_device *vgt, int ring_id);
+ 
++static inline void reset_el_structure(struct pgt_device *pdev,
++				enum vgt_ring_id ring_id)
++{
++	el_read_ptr(pdev, ring_id) = DEFAULT_INV_SR_PTR;
++	el_write_ptr(pdev, ring_id) = DEFAULT_INV_SR_PTR;
++	vgt_clear_submitted_el_record(pdev, ring_id);
++	/* reset read ptr in MMIO as well */
++	VGT_MMIO_WRITE(pdev, el_ring_mmio(ring_id, _EL_OFFSET_STATUS_PTR),
++			((_CTXBUF_READ_PTR_MASK << 16) |
++			(DEFAULT_INV_SR_PTR << _CTXBUF_READ_PTR_SHIFT)));
++
++}
++
+ extern struct kernel_dm *vgt_pkdm;
+ 
+ static inline unsigned long hypervisor_g2m_pfn(struct vgt_device *vgt,
+-- 
+1.7.10.4
+

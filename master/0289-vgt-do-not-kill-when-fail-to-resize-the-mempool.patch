@@ -1,0 +1,49 @@
+From f569b2f9f28e6ea9cd3377e8ac21c66263fe4b37 Mon Sep 17 00:00:00 2001
+From: Terrence Xu <terrence.xu@intel.com>
+Date: Tue, 15 Dec 2015 14:34:59 +0800
+Subject: [PATCH 289/403] vgt: do not kill when fail to resize the mempool.
+
+Sometimes the mempool resize is not successfully when the whole system
+is under memory pressure, but this failure is not fatal and will not
+harm the existing mempool.
+The root cause is upstream code is using kmalloc to allocate a continous
+memory region for mempool element data structure. It's not easy to
+acllocate a big continous memory element data structure when system under
+memory pressure. But changing it to vmalloc is not realistic, as currently
+some code in block subsystem will resize the poll with GFP_NOWAIT.
+So we keep VM alive even the resize is fail.
+
+The corresponding bug number in bugzilla are: #930.
+
+Signed-off-by: Min He <min.he@intel.com>
+Signed-off-by: Fred Gao <fred.gao@intel.com>
+Signed-off-by: Terrence Xu <terrence.xu@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/gtt.c |    6 ++----
+ 1 file changed, 2 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index 5121570..35d48be 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -1884,15 +1884,13 @@ bool vgt_expand_shadow_page_mempool(struct pgt_device *pdev)
+ 	 */
+ 	new_min_nr = preallocated_shadow_pages - 1;
+ 	if (mempool_resize(mempool, new_min_nr)) {
+-		vgt_err("fail to resize the mempool.\n");
+-		rc = false;
++		vgt_warn("fail to resize the mempool.\n");
+ 		goto out;
+ 	}
+ 
+ 	new_min_nr = preallocated_shadow_pages;
+ 	if (mempool_resize(mempool, new_min_nr)) {
+-		vgt_err("fail to resize the mempool.\n");
+-		rc = false;
++		vgt_warn("fail to resize the mempool.\n");
+ 		goto out;
+ 	}
+ 
+-- 
+1.7.10.4
+

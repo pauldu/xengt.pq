@@ -1,0 +1,37 @@
+From a00b0f2a28df2222ad3338f39b227b34b206554e Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Fri, 27 Nov 2015 14:47:04 +0800
+Subject: [PATCH 233/403] vgt: change the register type of 0xe184 and 0xe100
+
+Found them in register snapshot comparion on SKL
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 273252d..c972eb3 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -2686,7 +2686,7 @@ reg_attr_t vgt_reg_info_general[] = {
+ {0x2438, 4, F_RDR, 0, D_ALL, NULL, NULL},
+ {0x243c, 4, F_RDR, 0, D_ALL, NULL, NULL},
+ {0x7018, 4, F_RDR, 0, D_ALL, NULL, NULL},
+-{0xe184, 4, F_RDR, 0, D_ALL, NULL, NULL},
++{0xe184, 4, F_RDR_MODE, 0, D_ALL, NULL, NULL},
+ 	/* -------display regs---------- */
+ 
+ {0x60220, 0x20, F_DPY, 0, D_ALL, NULL, NULL},
+@@ -3330,7 +3330,7 @@ reg_attr_t vgt_reg_info_general[] = {
+ {PS_DEPTH_COUNT, 8, F_RDR, 0, D_ALL, NULL, NULL},
+ 
+ /* BDW */
+-{0xe100, 4, F_RDR, 0, D_ALL, NULL, NULL},
++{0xe100, 4, F_RDR_MODE, 0, D_ALL, NULL, NULL},
+ };
+ 
+ reg_attr_t vgt_reg_info_bdw[] = {
+-- 
+1.7.10.4
+

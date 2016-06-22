@@ -1,0 +1,179 @@
+From 75080662481298a32ea5400c97fab903619649fa Mon Sep 17 00:00:00 2001
+From: Yulei Zhang <yulei.zhang@intel.com>
+Date: Tue, 11 Aug 2015 11:11:17 +0800
+Subject: [PATCH 141/403] vgt: Add 64bit BAR virtualization support
+
+V2: Fix typo and add more comments
+
+Signed-off-by: Yulei Zhang <yulei.zhang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cfg_space.c |   34 +++++++++++++++++++++++++++-------
+ drivers/gpu/drm/i915/vgt/utility.c   |   32 +++++++++++++-------------------
+ drivers/gpu/drm/i915/vgt/vgt.c       |    4 ++--
+ drivers/gpu/drm/i915/vgt/vgt.h       |    6 +++---
+ 4 files changed, 45 insertions(+), 31 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cfg_space.c b/drivers/gpu/drm/i915/vgt/cfg_space.c
+index c852fe6..f80ac98 100644
+--- a/drivers/gpu/drm/i915/vgt/cfg_space.c
++++ b/drivers/gpu/drm/i915/vgt/cfg_space.c
+@@ -241,7 +241,8 @@ bool vgt_emulate_cfg_write(struct vgt_device *vgt, unsigned int off,
+ 	void *p_data, int bytes)
+ {
+ 	char *cfg_space = &vgt->state.cfg_space[0];
+-	uint32_t *cfg_reg, new, size;
++	uint32_t *cfg_reg, new;
++	uint64_t size;
+ 	u8 old_cmd, cmd_changed; /* we don't care the high 8 bits */
+ 	bool rc = true;
+ 	uint32_t low_mem_max_gpfn;
+@@ -284,7 +285,6 @@ bool vgt_emulate_cfg_write(struct vgt_device *vgt, unsigned int off,
+ 		case VGT_REG_CFG_SPACE_BAR1:	/* GMADR */
+ 		case VGT_REG_CFG_SPACE_BAR2:	/* IO */
+ 			ASSERT((bytes == 4) && (off & 3) == 0);
+-
+ 			new = *(uint32_t *)p_data;
+ 			printk("Programming bar 0x%x with 0x%x\n", off, new);
+ 			size = vgt->state.bar_size[(off - VGT_REG_CFG_SPACE_BAR0)/8];
+@@ -345,12 +345,32 @@ bool vgt_emulate_cfg_write(struct vgt_device *vgt, unsigned int off,
+ 		case VGT_REG_CFG_SPACE_BAR0+4:
+ 		case VGT_REG_CFG_SPACE_BAR2+4:
+ 			ASSERT((bytes == 4) && (off & 3) == 0);
+-			if (*(uint32_t *)p_data == 0xFFFFFFFF)
+-				/* BAR size is not beyond 4G, so return all-0 in uppper 32 bit */
+-				*cfg_reg = 0;
+-			else
+-				*cfg_reg = *(uint32_t*)p_data;
++			new = *(uint32_t *)p_data;
++			printk("Programming bar 0x%x with 0x%x\n", off, new);
++			size = vgt->state.bar_size[(off - (VGT_REG_CFG_SPACE_BAR0 + 4))/8];
++			/* for 32bit mode bar it returns all-0 in upper 32 bit, for 64bit
++			 * mode bar it will calculate the size with lower 32bit and return
++			 * the corresponding value
++			 */
++			if (new == 0xFFFFFFFF) {
++				if (VGT_GET_BITS(*(cfg_space + off - 4), 2, 1) == 2)
++					new &= ~(size-1) >> 32;
++				else
++					new = 0;
++				*cfg_reg = new;
++			} else {
++				if ((off & ~3) == VGT_REG_CFG_SPACE_BAR1 + 4)
++					vgt_hvm_map_aperture(vgt, 0);
++				if ((off & ~3) == VGT_REG_CFG_SPACE_BAR0 + 4)
++					vgt_hvm_set_trap_area(vgt, 0);
++				*cfg_reg = new;
++				if ((off & ~3) == VGT_REG_CFG_SPACE_BAR1 + 4)
++					vgt_hvm_map_aperture(vgt, 1);
++				if ((off & ~3) == VGT_REG_CFG_SPACE_BAR0 + 4)
++					vgt_hvm_set_trap_area(vgt, 1);
++			}
+ 			break;
++
+ 		case 0x90:
+ 		case 0x94:
+ 		case 0x98:
+diff --git a/drivers/gpu/drm/i915/vgt/utility.c b/drivers/gpu/drm/i915/vgt/utility.c
+index 685579fd..71be6a1 100644
+--- a/drivers/gpu/drm/i915/vgt/utility.c
++++ b/drivers/gpu/drm/i915/vgt/utility.c
+@@ -570,33 +570,27 @@ void show_virtual_interrupt_regs(struct vgt_device *vgt,
+ #undef P_GROUP_WHICH
+ }
+ 
+-uint32_t pci_bar_size(struct pgt_device *pdev, unsigned int bar_off)
++uint64_t pci_bar_size(struct pgt_device *pdev, unsigned int bar_off)
+ {
+-	unsigned long bar_s, bar_size=0;
++	uint32_t bar_s;
++	uint64_t bar_size, bar_upper_size = 0;
+ 	struct pci_dev *dev = pdev->pdev;
+ 
+ 	pci_read_config_dword(dev, bar_off, (uint32_t *)&bar_s);
+ 	pci_write_config_dword(dev, bar_off, 0xFFFFFFFF);
+-
+ 	pci_read_config_dword(dev, bar_off, (uint32_t *)&bar_size);
+-	vgt_dbg(VGT_DBG_GENERIC, "read back bar_size %lx\n", bar_size);
++	vgt_dbg(VGT_DBG_GENERIC, "read back lower bar size %x\n", (uint32_t)bar_size);
+ 	bar_size &= ~0xf; /* bit 4-31 */
+-	vgt_dbg(VGT_DBG_GENERIC, "read back bar_size1 %lx\n", bar_size);
+-	bar_size = 1 << find_first_bit(&bar_size, BITS_PER_LONG);
+-	vgt_dbg(VGT_DBG_GENERIC, "read back bar_size2 %lx\n", bar_size);
+-
+ 	pci_write_config_dword(dev, bar_off, bar_s);
+-
+-#if 0
+-	bar_s = pci_conf_read32( 0, vgt_bus, vgt_dev, vgt_fun, bar_off);
+-	pci_conf_write32(0, vgt_bus, vgt_dev, vgt_fun, bar_off, 0xFFFFFFFF);
+-
+-	bar_size = pci_conf_read32(0, vgt_bus, vgt_dev, vgt_fun, bar_off);
+-	bar_size &= ~0xf; /* bit 4-31 */
+-	bar_size = 1 << find_first_bit(&bar_size, sizeof(bar_size));
+-
+-	pci_conf_write32(0, vgt_bus, vgt_dev, vgt_fun, bar_offset, bar_s);
+-#endif
++	if (VGT_GET_BITS(bar_s, 2, 1) == 2) {
++		pci_read_config_dword(dev, bar_off + 4, (uint32_t *)&bar_s);
++		pci_write_config_dword(dev, bar_off + 4, 0xFFFFFFFF);
++		pci_read_config_dword(dev, bar_off + 4, (uint32_t *)&bar_upper_size);
++		vgt_dbg(VGT_DBG_GENERIC, "read back higher bar size %x\n", (uint32_t)bar_upper_size);
++		bar_size |= (bar_upper_size << 32);
++		pci_write_config_dword(dev, bar_off + 4, bar_s);
++	}
++	bar_size &= ~(bar_size - 1);
+ 	return bar_size;
+ }
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index c1cf9b5..20661f2 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -449,12 +449,12 @@ bool initial_phys_states(struct pgt_device *pdev)
+ 	}
+ 	for (i=0; i < 3; i++) {
+ 		pdev->bar_size[i] = pci_bar_size(pdev, VGT_REG_CFG_SPACE_BAR0 + 8*i);
+-		printk("bar-%d size: %x\n", i, pdev->bar_size[i]);
++		printk("bar-%d size: %llx\n", i, pdev->bar_size[i]);
+ 	}
+ 
+ 	bar0 = *(uint64_t *)&pdev->initial_cfg_space[VGT_REG_CFG_SPACE_BAR0];
+ 	bar1 = *(uint64_t *)&pdev->initial_cfg_space[VGT_REG_CFG_SPACE_BAR1];
+-	printk("bar0: 0x%llx, Bar1: 0x%llx\n", bar0, bar1);
++	printk("bar0: 0x%llx, bar1: 0x%llx\n", bar0, bar1);
+ 
+ 	ASSERT ((bar0 & 7) == 4);
+ 	/* memory, 64 bits bar0 */
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index ae5183d..63d6ea6 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -335,7 +335,7 @@ typedef struct {
+ 	uint64_t	aperture_base;	/* bar1: guest aperture base */
+ //	uint64_t	gt_gmadr_base;	/* bar1/GMADR */
+ 
+-	uint32_t	bar_size[VGT_BAR_NUM];	/* 0: GTTMMIO, 1: GMADR, 2: PIO bar size */
++	uint64_t	bar_size[VGT_BAR_NUM];	/* 0: GTTMMIO, 1: GMADR, 2: PIO bar size */
+ 
+ 	/* OpRegion state */
+ 	void		*opregion_va;
+@@ -1233,7 +1233,7 @@ struct pgt_device {
+ 
+ 	vgt_reg_t *initial_mmio_state;	/* copy from physical at start */
+ 	uint8_t initial_cfg_space[VGT_CFG_SPACE_SZ];	/* copy from physical at start */
+-	uint32_t bar_size[VGT_BAR_NUM];
++	uint64_t bar_size[VGT_BAR_NUM];
+ 	uint64_t total_gm_sz;	/* size of available GM space, e.g 2M GTT is 2GB */
+ 
+ 	uint64_t gttmmio_base;	/* base of GTT and MMIO */
+@@ -2926,7 +2926,7 @@ void vgt_clear_gtt(struct vgt_device *vgt);
+ void vgt_save_gtt_and_fence(struct pgt_device *pdev);
+ void vgt_restore_gtt_and_fence(struct pgt_device *pdev);
+ uint64_t vgt_get_gtt_size(struct pgt_device *pdev);
+-uint32_t pci_bar_size(struct pgt_device *pdev, unsigned int bar_off);
++uint64_t pci_bar_size(struct pgt_device *pdev, unsigned int bar_off);
+ struct vgt_device *vmid_2_vgt_device(int vmid);
+ extern void vgt_print_edid(struct vgt_edid_data_t *edid);
+ extern void vgt_print_dpcd(struct vgt_dpcd_data *dpcd);
+-- 
+1.7.10.4
+

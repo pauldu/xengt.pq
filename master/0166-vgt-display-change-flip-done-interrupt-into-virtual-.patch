@@ -1,0 +1,56 @@
+From 761125ba74e2ad2d6ad8c4a7696f30469cee548a Mon Sep 17 00:00:00 2001
+From: "Niu,Bing" <bing.niu@intel.com>
+Date: Wed, 9 Sep 2015 10:11:26 -0400
+Subject: [PATCH 166/403] vgt:display change flip done interrupt into virtual
+ one
+
+change VMs' flip done interrupt as virtual one. phycial filp done
+interrupt will be forwarded to DOM0 only. VMs' will be injected when
+do MMIO access or MI istruction.
+
+Signed-off-by: Niu,Bing <bing.niu@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |    3 +++
+ drivers/gpu/drm/i915/vgt/interrupt.c  |    5 ++++-
+ 2 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index 515d214..3ae85de 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -1178,6 +1178,9 @@ static int vgt_handle_mi_display_flip(struct parser_exec_state *s, bool resubmit
+ 			cmd_ptr(s, 0),
+ 			((value & ~PLANE_SELECT_MASK) |
+ 			 (real_plane_code << PLANE_SELECT_SHIFT)));
++
++		vgt_inject_flip_done(s->vgt, pipe);
++
+ 		return 0;
+ 	}
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/interrupt.c b/drivers/gpu/drm/i915/vgt/interrupt.c
+index 916f289..918301d 100644
+--- a/drivers/gpu/drm/i915/vgt/interrupt.c
++++ b/drivers/gpu/drm/i915/vgt/interrupt.c
+@@ -2041,6 +2041,9 @@ static void vgt_init_events(
+ 	SET_POLICY_DOM0(hstate, PIPE_B_VBLANK);
+ 	SET_POLICY_DOM0(hstate, PIPE_C_VBLANK);
+ 
++	SET_POLICY_DOM0(hstate, PRIMARY_A_FLIP_DONE);
++	SET_POLICY_DOM0(hstate, PRIMARY_B_FLIP_DONE);
++	SET_POLICY_DOM0(hstate, PRIMARY_C_FLIP_DONE);
+ }
+ static enum hrtimer_restart vgt_dpy_timer_fn(struct hrtimer *data)
+ {
+@@ -2208,7 +2211,7 @@ void vgt_fini_irq(struct pci_dev *pdev)
+ void vgt_inject_flip_done(struct vgt_device *vgt, enum vgt_pipe pipe)
+ {
+ 	enum vgt_event_type event = EVENT_MAX;
+-	if (current_foreground_vm(vgt->pdev) != vgt) {
++	if (current_display_owner(vgt->pdev) != vgt) {
+ 		if (pipe == PIPE_A) {
+ 			event = PRIMARY_A_FLIP_DONE;
+ 		} else if (pipe == PIPE_B) {
+-- 
+1.7.10.4
+

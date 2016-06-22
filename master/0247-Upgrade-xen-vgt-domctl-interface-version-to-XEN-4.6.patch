@@ -1,0 +1,72 @@
+From c80e0f48b5905f28672c7adb38831766f1cbe5ae Mon Sep 17 00:00:00 2001
+From: Xu Han <xu.han@intel.com>
+Date: Fri, 4 Dec 2015 17:06:13 +0800
+Subject: [PATCH 247/403] Upgrade xen-vgt domctl interface version to XEN 4.6.
+
+WARNNING: After apply this patch, it would not support XEN 4.5.
+
+Patch include:
+* Upgrade domctl interface version from XEN 4.5 to XEN 4.6.
+* Add xen_hvm_memory_mapping nr_mfns size 64 limition support for XEN 4.6.
+  It is follow up Xen Security Advisory CVE-2015-2752 / XSA-125, Link:
+  http://xenbits.xen.org/xsa/advisory-125.html
+
+Signed-off-by: Xu Han <xu.han@intel.com>
+diff --git a/drivers/xen/xengt.c b/drivers/xen/xengt.c
+index f3d7311..fe36bce 100644
+--- a/drivers/xen/xengt.c
++++ b/drivers/xen/xengt.c
+@@ -180,7 +180,8 @@ static int xen_hvm_memory_mapping(int vm_id, uint64_t first_gfn, uint64_t first_
+ 				  uint32_t nr_mfns, uint32_t add_mapping)
+ {
+ 	struct xen_domctl arg;
+-	int rc;
++	int rc = 0, err = 0;
++	unsigned long done = 0, mapping_sz = 64;
+ 
+ 	if (add_mapping) {
+ 		rc = xen_domain_iomem_perm(vm_id, first_mfn, nr_mfns, 1);
+@@ -193,14 +194,38 @@ static int xen_hvm_memory_mapping(int vm_id, uint64_t first_gfn, uint64_t first_
+ 	arg.domain = vm_id;
+ 	arg.cmd = XEN_DOMCTL_memory_mapping;
+ 	arg.interface_version = XEN_DOMCTL_INTERFACE_VERSION;
+-	arg.u.memory_mapping.first_gfn = first_gfn;
+-	arg.u.memory_mapping.first_mfn = first_mfn;
+-	arg.u.memory_mapping.nr_mfns = nr_mfns;
+ 	arg.u.memory_mapping.add_mapping = add_mapping;
+ 
+-	rc = HYPERVISOR_domctl(&arg);
++retry:
++	if (nr_mfns > 0 && mapping_sz > 0) {
++		while (done < nr_mfns) {
++			mapping_sz = min(nr_mfns - done, mapping_sz);
++			arg.u.memory_mapping.nr_mfns = mapping_sz;
++			arg.u.memory_mapping.first_gfn = first_gfn + done;
++			arg.u.memory_mapping.first_mfn = first_mfn + done;
++			err = HYPERVISOR_domctl(&arg);
++			if (err == -E2BIG) {
++				mapping_sz /= 2;
++				goto retry;
++			}
++			//Save first error status.
++			if (!rc)
++				rc = err;
++
++			if (err && add_mapping != DPCI_REMOVE_MAPPING)
++				break;
++			done += mapping_sz;
++		}
++
++		//Undo operation, if some error to mapping.
++		if (rc && add_mapping != DPCI_REMOVE_MAPPING) {
++			xen_hvm_memory_mapping(vm_id, first_gfn, first_mfn,
++						nr_mfns, DPCI_REMOVE_MAPPING);
++		}
++	}
++
+ 	if (rc < 0) {
+-		printk(KERN_ERR "HYPERVISOR_domctl failed: %d\n", rc);
++		printk(KERN_ERR "xen_hvm_memory_mapping, memory mapping failed: %d\n", rc);
+ 		return rc;
+ 	}
+ 

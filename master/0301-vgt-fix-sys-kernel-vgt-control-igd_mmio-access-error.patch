@@ -1,0 +1,53 @@
+From 1e07e19e23a1a3a25c3bf6058121f8c2c6b4632e Mon Sep 17 00:00:00 2001
+From: "Zheng, Xiao" <xiao.zheng@intel.com>
+Date: Mon, 4 Jan 2016 10:58:26 +0800
+Subject: [PATCH 301/403] vgt: fix /sys/kernel/vgt/control/igd_mmio access
+ error
+
+idg_mmio R/W access was broken in previous code merge.
+Now we can peek/poke native GT mmio registers directly from Dom0.
+
+Below is piece script of how to read from this node.
+
+File name:  show_reg.py
+Usage: show_reg.py <reg_offset> #show_reg.py 23a0
+
+------ show_reg.py:  "show_reg.py 23a0"
+import sys, string, os, struct
+off=string.atoi(sys.argv[1], 16)
+fd=os.open('/sys/kernel/vgt/control/igd_mmio', os.O_RDWR)
+os.lseek(fd, off,0)
+value=os.read(fd, 4)
+print("READ 0x%x=0x%x"%(off, struct.unpack('I',value[0:4])[0]))
+------
+
+Signed-off-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/sysfs.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/sysfs.c b/drivers/gpu/drm/i915/vgt/sysfs.c
+index d5527e1..df86c87 100644
+--- a/drivers/gpu/drm/i915/vgt/sysfs.c
++++ b/drivers/gpu/drm/i915/vgt/sysfs.c
+@@ -949,7 +949,7 @@ igd_mmio_read(struct file *filp, struct kobject *kobj,
+ 		len = (count > sizeof(unsigned long)) ? sizeof(unsigned long) :
+ 				count;
+ 
+-		if (vgt_native_mmio_read(off, &data, len, false) != 0) {
++		if (vgt_native_mmio_read(off, &data, len, false) != true) {
+ 			vgt_unlock_dev(pdev, cpu);
+ 			return -EIO;
+ 		}
+@@ -984,7 +984,7 @@ igd_mmio_write(struct file* filp, struct kobject *kobj,
+ 				count;
+ 
+ 		memcpy(&data, buf, len);
+-		if (vgt_native_mmio_read(off, &data, len, false) != 0) {
++		if (vgt_native_mmio_read(off, &data, len, false) != true) {
+ 			vgt_unlock_dev(pdev, cpu);
+ 			return -EIO;
+ 		}
+-- 
+1.7.10.4
+

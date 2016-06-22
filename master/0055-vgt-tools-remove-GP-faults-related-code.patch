@@ -1,0 +1,38 @@
+From 495efc04c5aad55879097c7ff808bffbdc34ef26 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Tue, 28 Apr 2015 00:29:16 +0800
+Subject: [PATCH 055/403] vgt: tools: remove GP faults related code
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ tools/vgt/vgt_perf |    7 -------
+ 1 file changed, 7 deletions(-)
+
+diff --git a/tools/vgt/vgt_perf b/tools/vgt/vgt_perf
+index 9c080de..638a641 100755
+--- a/tools/vgt/vgt_perf
++++ b/tools/vgt/vgt_perf
+@@ -207,11 +207,6 @@ state_nodes = {
+ 		"count" : 1,
+ 		"cycles": 1,
+ 	},
+-	"GP faults" : {
+-		"node"	: "vgt_gp_",
+-		"count" : 1,
+-		"cycles": 1,
+-	},
+ 	"Skipped batch buffers" : {
+ 		"node"	: "skip_bb_",
+ 		"count"	: 1,
+@@ -386,8 +381,6 @@ def show_result(e, s, r, time):
+ 		#print_param2(e, vs, "PM accesses", bias)
+ 		#print_param2(e, vs, "IRQ accesses", bias)
+ 		#print_param2(vs, "Emulations", freq, bias)
+-		if id == 0:
+-			print_param2(e, vs, "GP faults", 0)
+ 
+ 		print "----"
+ 		print_param2(e, vs, "Ring tail writes", bias)
+-- 
+1.7.10.4
+

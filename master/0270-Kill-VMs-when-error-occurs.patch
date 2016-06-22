@@ -1,0 +1,43 @@
+From 772071cb8d566c5e4bdaed5095e83dca27d5ce8e Mon Sep 17 00:00:00 2001
+From: Yi Sun <yi.sun@intel.com>
+Date: Fri, 30 Oct 2015 16:55:50 +0800
+Subject: [PATCH 270/403] Kill VMs when error occurs.
+
+Handle error return for emulate_cfg_read/write in xengt.c.
+Return false then vgt_emulation_thread can kill the VM actually,
+when error occurs in emulation.
+
+Signed-off-by: Yi Sun <yi.sun@intel.com>
+---
+ drivers/xen/xengt.c |    8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/xen/xengt.c b/drivers/xen/xengt.c
+index fe36bce..1ac5a64 100644
+--- a/drivers/xen/xengt.c
++++ b/drivers/xen/xengt.c
+@@ -804,7 +804,9 @@ static bool vgt_hvm_write_cfg_space(struct vgt_device *vgt,
+ 
+ 	ASSERT(((bytes == 4) && ((port & 3) == 0)) ||
+ 		((bytes == 2) && ((port & 1) == 0)) || (bytes == 1));
+-	vgt_ops->emulate_cfg_write(vgt, port, &val, bytes);
++	if (!vgt_ops->emulate_cfg_write(vgt, port, &val, bytes)) {
++		return false;
++	}
+ 	return true;
+ }
+ 
+@@ -817,7 +819,9 @@ static bool vgt_hvm_read_cfg_space(struct vgt_device *vgt,
+ 
+ 	ASSERT (((bytes == 4) && ((port & 3) == 0)) ||
+ 		((bytes == 2) && ((port & 1) == 0)) || (bytes == 1));
+-	vgt_ops->emulate_cfg_read(vgt, port, &data, bytes);
++	if (!vgt_ops->emulate_cfg_read(vgt, port, &data, bytes)) {
++		return false;
++	}
+ 	memcpy(val, &data, bytes);
+ 	return true;
+ }
+-- 
+1.7.10.4
+

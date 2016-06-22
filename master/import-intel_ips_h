@@ -1,0 +1,40 @@
+diff --git a/drivers/gpu/drm/i915/intel_ips.h b/drivers/gpu/drm/i915/intel_ips.h
+new file mode 100644
+index 0000000..73299be
+--- /dev/null
++++ b/drivers/gpu/drm/i915/intel_ips.h
+@@ -0,0 +1,21 @@
++/*
++ * Copyright (c) 2010 Intel Corporation
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms and conditions of the GNU General Public License,
++ * version 2, as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++ * more details.
++ *
++ * You should have received a copy of the GNU General Public License along with
++ * this program; if not, write to the Free Software Foundation, Inc.,
++ * 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++ *
++ * The full GNU General Public License is included in this distribution in
++ * the file called "COPYING".
++ */
++
++void ips_link_to_i915_driver(void);
+diff --git a/drivers/gpu/drm/i915/intel_pm.c b/drivers/gpu/drm/i915/intel_pm.c
+index 0fb0459..693c3c5 100644
+--- a/drivers/gpu/drm/i915/intel_pm.c
++++ b/drivers/gpu/drm/i915/intel_pm.c
+@@ -28,7 +28,7 @@
+ #include <linux/cpufreq.h>
+ #include "i915_drv.h"
+ #include "intel_drv.h"
+-#include "../../../platform/x86/intel_ips.h"
++#include "intel_ips.h"
+ #include <linux/module.h>
+ 
+ /**

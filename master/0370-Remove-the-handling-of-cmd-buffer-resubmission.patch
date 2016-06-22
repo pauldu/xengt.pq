@@ -1,0 +1,181 @@
+From f6307e493de1793b2abb5d8ebf3b0d013ff0bbcb Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Mon, 29 Feb 2016 13:41:52 +0800
+Subject: [PATCH 370/403] Remove the handling of cmd buffer resubmission
+
+For the cmd buffer containing MI_DISPLAY_FLIP, previously we used
+MI_NOOP (with bit 22 cleared) to mark the cmd buffer patch we did.
+That is used when the same cmd buffer was resubmitted. Since now we
+have cmd buffer shadowing, such resubmission handling is not needed.
+
+Another reason to remove is is that we see MI_NOOP hw command
+containing random number in bit field bit0-bit21, which breaks our
+previous assumption. Continue to use this will confuse command parser.
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |   86 ++++++---------------------------
+ 1 file changed, 14 insertions(+), 72 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index eb4896d..9df0925 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -691,26 +691,10 @@ static inline int ip_gma_advance(struct parser_exec_state *s, unsigned int dw_le
+ 
+ static inline int get_cmd_length(struct cmd_info *info, uint32_t cmd)
+ {
+-	/*
+-	 * MI_NOOP is special as the replacement elements. It's fixed
+-	 * length in definition, but variable length when using for
+-	 * replacement purpose. Instead of having the same handler
+-	 * invoke twice (may be postponed), special case length
+-	 * handling for MI_NOOP.
+-	 */
+-	if (info->opcode == OP_MI_NOOP) {
+-		unsigned int subop, length = info->len;
+-		subop = (cmd & VGT_NOOP_ID_CMD_MASK) >>
+-			VGT_NOOP_ID_CMD_SHIFT;
+-		if (subop == OP_MI_DISPLAY_FLIP)
+-			length = cmd & CMD_LENGTH_MASK;
+-
+-		return length;
+-	} else if ((info->flag & F_LEN_MASK) == F_LEN_CONST) {
++	if ((info->flag & F_LEN_MASK) == F_LEN_CONST)
+ 		return info->len;
+-	} else /* F_LEN_VAR */{
++	else /* F_LEN_VAR */
+ 		return (cmd & ((1U << info->len) - 1)) + 2;
+-	}
+ }
+ 
+ static inline int cmd_length(struct parser_exec_state *s)
+@@ -1323,7 +1307,7 @@ static bool vgt_flip_parameter_check(struct parser_exec_state *s,
+ 	return true;
+ }
+ 
+-static int vgt_handle_mi_display_flip(struct parser_exec_state *s, bool resubmitted)
++static int vgt_handle_mi_display_flip(struct parser_exec_state *s)
+ {
+ 	struct vgt_device *vgt = s->vgt;
+ 	struct pgt_device *pdev = vgt->pdev;
+@@ -1353,14 +1337,8 @@ static int vgt_handle_mi_display_flip(struct parser_exec_state *s, bool resubmit
+ 	plane_tile_mask = IS_SKL(pdev) ? PLANE_CTL_TILED_MASK : PLANE_TILE_MASK;
+ 	stride_shift = IS_SKL(pdev) ? _PRI_PLANE_STRIDE_SHIFT : 0;
+ 
+-	if (resubmitted) {
+-		plane_code = (opcode & PLANE_INFO_MASK) >> PLANE_INFO_SHIFT;
+-		length = opcode & CMD_LENGTH_MASK;
+-	} else {
+-		plane_code = (opcode & plane_select_mask) >> plane_select_shift;
+-		length = cmd_length(s);
+-	}
+-
++	plane_code = (opcode & plane_select_mask) >> plane_select_shift;
++	length = cmd_length(s);
+ 
+ 	if (!display_flip_decode_plane_info(pdev, plane_code, &pipe, &plane)) {
+ 		vgt_warn("Invalid pipe/plane in MI_DISPLAY_FLIP!\n");
+@@ -1377,7 +1355,7 @@ static int vgt_handle_mi_display_flip(struct parser_exec_state *s, bool resubmit
+ 		goto wrong_command;
+ 	}
+ 
+-	if (!resubmitted) {
++	{
+ 		if (!vgt_flip_parameter_check(s, plane_code, stride_val, surf_val))
+ 			goto wrong_command;
+ 
+@@ -1428,7 +1406,7 @@ static int vgt_handle_mi_display_flip(struct parser_exec_state *s, bool resubmit
+ 	msg.plane_id = plane;
+ 	vgt_fb_notifier_call_chain(FB_DISPLAY_FLIP, &msg);
+ 
+-	if ((s->vgt == current_foreground_vm(s->vgt->pdev)) && !resubmitted) {
++	if ((s->vgt == current_foreground_vm(s->vgt->pdev))) {
+ 		if (!display_flip_encode_plane_info(pdev, real_pipe,
+ 					plane, &real_plane_code))
+ 			goto wrong_command;
+@@ -1448,14 +1426,10 @@ static int vgt_handle_mi_display_flip(struct parser_exec_state *s, bool resubmit
+ 		s->vgt->vm_id);
+ 
+ 	for (i = 1; i < length; i ++) {
+-		rc |= add_patch_entry(s, cmd_ptr(s, i), MI_NOOP |
+-			(OP_MI_DISPLAY_FLIP << VGT_NOOP_ID_CMD_SHIFT));
++		rc |= add_patch_entry(s, cmd_ptr(s, i), MI_NOOP);
+ 	}
+ 
+-	rc |= add_patch_entry(s, cmd_ptr(s, 0), MI_NOOP |
+-			(OP_MI_DISPLAY_FLIP << VGT_NOOP_ID_CMD_SHIFT) |
+-			(plane_code << PLANE_INFO_SHIFT) |
+-			(length & CMD_LENGTH_MASK));
++	rc |= add_patch_entry(s, cmd_ptr(s, 0), MI_NOOP);
+ 
+ 	vgt_inject_flip_done(s->vgt, pipe);
+ 
+@@ -1469,7 +1443,7 @@ wrong_command:
+ 
+ static int vgt_cmd_handler_mi_display_flip(struct parser_exec_state *s)
+ {
+-	return vgt_handle_mi_display_flip(s, false);
++	return vgt_handle_mi_display_flip(s);
+ }
+ static bool is_wait_for_flip_pending(uint32_t cmd)
+ {
+@@ -1947,26 +1921,8 @@ static int vgt_cmd_handler_mi_batch_buffer_start(struct parser_exec_state *s)
+ 	return rc;
+ }
+ 
+-static int vgt_cmd_handler_mi_noop(struct parser_exec_state* s)
+-{
+-	unsigned int cmd;
+-	cmd = (cmd_val(s, 0) & VGT_NOOP_ID_CMD_MASK) >> VGT_NOOP_ID_CMD_SHIFT;
+-
+-	if (cmd) {
+-		if (cmd == OP_MI_DISPLAY_FLIP) {
+-			vgt_handle_mi_display_flip(s, true);
+-		} else {
+-			vgt_err("VM %d: Guest reuse cmd buffer that is not handled!\n",
+-					s->vgt->vm_id);
+-			return -EFAULT;
+-		}
+-	}
+-
+-	return 0;
+-}
+-
+ static struct cmd_info cmd_info[] = {
+-	{"MI_NOOP", OP_MI_NOOP, F_LEN_CONST|F_POST_HANDLE, R_ALL, D_ALL, 0, 1, vgt_cmd_handler_mi_noop},
++	{"MI_NOOP", OP_MI_NOOP, F_LEN_CONST, R_ALL, D_ALL, 0, 1, NULL},
+ 
+ 	{"MI_SET_PREDICATE", OP_MI_SET_PREDICATE, F_LEN_CONST, R_ALL, D_HSW_PLUS,
+ 		0, 1, NULL},
+@@ -2787,24 +2743,10 @@ static int vgt_cmd_parser_exec(struct parser_exec_state *s)
+ 	t1 = get_cycles();
+ 
+ 	if (info->handler) {
+-		int post_handle = 0;
+-
+-		if (info->flag & F_POST_HANDLE) {
+-			post_handle = 1;
+-
+-			/* Post handle special case.*/
+-			/*
+-			 * OP_MI_NOOP: only handles nooped MI_DISPLAY_FILP
+-			 * to prevent the heavy usage of patch list.
+-			 */
+-			if (info->opcode == OP_MI_NOOP && cmd_length(s) == 1)
+-				post_handle = 0;
+-		}
+-
+-		if (!post_handle)
+-			rc = info->handler(s);
+-		else
++		if (info->flag & F_POST_HANDLE)
+ 			rc = add_post_handle_entry(s, info->handler);
++		else
++			rc = info->handler(s);
+ 
+ 		if (rc < 0) {
+ 			vgt_err("%s handler error", info->name);
+-- 
+1.7.10.4
+

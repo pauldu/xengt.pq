@@ -1,0 +1,147 @@
+From 739511ce10719176d76d4b2189a98e47907b2fd0 Mon Sep 17 00:00:00 2001
+From: "Zheng, Xiao" <xiao.zheng@intel.com>
+Date: Fri, 14 Aug 2015 19:17:41 +0800
+Subject: [PATCH 219/403] vgt/skl: Refine DP AUX channel emulation for SKL
+
+Signed-off-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/edid.h     |   27 -------------------------
+ drivers/gpu/drm/i915/vgt/handlers.c |   37 +++++++++++++++++------------------
+ drivers/gpu/drm/i915/vgt/reg.h      |    5 +++++
+ 3 files changed, 23 insertions(+), 46 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/edid.h b/drivers/gpu/drm/i915/vgt/edid.h
+index b64bdc2..2642522 100644
+--- a/drivers/gpu/drm/i915/vgt/edid.h
++++ b/drivers/gpu/drm/i915/vgt/edid.h
+@@ -155,31 +155,4 @@ typedef enum {
+ 	AUX_CH_DATA5
+ }AUX_CH_REGISTERS;
+ 
+-static inline enum port vgt_get_dp_port_idx(unsigned int offset)
+-{
+-	enum port port_idx;
+-
+-	if (offset >= DPA_AUX_CH_CTL
+-		&& offset <= DPA_AUX_CH_CTL +
+-				AUX_REGISTER_NUM * sizeof(vgt_reg_t)) {
+-		return PORT_A;
+-	}
+-
+-	switch (((offset & 0xff00) >> 8) - 0x41) {
+-	case 0:
+-		port_idx = PORT_B;
+-		break;
+-	case 1:
+-		port_idx = PORT_C;
+-		break;
+-	case 2:
+-		port_idx = PORT_D;
+-		break;
+-	default:
+-		port_idx = I915_MAX_PORTS;
+-		break;
+-	}
+-	return port_idx;
+-}
+-
+ #endif /*_VGT_EDID_H_*/
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index efae082..00d6cd3 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -29,6 +29,9 @@
+ #include "fb_decoder.h"
+ #include "vgt.h"
+ 
++/* working for both HSW/BDW and SKL+ */
++#define OFFSET_TO_DP_AUX_PORT(offset) (((offset) & 0xF00) >> 8)
++
+ 
+ static bool vgt_error_handler(struct vgt_device *vgt, unsigned int offset,
+ 	void *p_data, unsigned int bytes)
+@@ -1494,11 +1497,14 @@ static void dp_aux_ch_trigger_interrupt_on_done(struct vgt_device *vgt, vgt_reg_
+ 
+ 	if (reg == DPA_AUX_CH_CTL) {
+ 		event = AUX_CHANNEL_A;
+-	} else if (reg == PCH_DPB_AUX_CH_CTL) {
++	} else if (reg == PCH_DPB_AUX_CH_CTL
++		|| reg == DPB_AUX_CH_CTL) {
+ 		event = AUX_CHANNEL_B;
+-	} else if (reg == PCH_DPC_AUX_CH_CTL) {
++	} else if (reg == PCH_DPC_AUX_CH_CTL
++		|| reg == DPC_AUX_CH_CTL) {
+ 		event = AUX_CHANNEL_C;
+-	} else if (reg == PCH_DPD_AUX_CH_CTL) {
++	} else if (reg == PCH_DPD_AUX_CH_CTL
++		|| reg == DPD_AUX_CH_CTL) {
+ 		event = AUX_CHANNEL_D;
+ 	}
+ 
+@@ -1572,7 +1578,7 @@ static bool dp_aux_ch_ctl_mmio_write(struct vgt_device *vgt, unsigned int offset
+ 	vgt_reg_t value = *(vgt_reg_t *)p_data;
+ 	int msg, addr, ctrl, op, len;
+ 	struct vgt_dpcd_data *dpcd = NULL;
+-	enum port port_idx = vgt_get_dp_port_idx(offset);
++	enum port port_idx = OFFSET_TO_DP_AUX_PORT(offset);
+ 	struct gt_port *port = NULL;
+ 
+ 	ASSERT(bytes == 4);
+@@ -1586,17 +1592,16 @@ static bool dp_aux_ch_ctl_mmio_write(struct vgt_device *vgt, unsigned int offset
+ 	if (reg_hw_access(vgt, reg))
+ 		return true;
+ 
+-	if (IS_SKL(vgt->pdev)
+-		&& reg != DPA_AUX_CH_CTL
+-		&& reg != DPB_AUX_CH_CTL
+-		&& reg != DPC_AUX_CH_CTL
+-		&& reg != DPD_AUX_CH_CTL) {
++	if (!dpy_is_valid_port(port_idx)) {
++		vgt_warn("vGT(%d): Unsupported DP port access!\n",
++				vgt->vgt_id);
++		return true;
++	}
++
++	if (IS_SKL(vgt->pdev) && reg != _REG_SKL_DP_AUX_CH_CTL(port_idx)) {
+ 		/* SKL DPB/C/D aux ctl register changed */
+ 		return true;
+-	} else if (reg != DPA_AUX_CH_CTL &&
+-	    reg != PCH_DPB_AUX_CH_CTL &&
+-	    reg != PCH_DPC_AUX_CH_CTL &&
+-	    reg != PCH_DPD_AUX_CH_CTL) {
++	} else if (IS_PRESKL(vgt->pdev) && reg != _REG_HSW_DP_AUX_CH_CTL(port_idx)) {
+ 		/* write to the data registers */
+ 		return true;
+ 	}
+@@ -1607,12 +1612,6 @@ static bool dp_aux_ch_ctl_mmio_write(struct vgt_device *vgt, unsigned int offset
+ 		return true;
+ 	}
+ 
+-	if (!dpy_is_valid_port(port_idx)) {
+-		vgt_warn("vGT(%d): Unsupported DP port access!\n",
+-				vgt->vgt_id);
+-		return true;
+-	}
+-
+ 	port = &vgt->ports[port_idx];
+ 
+ 	if (port) {
+diff --git a/drivers/gpu/drm/i915/vgt/reg.h b/drivers/gpu/drm/i915/vgt/reg.h
+index 2c793a0..7b4c7e1 100644
+--- a/drivers/gpu/drm/i915/vgt/reg.h
++++ b/drivers/gpu/drm/i915/vgt/reg.h
+@@ -951,6 +951,11 @@ union _TRANS_CONFIG
+ #define  _TRANS_DDI_MODE_SELECT_HIFT		24
+ #define  _TRANS_DDI_EDP_INPUT_SHIFT		12
+ 
++#define _REG_HSW_DP_AUX_CH_CTL(dp)	\
++	((dp)? (PCH_DPB_AUX_CH_CTL + ((dp)-1)*0x100) : DPA_AUX_CH_CTL)
++
++#define _REG_SKL_DP_AUX_CH_CTL(dp) (0x64010 + (dp) * 0x100)
++
+ #define _REG_GEN7_SQ_CHICKEN_MBCUNIT_CONFIG		0x9030
+ #define GEN7_L3SQCREG1				0xB010
+ #define  VLV_B0_WA_L3SQCREG1_VALUE		0x00D30000
+-- 
+1.7.10.4
+

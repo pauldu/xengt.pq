@@ -1,0 +1,132 @@
+From e2494f79de254a1c6ff53483f91f2b1987bb274a Mon Sep 17 00:00:00 2001
+From: Xiaoguang Chen <xiaoguang.chen@intel.com>
+Date: Wed, 2 Mar 2016 13:09:32 +0800
+Subject: [PATCH 374/403] skl: fix tiling info settings in fb decoder
+
+In skl four tile format supported:
+Tile Linear(No tile), Tile X, Tile Y, Tile YF.
+
+Signed-off-by: xiaoguang chen <xiaoguang.chen@intel.com>
+---
+ drivers/gpu/drm/i915/i915_gem_vgtbuffer.c |    4 ++--
+ drivers/gpu/drm/i915/vgt/fb_decoder.c     |   31 ++++++++++++++++++++++++++++-
+ drivers/gpu/drm/i915/vgt/fb_decoder.h     |    5 +++--
+ include/uapi/drm/i915_drm.h               |    1 +
+ 4 files changed, 36 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
+index 207c9ac..7a30e71 100644
+--- a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
++++ b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
+@@ -165,7 +165,7 @@ static int vgt_decode_information(struct drm_device *dev,
+ 		args->bpp = p->bpp;
+ 		args->hw_format = p->hw_format;
+ 		args->drm_format = p->drm_format;
+-		args->tiled = p->tiled;
++		args->tiled = vgt_get_tiling_mode(dev, p->tiled);
+ 	} else if ((args->plane_id) == I915_VGT_PLANE_CURSOR) {
+ 		c = &pipe->cursor;
+ 		args->enabled = c->enabled;
+@@ -241,7 +241,7 @@ i915_gem_vgtbuffer_ioctl(struct drm_device *dev, void *data,
+ 		return -EINVAL;
+ 	}
+ 
+-	obj->tiling_mode = args->tiled ? I915_TILING_X : I915_TILING_NONE;
++	obj->tiling_mode = args->tiled;
+ 	obj->stride = args->tiled ? args->stride : 0;
+ 
+ 	ret = drm_gem_handle_create(file, &obj->base, &handle);
+diff --git a/drivers/gpu/drm/i915/vgt/fb_decoder.c b/drivers/gpu/drm/i915/vgt/fb_decoder.c
+index 89020c9..f4042b0 100644
+--- a/drivers/gpu/drm/i915/vgt/fb_decoder.c
++++ b/drivers/gpu/drm/i915/vgt/fb_decoder.c
+@@ -120,7 +120,7 @@ static int skl_format_to_drm(int format, bool rgb_order, bool alpha, int yuv_ord
+ int vgt_get_pixel_format_skl(u32 plane_ctl,
+ 	struct vgt_common_plane_format *com_plane_fmt, enum vgt_plane_type plane)
+ {
+-	com_plane_fmt->tiled = !!(plane_ctl & PLANE_CTL_TILED_MASK);
++	com_plane_fmt->tiled = plane_ctl & PLANE_CTL_TILED_MASK;
+ 	com_plane_fmt->fmt_index = skl_format_to_drm(
+ 		plane_ctl & PLANE_CTL_FORMAT_MASK,
+ 		plane_ctl & PLANE_CTL_ORDER_RGBX,
+@@ -497,6 +497,35 @@ static void vgt_show_fb_format(int vmid, struct vgt_fb_format *fb)
+ 	destroy_dump_buffer(&buf);
+ }
+ 
++u8 vgt_get_tiling_mode(struct drm_device *dev, u32 tiling)
++{
++        u8 tiling_mode = I915_TILING_NONE;
++
++        if (IS_HASWELL(dev) || IS_BROADWELL(dev))
++                tiling_mode = (tiling ? I915_TILING_X : I915_TILING_NONE);
++        else if (IS_SKYLAKE(dev)) {
++                switch (tiling) {
++                case PLANE_CTL_TILED_LINEAR:
++                        tiling_mode = I915_TILING_NONE;
++                        break;
++                case PLANE_CTL_TILED_X:
++                        tiling_mode = I915_TILING_X;
++                        break;
++                case PLANE_CTL_TILED_Y:
++                        tiling_mode = I915_TILING_Y;
++                        break;
++                case PLANE_CTL_TILED_YF:
++                        tiling_mode = I915_TILING_YF;
++                        break;
++                default:
++                        DRM_DEBUG_DRIVER("skl: unsupported tile format:%x\n", tiling);
++                }
++        } else
++                DRM_DEBUG_DRIVER("unsupported platform!\n");
++
++        return tiling_mode;
++}
++
+ /*
+  * Decode framebuffer information from raw vMMIO
+  *
+diff --git a/drivers/gpu/drm/i915/vgt/fb_decoder.h b/drivers/gpu/drm/i915/vgt/fb_decoder.h
+index 032e934..10e7ace 100644
+--- a/drivers/gpu/drm/i915/vgt/fb_decoder.h
++++ b/drivers/gpu/drm/i915/vgt/fb_decoder.h
+@@ -30,7 +30,7 @@
+ #define MAX_DRM_STR_SZ 50
+ struct vgt_primary_plane_format {
+ 	u8	enabled;	/* plane is enabled */
+-	u8	tiled;		/* X-tiled */
++	u32	tiled;		/* tiling */
+ 	u8	bpp;		/* bits per pixel */
+ 	u32	hw_format;	/* format field in the PRI_CTL register */
+ 	u32	drm_format;	/* format in DRM definition */
+@@ -84,7 +84,7 @@ struct pixel_format {
+ 
+ struct vgt_common_plane_format {
+ 	struct pixel_format gen_pixel_format;
+-	u8 tiled;
++	u32 tiled;
+ 	int fmt_index;
+ 	int stride_mask;
+ };
+@@ -164,6 +164,7 @@ int vgt_get_pixel_format_preskl(u32 plane_ctl,
+ 	struct vgt_common_plane_format *com_plane_fmt, enum vgt_plane_type plane);
+ int vgt_get_pixel_format_skl(u32 plane_ctl,
+ 	struct vgt_common_plane_format *com_plane_fmt, enum vgt_plane_type plane);
++u8 vgt_get_tiling_mode(struct drm_device *dev, u32 tiling);
+ 
+ 
+ #endif
+diff --git a/include/uapi/drm/i915_drm.h b/include/uapi/drm/i915_drm.h
+index a2f04b3..32bf107 100644
+--- a/include/uapi/drm/i915_drm.h
++++ b/include/uapi/drm/i915_drm.h
+@@ -860,6 +860,7 @@ struct drm_i915_gem_caching {
+ #define I915_TILING_NONE	0
+ #define I915_TILING_X		1
+ #define I915_TILING_Y		2
++#define I915_TILING_YF          3
+ 
+ #define I915_BIT_6_SWIZZLE_NONE		0
+ #define I915_BIT_6_SWIZZLE_9		1
+-- 
+1.7.10.4
+

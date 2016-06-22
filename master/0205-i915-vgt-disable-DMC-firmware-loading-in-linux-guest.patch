@@ -1,0 +1,70 @@
+From 304f13ced6fd39bb493ab564a22dd0b62076272b Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Tue, 24 Nov 2015 17:55:10 +0800
+Subject: [PATCH 205/403] i915/vgt: disable DMC firmware loading in linux
+ guest
+
+v3:
+Take Kevin's comment
+- Split guest linux enabling patch into 3 patches.
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/i915_dma.c         |    6 +++---
+ drivers/gpu/drm/i915/i915_drv.h         |    2 +-
+ drivers/gpu/drm/i915/intel_runtime_pm.c |    2 +-
+ 3 files changed, 5 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/i915_dma.c b/drivers/gpu/drm/i915/i915_dma.c
+index 3c9d6d5..9de1cc7 100644
+--- a/drivers/gpu/drm/i915/i915_dma.c
++++ b/drivers/gpu/drm/i915/i915_dma.c
+@@ -945,9 +945,6 @@ int i915_driver_load(struct drm_device *dev, unsigned long flags)
+ 
+ 	intel_uncore_init(dev);
+ 
+-	/* Load CSR Firmware for SKL */
+-	intel_csr_ucode_init(dev);
+-
+ 	if (i915_start_vgt(dev->pdev))
+ 		i915_host_mediate = true;
+ 	printk("i915_start_vgt: %s\n", i915_host_mediate ? "success" : "fail");
+@@ -965,6 +962,9 @@ int i915_driver_load(struct drm_device *dev, unsigned long flags)
+ 	if (intel_vgpu_active(dev))
+ 		i915.enable_ips = 0;
+ 
++	/* Load CSR Firmware for SKL */
++	intel_csr_ucode_init(dev);
++
+ 	ret = i915_gem_gtt_init(dev);
+ 	if (ret)
+ 		goto out_freecsr;
+diff --git a/drivers/gpu/drm/i915/i915_drv.h b/drivers/gpu/drm/i915/i915_drv.h
+index 2a40dc8..b82c9a7 100644
+--- a/drivers/gpu/drm/i915/i915_drv.h
++++ b/drivers/gpu/drm/i915/i915_drv.h
+@@ -2643,7 +2643,7 @@ struct drm_i915_cmd_table {
+ #define HAS_RC6(dev)		(INTEL_INFO(dev)->gen >= 6)
+ #define HAS_RC6p(dev)		(INTEL_INFO(dev)->gen == 6 || IS_IVYBRIDGE(dev))
+ 
+-#define HAS_CSR(dev)	(IS_GEN9(dev))
++#define HAS_CSR(dev)	(IS_GEN9(dev) && (!intel_vgpu_active(dev) || i915_host_mediate))
+ 
+ #define HAS_GUC_UCODE(dev)	(IS_GEN9(dev))
+ #define HAS_GUC_SCHED(dev)	(IS_GEN9(dev))
+diff --git a/drivers/gpu/drm/i915/intel_runtime_pm.c b/drivers/gpu/drm/i915/intel_runtime_pm.c
+index e50cc88..6cdd590 100644
+--- a/drivers/gpu/drm/i915/intel_runtime_pm.c
++++ b/drivers/gpu/drm/i915/intel_runtime_pm.c
+@@ -50,7 +50,7 @@
+  */
+ 
+ #define GEN9_ENABLE_DC5(dev) 0
+-#define SKL_ENABLE_DC6(dev) IS_SKYLAKE(dev)
++#define SKL_ENABLE_DC6(dev) (HAS_CSR(dev) && IS_SKYLAKE(dev))
+ 
+ #define for_each_power_well(i, power_well, domain_mask, power_domains)	\
+ 	for (i = 0;							\
+-- 
+1.7.10.4
+

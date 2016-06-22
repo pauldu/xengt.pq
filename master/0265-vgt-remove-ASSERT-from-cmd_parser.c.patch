@@ -1,0 +1,54 @@
+From 063ee801ce6ba120b6392ed996995b930aa28ff5 Mon Sep 17 00:00:00 2001
+From: Yi Sun <yi.sun@intel.com>
+Date: Fri, 30 Oct 2015 14:54:56 +0800
+Subject: [PATCH 265/403] vgt: remove ASSERT from cmd_parser.c
+
+We should return an error code when some invalid command data occurs
+from a VM. It can be a attack if a malicious invalid GPU command
+submitted from a VM, which cause host hang.
+
+v3. Keep ASSERT_VM at the moment. We will replace it with other
+function later.
+
+v2. Refine error message for the case 'NULL address to be patched' in
+add_patch_entry
+
+Signed-off-by: Yi Sun <yi.sun@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |   13 +++++++++++--
+ 1 file changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index c579b1e..ed7a355 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -128,7 +128,11 @@ static inline int add_patch_entry(struct parser_exec_state *s,
+ 	struct cmd_patch_info *patch;
+ 	int next;
+ 
+-	ASSERT(addr != NULL);
++	if (addr == NULL) {
++		vgt_err("VM(%d) CMD_SCAN: NULL address to be patched\n",
++				s->vgt->vgt_id);
++		return -EINVAL;
++	}
+ 
+ 	next = get_next_entry(list);
+ 	if (next == list->count) {
+@@ -2564,7 +2568,12 @@ static int __vgt_scan_vring(struct vgt_device *vgt, int ring_id, vgt_reg_t head,
+ 	while(s.ip_gma != gma_tail){
+ 		s.cmd_issue_irq = false;
+ 		if (s.buf_type == RING_BUFFER_INSTRUCTION){
+-			ASSERT((s.ip_gma >= base) && (s.ip_gma < gma_bottom));
++			if (!(s.ip_gma >= base) || !(s.ip_gma < gma_bottom)) {
++				vgt_err("VM(%d) vgt_scan_vring: GMA(%lx)'s out of range\n",
++						vgt->vgt_id, s.ip_gma);
++				rc = -EINVAL;
++				goto out;
++			};
+ 			if (gma_out_of_range(s.ip_gma, gma_head, gma_tail)) {
+ 				vgt_err("ERROR: ip_gma %lx out of range."
+ 					"(base:0x%x, head: 0x%x, tail: 0x%x)\n",
+-- 
+1.7.10.4
+

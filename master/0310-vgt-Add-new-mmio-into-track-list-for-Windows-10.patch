@@ -1,0 +1,55 @@
+From 69026c20b5f9b098bcbae93c36f851c320e32f3a Mon Sep 17 00:00:00 2001
+From: Yulei Zhang <yulei.zhang@intel.com>
+Date: Fri, 8 Jan 2016 16:52:09 +0800
+Subject: [PATCH 310/403] vgt: Add new mmio into track list for Windows 10
+
+In this patch, the following macro is added:
+	#define _RING_FAULT_REG(ring)   (0x4094 + 0x100*(ring))
+
+The corresponding macro in i915 is:
+	#define RING_FAULT_REG(ring)	(0x4094 + 0x100*(ring)->id)
+
+And new mmio added for Windows 10 are:
+	0x4260
+	0x4264
+	0x4268
+	0x426c
+	0x4270
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |    8 ++++++++
+ drivers/gpu/drm/i915/vgt/reg.h      |    2 ++
+ 2 files changed, 10 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index ca0bbf8..3254a1a 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -3543,6 +3543,14 @@ reg_attr_t vgt_reg_info_general[] = {
+ 
+ /* BDW */
+ {0xe100, 4, F_RDR_MODE, 0, D_ALL, NULL, NULL},
++
++{0x4260, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++{0x4264, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++{0x4268, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++{0x426c, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++{0x4270, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++
++{_RING_FAULT_REG(RING_BUFFER_RCS), 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
+ };
+ 
+ reg_attr_t vgt_reg_info_bdw[] = {
+diff --git a/drivers/gpu/drm/i915/vgt/reg.h b/drivers/gpu/drm/i915/vgt/reg.h
+index 4e338f3..b3764bd 100644
+--- a/drivers/gpu/drm/i915/vgt/reg.h
++++ b/drivers/gpu/drm/i915/vgt/reg.h
+@@ -1029,4 +1029,6 @@ union _TRANS_CONFIG
+ #define _REG_701C0(pipe, plane) (0x701c0 + pipe * 0x1000 + (plane - 1) * 0x100)
+ #define _REG_701C4(pipe, plane) (0x701c4 + pipe * 0x1000 + (plane - 1) * 0x100)
+ 
++#define _RING_FAULT_REG(ring)	(0x4094 + 0x100*(ring))
++
+ #endif	/* _VGT_REG_H_ */
+-- 
+1.7.10.4
+

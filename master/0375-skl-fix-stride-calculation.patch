@@ -1,0 +1,70 @@
+From 394dd3d83d420b6c2c9106b966a353f6cba35ea1 Mon Sep 17 00:00:00 2001
+From: Xiaoguang Chen <xiaoguang.chen@intel.com>
+Date: Wed, 2 Mar 2016 13:24:31 +0800
+Subject: [PATCH 375/403] skl: fix stride calculation
+
+Wrong stride will lead to a lot of weried problems while using
+composite display.
+
+Signed-off-by: xiaoguang chen <xiaoguang.chen@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/fb_decoder.c |   36 ++++++++++++++++++++++++++++++++-
+ 1 file changed, 35 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/fb_decoder.c b/drivers/gpu/drm/i915/vgt/fb_decoder.c
+index f4042b0..5a0092b 100644
+--- a/drivers/gpu/drm/i915/vgt/fb_decoder.c
++++ b/drivers/gpu/drm/i915/vgt/fb_decoder.c
+@@ -204,6 +204,39 @@ int vgt_get_pixel_format_preskl(u32 plane_ctl,
+ 	return 0;
+ }
+ 
++static u32 vgt_get_stride(struct vgt_device *vgt, int pipe, u32 tiled,
++			int stride_mask, int bpp)
++{
++	u32 stride_reg = __vreg(vgt, VGT_DSPSTRIDE(pipe)) & stride_mask;
++	u32 stride = stride_reg;
++
++	if (IS_SKLPLUS(vgt->pdev)) {
++		switch (tiled) {
++		case PLANE_CTL_TILED_LINEAR:
++			stride = stride_reg * 64;
++			break;
++		case PLANE_CTL_TILED_X:
++			stride = stride_reg * 512;
++			break;
++		case PLANE_CTL_TILED_Y:
++			stride = stride_reg * 128;
++			break;
++		case PLANE_CTL_TILED_YF:
++			if (bpp == 8)
++				stride = stride_reg * 64;
++			else if (bpp == 16 || bpp == 32 || bpp == 64)
++				stride = stride_reg * 128;
++			else
++				vgt_warn("skl: unsupported bpp:%d\n", bpp);
++			break;
++		default:
++			vgt_warn("skl: unsupported tile format:%x\n", tiled);
++		}
++	}
++
++        return stride;
++}
++
+ int vgt_decode_primary_plane_format(struct vgt_device *vgt,
+ 	int pipe, struct vgt_primary_plane_format *plane)
+ {
+@@ -236,7 +269,8 @@ int vgt_decode_primary_plane_format(struct vgt_device *vgt,
+ 	memcpy(plane->drm_fmt_desc, com_plane_fmt.gen_pixel_format.desc, MAX_DRM_STR_SZ);
+ 
+ 	plane->base = __vreg(vgt, VGT_DSPSURF(pipe)) & GTT_PAGE_MASK;
+-	plane->stride = __vreg(vgt, VGT_DSPSTRIDE(pipe)) & com_plane_fmt.stride_mask;
++	plane->stride = vgt_get_stride(vgt, pipe, plane->tiled,
++					com_plane_fmt.stride_mask, plane->bpp);
+ 
+ 	plane->width = (__vreg(vgt, VGT_PIPESRC(pipe)) & _PIPE_H_SRCSZ_MASK) >>
+ 				_PIPE_H_SRCSZ_SHIFT;
+-- 
+1.7.10.4
+

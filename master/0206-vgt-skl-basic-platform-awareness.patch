@@ -1,0 +1,257 @@
+From 153bed322ed3464238512b30526419ed9906b654 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Fri, 6 Nov 2015 01:00:26 +0800
+Subject: [PATCH 206/403] vgt/skl: basic platform awareness
+
+This patch introduce the very basic platform awareness of XenGT on SKL
+
+a) Device PCI IDS.
+b) The length of execlist context has been extended into 22 pages.
+c) Other definitions used by XenGT platform specific routines.
+
+v2:
+
+- Take Kevin's comments: Broadwell is not a preliminary platform any longer.
+
+v3:
+
+- Take Kevin's comments: Put the execlist status emulation fix into seprate
+patch.
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |    2 +-
+ drivers/gpu/drm/i915/vgt/devtable.h   |   31 +++++++++++++++++++++++++++++++
+ drivers/gpu/drm/i915/vgt/execlists.h  |    2 +-
+ drivers/gpu/drm/i915/vgt/gtt.c        |    2 +-
+ drivers/gpu/drm/i915/vgt/interrupt.c  |    2 +-
+ drivers/gpu/drm/i915/vgt/vgt.c        |   22 +++++++++++++++-------
+ drivers/gpu/drm/i915/vgt/vgt.h        |   28 +++++++++++++++++++---------
+ 7 files changed, 69 insertions(+), 20 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index 69583b6..339f577 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -1388,7 +1388,7 @@ static int batch_buffer_needs_scan(struct parser_exec_state *s)
+ {
+ 	struct pgt_device *pdev = s->vgt->pdev;
+ 
+-	if (IS_BDW(pdev)) {
++	if (IS_BDW(pdev) || IS_SKL(pdev)) {
+ 		/* BDW decides privilege based on address space */
+ 		if (cmd_val(s, 0) & (1 << 8))
+ 			return 0;
+diff --git a/drivers/gpu/drm/i915/vgt/devtable.h b/drivers/gpu/drm/i915/vgt/devtable.h
+index 3389d46..1e5ee39 100644
+--- a/drivers/gpu/drm/i915/vgt/devtable.h
++++ b/drivers/gpu/drm/i915/vgt/devtable.h
+@@ -144,4 +144,35 @@ static inline int _is_broadwell(int devid)
+ 	return 1;
+ }
+ 
++static inline int _is_skylake(int devid)
++{
++	switch ((devid >> 4) & 0xf) {
++		case 0:
++		case 1:
++		case 2:
++		case 3:
++			break;
++		default:
++			return 0;
++	}
++
++	devid &= ~0xf0;
++
++	switch (devid) {
++		case 0x1901:
++		case 0x1902:
++		case 0x1906:
++		case 0x190B:
++		case 0x190E:
++		case 0x190A:
++		case 0x190D:
++			break;
++		default:
++			return 0;
++	}
++
++	return 1;
++}
++
++
+ #endif  /* _VGT_DEVTABLE_H */
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.h b/drivers/gpu/drm/i915/vgt/execlists.h
+index 88d8ed40..857847e 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.h
++++ b/drivers/gpu/drm/i915/vgt/execlists.h
+@@ -28,7 +28,7 @@
+ 
+ #define vgt_require_shadow_context(vgt)	(!((vgt) && (vgt->vgt_id == 0)))
+ 
+-#define MAX_EXECLIST_CTX_PAGES	20
++#define MAX_EXECLIST_CTX_PAGES	22
+ #define ELSP_BUNDLE_NUM		4
+ #define EXECLIST_CTX_SIZE (SIZE_PAGE * MAX_EXECLIST_CTX_PAGES)
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index 7441345..0c9f5c4 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -2052,7 +2052,7 @@ bool vgt_gtt_init(struct pgt_device *pdev)
+ 			preallocated_shadow_pages = 512;
+ 		if (preallocated_oos_pages == -1)
+ 			preallocated_oos_pages = 2048;
+-	} else if (IS_BDW(pdev)) {
++	} else if (IS_BDW(pdev) || IS_SKL(pdev)) {
+ 		pdev->gtt.pte_ops = &gen8_gtt_pte_ops;
+ 		pdev->gtt.gma_ops = &gen8_gtt_gma_ops;
+ 		pdev->gtt.mm_alloc_page_table = gen8_mm_alloc_page_table;
+diff --git a/drivers/gpu/drm/i915/vgt/interrupt.c b/drivers/gpu/drm/i915/vgt/interrupt.c
+index 77f9475..a007bd1 100644
+--- a/drivers/gpu/drm/i915/vgt/interrupt.c
++++ b/drivers/gpu/drm/i915/vgt/interrupt.c
+@@ -2051,7 +2051,7 @@ int vgt_irq_init(struct pgt_device *pdev)
+ 	} else if (IS_IVB(pdev) || IS_HSW(pdev)) {
+ 		hstate->ops = &vgt_base_irq_ops;
+ 		hstate->irq_map = base_irq_map;
+-	} else if (IS_BDW(pdev)) {
++	} else if (IS_BDW(pdev) || IS_SKL(pdev)) {
+ 		hstate->ops = &vgt_gen8_irq_ops;
+ 		hstate->irq_map = gen8_irq_map;
+ 	} else {
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 836398d..df61e9e6 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -543,6 +543,12 @@ static bool vgt_set_device_type(struct pgt_device *pdev)
+ 		return true;
+ 	}
+ 
++	if (_is_skylake(pdev->pdev->device)) {
++		pdev->gen_dev_type = IGD_SKL;
++		vgt_info("Detected Skylake\n");
++		return true;
++	}
++
+ 	vgt_err("Unknown chip 0x%x\n", pdev->pdev->device);
+ 	return false;
+ }
+@@ -554,15 +560,15 @@ static bool vgt_initialize_device_info(struct pgt_device *pdev)
+ 	if (!vgt_set_device_type(pdev))
+ 		return false;
+ 
+-	if (!IS_HSW(pdev) && !IS_BDW(pdev)) {
++	if (!IS_HSW(pdev) && !IS_BDW(pdev) && !IS_SKL(pdev)) {
+ 		vgt_err("Unsupported gen_dev_type(%s)!\n",
+ 			IS_IVB(pdev) ?
+ 			"IVB" : "SNB(or unknown GEN types)");
+ 		return false;
+ 	}
+ 
+-	if (IS_BDW(pdev) && !vgt_preliminary_hw_support) {
+-		vgt_err("VGT haven't fully supported preliminary platform: broadwell.\n");
++	if (IS_SKL(pdev) && !vgt_preliminary_hw_support) {
++		vgt_err("VGT haven't fully supported preliminary platform: skylake.\n");
+ 		return false;
+ 	}
+ 
+@@ -580,8 +586,10 @@ static bool vgt_initialize_device_info(struct pgt_device *pdev)
+ 		info->gtt_entry_size = 4;
+ 		info->gtt_entry_size_shift = 2;
+ 		info->gmadr_bytes_in_cmd = 4;
+-	} else if (IS_BDW(pdev)) {
+-		info->gen = MKGEN(8, 0, ((pdev->pdev->device >> 4) & 0xf) + 1);
++	} else if (IS_BDW(pdev) || IS_SKL(pdev)) {
++		int gen = IS_BDW(pdev) ? 8 : 9;
++
++		info->gen = MKGEN(gen, 0, ((pdev->pdev->device >> 4) & 0xf) + 1);
+ 		info->max_gtt_gm_sz = (1UL << 32);
+ 		/*
+ 		 * The layout of BAR0 in BDW:
+@@ -614,7 +622,7 @@ static bool vgt_initialize_device_info(struct pgt_device *pdev)
+ static bool vgt_initialize_platform(struct pgt_device *pdev)
+ {
+ 	/* check PPGTT enabling. */
+-	if (IS_IVB(pdev) || IS_HSW(pdev) || IS_BDW(pdev))
++	if (IS_IVB(pdev) || IS_HSW(pdev) || IS_BDWPLUS(pdev))
+ 		pdev->enable_ppgtt = 1;
+ 
+ 	/* execlist depends on ppgtt */
+@@ -654,7 +662,7 @@ static bool vgt_initialize_platform(struct pgt_device *pdev)
+ 		pdev->ring_xxx_bit[RING_BUFFER_BCS] = 2;
+ 		pdev->ring_xxx_bit[RING_BUFFER_VECS] = 10;
+ 		pdev->ring_xxx_valid = 1;
+-	} else if (IS_BDW(pdev)) {
++	} else if (IS_BDWPLUS(pdev)) {
+ 		pdev->max_engines = 4;
+ 		pdev->ring_mmio_base[RING_BUFFER_VECS] = _REG_VECS_TAIL;
+ 		pdev->ring_mi_mode[RING_BUFFER_VECS] = _REG_VECS_MI_MODE;
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index bd962e8..d08297a 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -708,33 +708,41 @@ static inline bool reg_hw_access(struct vgt_device *vgt, unsigned int reg)
+ #define IGD_IVB		2
+ #define IGD_HSW		3
+ #define IGD_BDW		4
+-#define IGD_MAX		IGD_BDW
++#define IGD_SKL		5
++#define IGD_MAX		IGD_SKL
+ 
+ #define IS_SNB(pdev)	((pdev)->gen_dev_type == IGD_SNB)
+ #define IS_IVB(pdev)	((pdev)->gen_dev_type == IGD_IVB)
+ #define IS_HSW(pdev)	((pdev)->gen_dev_type == IGD_HSW)
+ #define IS_BDW(pdev)	((pdev)->gen_dev_type == IGD_BDW)
++#define IS_SKL(pdev)	((pdev)->gen_dev_type == IGD_SKL)
+ 
+ #define IS_PREBDW(pdev) (IS_SNB(pdev) || IS_IVB(pdev) || IS_HSW(pdev))
+-#define IS_BDWPLUS(pdev) (IS_BDW(pdev))
++#define IS_BDWPLUS(pdev) (IS_BDW(pdev) || IS_SKL(pdev))
++#define IS_PRESKL(pdev) (IS_BDW(pdev) || IS_HSW(pdev) || IS_IVB(pdev) || IS_SNB(pdev))
++#define IS_SKLPLUS(pdev) (IS_SKL(pdev))
+ #define IS_BDWGT3(pdev) (IS_BDW(pdev) && (GEN_REV(pdev->device_info.gen) == 3))
+ 
+ #define D_SNB	(1 << 0)
+ #define D_IVB	(1 << 1)
+ #define D_HSW	(1 << 2)
+ #define D_BDW	(1 << 3)
++#define D_SKL	(1 << 4)
+ 
+-#define D_GEN8PLUS	(D_BDW)
+-#define D_GEN75PLUS	(D_HSW | D_BDW)
+-#define D_GEN7PLUS	(D_IVB | D_HSW | D_BDW)
++#define D_GEN9PLUS	(D_SKL)
++#define D_GEN8PLUS	(D_BDW | D_SKL)
++#define D_GEN75PLUS	(D_HSW | D_BDW | D_SKL)
++#define D_GEN7PLUS	(D_IVB | D_HSW | D_BDW | D_SKL)
+ 
+-#define D_BDW_PLUS	(D_BDW)
+-#define D_HSW_PLUS	(D_HSW | D_BDW)
+-#define D_IVB_PLUS	(D_IVB | D_HSW | D_BDW)
++#define D_SKL_PLUS	(D_SKL)
++#define D_BDW_PLUS	(D_BDW | D_SKL)
++#define D_HSW_PLUS	(D_HSW | D_BDW | D_SKL)
++#define D_IVB_PLUS	(D_IVB | D_HSW | D_BDW | D_SKL)
+ 
+ #define D_PRE_BDW	(D_SNB | D_IVB | D_HSW)
++#define D_PRE_SKL	(D_SNB | D_IVB | D_HSW | D_BDW)
+ 
+-#define D_ALL		(D_SNB | D_IVB | D_HSW | D_BDW)
++#define D_ALL		(D_SNB | D_IVB | D_HSW | D_BDW | D_SKL)
+ 
+ /*
+  * Comments copied from i915 driver - i915_reg.h :
+@@ -762,6 +770,8 @@ static inline unsigned int vgt_gen_dev_type(struct pgt_device *pdev)
+ 		return D_HSW;
+ 	if (IS_BDW(pdev))
+ 		return D_BDW;
++	if (IS_SKL(pdev))
++		return D_SKL;
+ 	WARN_ONCE(1, KERN_ERR "vGT: unknown GEN type!\n");
+ 	return 0;
+ }
+-- 
+1.7.10.4
+

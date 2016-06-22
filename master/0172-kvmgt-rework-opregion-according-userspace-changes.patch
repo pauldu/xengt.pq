@@ -1,0 +1,134 @@
+From b98208ce8645682316955d4959da2f5f1af99ad9 Mon Sep 17 00:00:00 2001
+From: Jike Song <jike.song@intel.com>
+Date: Thu, 17 Sep 2015 10:37:26 +0800
+Subject: [PATCH 172/403] kvmgt: rework opregion according userspace changes
+
+Now in QEMU we have the OpRegion backed by normal memory, so
+in kernel we should also initialize the region by pin user
+hva and map it.
+
+This patch also renamed the workaround indicator 'vgt_in_xen'
+to 'opregion_present', since opregion is the only differece
+that not handled by MPT implementation.
+
+Signed-off-by: Xiaoguang Chen <xiaoguang.chen@intel.com>
+Signed-off-by: Jike Song <jike.song@intel.com>
+diff --git a/drivers/gpu/drm/i915/vgt/instance.c b/drivers/gpu/drm/i915/vgt/instance.c
+index ba932dd..7a686a5 100644
+--- a/drivers/gpu/drm/i915/vgt/instance.c
++++ b/drivers/gpu/drm/i915/vgt/instance.c
+@@ -288,9 +288,8 @@ int create_vgt_instance(struct pgt_device *pdev, struct vgt_device **ptr_vgt, vg
+ 			current_config_owner(pdev) = vgt;
+ 			current_foreground_vm(pdev) = vgt;
+ 		}
+-		if (!vgt_in_xen) {
+-			vgt_info("kvmgt:emulating a writing 0xfc opregion for VM%d\n",
+-						vgt->vm_id);
++		if (opregion_present) {
++			vgt_info("writing virtual 0xfc opregion for VM%d\n", vgt->vm_id);
+ 			vgt_hvm_opregion_init(vgt, 0);
+ 		}
+ 	}
+@@ -403,8 +402,8 @@ void vgt_release_instance(struct vgt_device *vgt)
+ 	vgt_clean_vgtt(vgt);
+ 
+ 	if (vgt->state.opregion_va) {
+-		if (!vgt_in_xen) {
+-			vunmap(vgt->state.opregion_va - vgt->state.opregion_offset);
++		if (opregion_present) {
++			vunmap(vgt->state.opregion_va);
+ 			for (i = 0; i < VGT_OPREGION_PAGES; i++)
+ 				put_page(vgt->state.opregion_pages[i]);
+ 		} else {
+diff --git a/drivers/gpu/drm/i915/vgt/mmio.c b/drivers/gpu/drm/i915/vgt/mmio.c
+index 6307f1e..6d40be4 100644
+--- a/drivers/gpu/drm/i915/vgt/mmio.c
++++ b/drivers/gpu/drm/i915/vgt/mmio.c
+@@ -568,19 +568,28 @@ int vgt_hvm_opregion_map(struct vgt_device *vgt, int map)
+ 
+ int vgt_hvm_opregion_init(struct vgt_device *vgt, uint32_t gpa)
+ {
+-	if (!vgt_in_xen || vgt_hvm_opregion_resinit(vgt, gpa)) {
+-
+-		/* modify the vbios parameters for PORTs,
+-		 * Let guest see full port capability.
+-		 */
+-		if (!propagate_monitor_to_guest && !is_current_display_owner(vgt)) {
+-			vgt_prepare_vbios_general_definition(vgt);
+-		}
+-
+-		return vgt_hvm_opregion_map(vgt, 1);
++	if (!opregion_present) {
++		/* Need to allocate pages from host kernel */
++		vgt_hvm_opregion_resinit(vgt, gpa);
++		vgt_hvm_opregion_map(vgt, 1);
++	} else {
++		/* If opregion pages are not allocated from host kenrel, most of
++		 * the params are meaningless */
++		hypervisor_map_mfn_to_gpfn(vgt,
++				0, //not used
++				0, //not used
++				2, //not used
++				1,
++				VGT_MAP_OPREGION);
+ 	}
+ 
+-	return false;
++	/* modify the vbios parameters for PORTs,
++	 * Let guest see full port capability.
++	 */
++	if (!propagate_monitor_to_guest && !is_current_display_owner(vgt))
++		vgt_prepare_vbios_general_definition(vgt);
++
++	return 0;
+ }
+ 
+ void vgt_initial_opregion_setup(struct pgt_device *pdev)
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index c3bd438..2e13662 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -38,7 +38,12 @@ MODULE_VERSION("0.1");
+ extern struct kernel_dm xengt_kdm;
+ extern struct kernel_dm kvmgt_kdm;
+ struct kernel_dm *vgt_pkdm = NULL;
+-bool vgt_in_xen __read_mostly = true;
++
++/*
++ * opregion pages could be logically present for a VM like KVMGT guest.
++ * In this case, don't allocate pages from host kernel in vgt.
++ */
++bool opregion_present __read_mostly = false;
+ 
+ bool hvm_render_owner = false;
+ module_param_named(hvm_render_owner, hvm_render_owner, bool, 0600);
+@@ -1285,7 +1290,7 @@ bool i915_start_vgt(struct pci_dev *pdev)
+ 		if (!vgt_pkdm)
+ 			return false;
+ 
+-		vgt_in_xen = false;
++		opregion_present = true;
+ 	}
+ 
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 83a9c74..6c9c842 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -102,7 +102,7 @@ extern bool spt_out_of_sync;
+ extern bool cmd_parser_ip_buf;
+ extern bool timer_based_qos;
+ extern int tbs_period_ms;
+-extern bool vgt_in_xen;
++extern bool opregion_present;
+ 
+ #define vgt_dbg(component, fmt, s...)	\
+ 	do { if (vgt_debug & component) printk(KERN_DEBUG "vGT debug:(%s:%d) " fmt, __FUNCTION__, __LINE__, ##s); } while (0)
+@@ -169,7 +169,6 @@ typedef struct {
+ 
+ 	/* OpRegion state */
+ 	void		*opregion_va;
+-	uint64_t    opregion_offset;
+ 	uint64_t	opregion_gfn[VGT_OPREGION_PAGES];
+ 	struct page *opregion_pages[VGT_OPREGION_PAGES];
+ } vgt_state_t;

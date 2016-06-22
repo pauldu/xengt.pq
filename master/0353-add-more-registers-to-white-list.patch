@@ -1,0 +1,38 @@
+From 5d88ef798d7690de54808e90fcc7d94ab885133a Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Wed, 24 Feb 2016 11:16:24 +0800
+Subject: [PATCH 353/403] add more registers to white list
+
+add registers accessed from indirect ctx, they are for WA.
+
+fix bug #1011
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |   10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 1fe104f..ae88935 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -3662,6 +3662,16 @@ reg_attr_t vgt_reg_info_general[] = {
+ };
+ 
+ reg_attr_t vgt_reg_info_bdw[] = {
++/* WA in indirect ctx */
++{0xe220, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++{0xe230, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++{0xe240, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++{0xe260, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++{0xe270, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++{0xe280, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++{0xe2a0, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++{0xe2b0, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++{0xe2c0, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
+ 
+ /* Interrupt registers - GT */
+ {_REG_VCS2_IMR, 4, F_RDR, 0, D_BDW_PLUS, NULL, vgt_reg_imr_handler},
+-- 
+1.7.10.4
+

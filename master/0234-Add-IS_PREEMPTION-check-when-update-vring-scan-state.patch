@@ -1,0 +1,36 @@
+From cfdacbf6171acd27dedf1b655f00a60a4b88e567 Mon Sep 17 00:00:00 2001
+From: Weinan Li <weinan.z.li@intel.com>
+Date: Fri, 27 Nov 2015 16:02:35 +0800
+Subject: [PATCH 234/403] Add IS_PREEMPTION check when update vring scan
+ state.
+
+We have Lite_Resote case, the new el_ctx ring head = last head,
+and we need to scan the command buffer begin at last_scan_head.
+But we have special case it have same state as Lite_Restore,
+but one resubmission. For this case,
+we need to use the ring head as scan head.
+Bug Fix: 899
+
+Signed-off-by: Weinan Li <weinan.z.li@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |    4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 686f377..1cdb457 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -1433,7 +1433,9 @@ static void vgt_update_ring_info(struct vgt_device *vgt,
+ 		IS_PREEMPTION_RESUBMISSION(vring->head, vring->tail,
+ 		el_ctx->last_scan_head), current_foreground_vm(vgt->pdev) == vgt);
+ #endif
+-	if (el_ctx->last_guest_head == vring->head) {
++	if ((el_ctx->last_guest_head == vring->head)
++		&& !IS_PREEMPTION_RESUBMISSION(vring->head, vring->tail,
++			el_ctx->last_scan_head)) {
+ 		/* For lite-restore case from Guest, Headers are fixed,
+ 		 HW only resample tail */
+ 		vgt->rb[ring_id].last_scan_head = el_ctx->last_scan_head;
+-- 
+1.7.10.4
+

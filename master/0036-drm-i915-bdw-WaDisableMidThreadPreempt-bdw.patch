@@ -1,0 +1,49 @@
+From 6e0e4459211bb346657cbe69548f1195f0b30947 Mon Sep 17 00:00:00 2001
+From: Rodrigo Vivi <rodrigo.vivi@intel.com>
+Date: Wed, 1 Apr 2015 13:43:07 -0700
+Subject: [PATCH 036/403] drm/i915/bdw: WaDisableMidThreadPreempt:bdw
+
+Disable GPGPU thread-level (a.k.a. mid-thread) preemption.
+
+Although we don't support preemption yet, it is safer to let
+it disabled already.
+
+Signed-off-by: Rodrigo Vivi <rodrigo.vivi@intel.com>
+---
+ drivers/gpu/drm/i915/i915_reg.h |    3 +++
+ drivers/gpu/drm/i915/intel_pm.c |    5 +++++
+ 2 files changed, 8 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/i915_reg.h b/drivers/gpu/drm/i915/i915_reg.h
+index 5bd6c43..c918ae1 100644
+--- a/drivers/gpu/drm/i915/i915_reg.h
++++ b/drivers/gpu/drm/i915/i915_reg.h
+@@ -1847,6 +1847,9 @@ enum skl_disp_power_wells {
+ #define   MI_AGPBUSY_INT_EN			(1 << 1) /* 85x only */
+ #define   MI_AGPBUSY_830_MODE			(1 << 0) /* 85x only */
+ 
++#define GEN8_FF_SLICE_CS_CHICKEN2		0x20e4
++#define   GEN8_THREAD_GROUP_PREEMPTION		(1<<1)
++
+ #define CACHE_MODE_0	0x02120 /* 915+ only */
+ #define   CM0_PIPELINED_RENDER_FLUSH_DISABLE (1<<8)
+ #define   CM0_IZ_OPT_DISABLE      (1<<6)
+diff --git a/drivers/gpu/drm/i915/intel_pm.c b/drivers/gpu/drm/i915/intel_pm.c
+index d578841..4f12510 100644
+--- a/drivers/gpu/drm/i915/intel_pm.c
++++ b/drivers/gpu/drm/i915/intel_pm.c
+@@ -6583,6 +6583,11 @@ static void haswell_init_clock_gating(struct drm_device *dev)
+ 	I915_WRITE(GEN8_L3SQCREG4, I915_READ(GEN8_L3SQCREG4) |
+ 		   GEN8_PIPELINE_FLUSH_COHERENT_LINES);
+ 
++	/* WaDisableMidThreadPreempt:bdw */
++	I915_WRITE(GEN8_FF_SLICE_CS_CHICKEN2,
++		   I915_READ(GEN8_FF_SLICE_CS_CHICKEN2) |
++		   GEN8_THREAD_GROUP_PREEMPTION);
++
+ 	lpt_init_clock_gating(dev);
+ }
+ 
+-- 
+1.7.10.4
+

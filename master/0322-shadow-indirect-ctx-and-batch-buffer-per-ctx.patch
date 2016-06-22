@@ -1,0 +1,403 @@
+From 2ac5b30f656756e8728cd5f8ad6d8af5e96938bc Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Tue, 26 Jan 2016 20:49:32 +0800
+Subject: [PATCH 322/403] shadow indirect ctx and batch buffer per ctx
+
+Generate shadow buffer for indirect ctx and bb per ctx, and audit them.
+To take advantage of the cmd scan and address audit framework, logically
+take the indirect ctx as ring buffer and bb per ctx as privilege
+bb, they're combined by insert MI_BATCH_BUFFER_START which point to the
+bb per ctx at the end of indirect context.
+
+                                             /
+                              end by ctx size|
+                                             |
+    indirect ctx, align with 64Byte          |
+   /-----------------/-----------------------\---------------------/
+   |*****************|***********************|                     |
+   |*****************|***********************|MI_BATCH_BUFFER_START|
+   \-----------------\----------------------,.---------------------\
+                                           -` extra space for insert
+                                        ,-`   MI_BATCH_BUFFER_START
+                                      ,'      point to the bb per ctx
+                                    .`
+                                   +-----------------------+
+                                   |***********************|
+                                   |***********************| end by mi_bb_end
+                                   +-----------------------+
+                                    batch buffer per ctx
+
+With this commit, the HW will execute the trust shadow indirect ctx and
+bb per ctx instead of the guest maintained, it will be enabled in a
+separated commit.
+
+Below macro added, they are just masks without IP issue,
+ #define INDIRECT_CTX_ADDR_MASK 0xffffffc0
+ #define INDIRECT_CTX_SIZE_MASK 0x3f
+ #define BB_PER_CTX_ADDR_MASK 0xfffff000
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |  102 ++++++++++++++++++++++++++++++++-
+ drivers/gpu/drm/i915/vgt/execlists.c  |  102 +++++++++++++++++++++++++++++++++
+ drivers/gpu/drm/i915/vgt/execlists.h  |   15 +++++
+ drivers/gpu/drm/i915/vgt/vgt.c        |    6 ++
+ drivers/gpu/drm/i915/vgt/vgt.h        |    1 +
+ 5 files changed, 225 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index 9b66391..fe93164 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -2987,6 +2987,81 @@ static int vgt_copy_rb_to_shadow(struct vgt_device *vgt,
+ 	return 0;
+ }
+ 
++static int vgt_copy_indirect_ctx_to_shadow(struct vgt_device *vgt,
++				  struct execlist_context *el_ctx)
++
++{
++	uint32_t left_len = el_ctx->shadow_indirect_ctx.ctx_size;
++	unsigned long  vbase = el_ctx->shadow_indirect_ctx.guest_ctx_base;
++	unsigned long  sbase = el_ctx->shadow_indirect_ctx.shadow_ctx_base;
++	uint32_t ctx_offset = 0;
++	void *ip_sva = NULL;
++
++	if (!left_len)
++		return 0;
++
++	ASSERT(el_ctx->ring_id == 0);
++
++	while (left_len > 0) {
++		void *ip_va;
++		uint32_t ip_buf_len;
++		uint32_t copy_len;
++
++		ip_va = vgt_gma_to_va(vgt->gtt.ggtt_mm, vbase + ctx_offset);
++		if (ip_va == NULL) {
++			vgt_err("VM-%d: gma %lx is invalid in indirect ctx!\n",
++				vgt->vm_id, vbase + ctx_offset);
++			dump_stack();
++			return -EFAULT;
++		}
++
++		ip_buf_len = PAGE_SIZE - ((vbase + ctx_offset) & (PAGE_SIZE - 1));
++		if (left_len <= ip_buf_len)
++			copy_len = left_len;
++		else
++			copy_len = ip_buf_len;
++
++		ip_sva = rsvd_gma_to_sys_va(vgt->pdev, sbase + ctx_offset);
++		hypervisor_read_va(vgt, ip_va, ip_sva, copy_len, 1);
++
++		left_len -= copy_len;
++		ctx_offset = ctx_offset + copy_len;
++	}
++
++	return 0;
++}
++
++static int vgt_combine_indirect_ctx_bb(struct vgt_device *vgt,
++				  struct execlist_context *el_ctx)
++{
++	unsigned long sbase = el_ctx->shadow_indirect_ctx.shadow_ctx_base;
++	uint32_t ctx_size = el_ctx->shadow_indirect_ctx.ctx_size;
++	void *bb_start_sva;
++	uint32_t bb_per_ctx_start[CACHELINE_DWORDS] = {0x18800001, 0x0, 0x00000000};
++
++	if (!el_ctx->shadow_bb_per_ctx.guest_bb_base) {
++		vgt_err("invalid bb per ctx address\n");
++		return -1;
++	}
++
++	bb_per_ctx_start[1] = el_ctx->shadow_bb_per_ctx.guest_bb_base;
++	bb_start_sva = rsvd_gma_to_sys_va(vgt->pdev, sbase + ctx_size);
++	memcpy(bb_start_sva, bb_per_ctx_start, CACHELINE_BYTES);
++
++	return 0;
++}
++
++static void vgt_get_bb_per_ctx_shadow_base(struct vgt_device *vgt,
++				  struct execlist_context *el_ctx)
++{
++	unsigned long ctx_sbase = el_ctx->shadow_indirect_ctx.shadow_ctx_base;
++	uint32_t ctx_size = el_ctx->shadow_indirect_ctx.ctx_size;
++	void *va_bb = rsvd_gma_to_sys_va(vgt->pdev, ctx_sbase + ctx_size);
++
++	el_ctx->shadow_bb_per_ctx.shadow_bb_base = *((unsigned int *)va_bb + 1);
++	memset(va_bb, 0, CACHELINE_BYTES);
++}
++
+ /*
+  * Scan the guest ring.
+  *   Return 0: success
+@@ -2998,7 +3073,7 @@ int vgt_scan_vring(struct vgt_device *vgt, int ring_id)
+ 	vgt_ringbuffer_t *vring = &rs->vring;
+ 	int ret = 0;
+ 	cycles_t t0, t1;
+-	uint32_t rb_base;
++	uint32_t rb_base, ctx_base;
+ 	struct vgt_statistics *stat = &vgt->stat;
+ 
+ 	t0 = get_cycles();
+@@ -3031,8 +3106,33 @@ int vgt_scan_vring(struct vgt_device *vgt, int ring_id)
+ 		rs->last_scan_head = vring->tail;
+ 	}
+ 
++	if (ret)
++		goto err;
++
++
++	if (shadow_indirect_ctx_bb) {
++		ret = vgt_copy_indirect_ctx_to_shadow(vgt, rs->el_ctx);
++		ctx_base = rs->el_ctx->shadow_indirect_ctx.shadow_ctx_base;
++		if (ret == 0 && ctx_base) {
++			ret = vgt_combine_indirect_ctx_bb(vgt, rs->el_ctx);
++			if (ret)
++				goto err;
++			ret = __vgt_scan_vring(vgt, ring_id, 0,
++				rs->el_ctx->shadow_indirect_ctx.ctx_size +
++							CACHELINE_BYTES,
++				ctx_base,
++				rs->el_ctx->shadow_indirect_ctx.ctx_size +
++							CACHELINE_BYTES,
++				true);
++			vgt_get_bb_per_ctx_shadow_base(vgt, rs->el_ctx);
++		}
++
++	}
++
+ 	t1 = get_cycles();
+ 	stat->vring_scan_cycles += t1 - t0;
++
++err:
+ 	if (ret)
+ 		vgt_kill_vm(vgt);
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 825571a..1fb7ef6 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -189,6 +189,8 @@ static inline enum vgt_ring_id vgt_get_ringid_from_lrca(struct vgt_device *vgt,
+ static int vgt_create_shadow_rb(struct vgt_device *vgt, struct execlist_context *el_ctx);
+ static void vgt_destroy_shadow_rb(struct vgt_device *vgt, struct execlist_context *el_ctx);
+ static void vgt_release_shadow_cmdbuf(struct vgt_device *vgt, struct shadow_batch_buffer *p);
++static int vgt_create_shadow_indirect_ctx(struct vgt_device *vgt, struct execlist_context *el_ctx);
++static void vgt_destroy_shadow_indirect_ctx(struct vgt_device *vgt, struct execlist_context *el_ctx);
+ 
+ /* a queue implementation
+  *
+@@ -727,6 +729,7 @@ static void update_shadow_regstate_from_guest(struct vgt_device *vgt,
+ 	/* update the shadow fields */
+ 	if (shadow_cmd_buffer)
+ 		dest_ctx->rb_start.val = el_ctx->shadow_rb.shadow_rb_base;
++
+ 	ppgtt_update_shadow_ppgtt_for_ctx(vgt, el_ctx);
+ }
+ 
+@@ -1193,6 +1196,14 @@ static struct execlist_context *vgt_create_execlist_context(
+ 			vgt_free_el_context(el_ctx);
+ 			return NULL;
+ 		}
++
++		ret = vgt_create_shadow_indirect_ctx(vgt, el_ctx);
++		if (ret) {
++			vgt_destroy_shadow_rb(vgt, el_ctx);
++			vgt_el_destroy_shadow_context(vgt, ring_id, el_ctx);
++			vgt_free_el_context(el_ctx);
++			return NULL;
++		}
+ 	}
+ 
+ 	vgt_el_create_shadow_ppgtt(vgt, ring_id, el_ctx);
+@@ -1221,6 +1232,7 @@ static void vgt_destroy_execlist_context(struct vgt_device *vgt,
+ 
+ 	/* free the shadow cmd buffers */
+ 	vgt_destroy_shadow_rb(vgt, el_ctx);
++	vgt_destroy_shadow_indirect_ctx(vgt, el_ctx);
+ 	vgt_release_shadow_cmdbuf(vgt, &el_ctx->shadow_priv_bb);
+ 
+ 	vgt_el_destroy_shadow_context(vgt, ring_id, el_ctx);
+@@ -1733,6 +1745,63 @@ static int vgt_create_shadow_rb(struct vgt_device *vgt,
+ 	return 0;
+ }
+ 
++static int vgt_create_shadow_indirect_ctx(struct vgt_device *vgt,
++				 struct execlist_context *el_ctx)
++{
++	unsigned long shadow_hpa;
++	unsigned long shadow_gma;
++	uint32_t ctx_size;
++	unsigned long ctx_gma;
++	struct reg_state_ctx_header *reg_state;
++
++	if (!shadow_indirect_ctx_bb)
++		return 0;
++
++	ASSERT(el_ctx->shadow_indirect_ctx.guest_ctx_base == 0);
++
++	reg_state = vgt_get_reg_state_from_lrca(vgt,
++				el_ctx->guest_context.lrca);
++	ctx_size = reg_state->rcs_indirect_ctx.val & INDIRECT_CTX_SIZE_MASK;
++	if (!ctx_size)
++		return 0;
++
++	if (!(reg_state->bb_per_ctx_ptr.val & 0x1)) {
++		vgt_err("VM-%d: indirect ctx and per bb should work together\n", vgt->vm_id);
++		return -1;
++	}
++
++	/*indirect ctx only valid for RCS*/
++	if (el_ctx->ring_id) {
++		vgt_err("VM-%d: indirect ctx disallowed enable on ring %d\n", vgt->vm_id,
++			el_ctx->ring_id);
++		return -1;
++	}
++
++	el_ctx->shadow_bb_per_ctx.guest_bb_base =
++			reg_state->bb_per_ctx_ptr.val & BB_PER_CTX_ADDR_MASK;
++
++	ctx_gma = reg_state->rcs_indirect_ctx.val & INDIRECT_CTX_ADDR_MASK;
++
++	/* extra cache line size here for combining bb per ctx,
++	 * take indirect ctx as ring and bb per ctx as it's privilege bb
++	 */
++	shadow_hpa = rsvd_aperture_alloc(vgt->pdev, (ctx_size + 1) * CACHELINE_BYTES);
++	if (shadow_hpa == 0) {
++		vgt_err("VM-%d: Failed to allocate gm for shadow indirect ctx!\n",
++			vgt->vm_id);
++		return -1;
++	}
++
++	shadow_gma = aperture_2_gm(vgt->pdev, shadow_hpa);
++	el_ctx->shadow_indirect_ctx.guest_ctx_base = ctx_gma;
++
++	el_ctx->shadow_indirect_ctx.shadow_ctx_base = shadow_gma;
++	el_ctx->shadow_indirect_ctx.ctx_size = ctx_size * CACHELINE_BYTES;
++
++	return 0;
++}
++
++
+ static void vgt_destroy_shadow_rb(struct vgt_device *vgt,
+ 				  struct execlist_context *el_ctx)
+ {
+@@ -1756,6 +1825,31 @@ static void vgt_destroy_shadow_rb(struct vgt_device *vgt,
+ 	return;
+ }
+ 
++static void vgt_destroy_shadow_indirect_ctx(struct vgt_device *vgt,
++				  struct execlist_context *el_ctx)
++{
++	unsigned long hpa;
++
++	if (!shadow_indirect_ctx_bb)
++		return;
++
++	if (el_ctx->shadow_indirect_ctx.ctx_size == 0)
++		return;
++
++	ASSERT(el_ctx->ring_id == 0);
++	ASSERT(el_ctx->shadow_indirect_ctx.shadow_ctx_base);
++	hpa = phys_aperture_base(vgt->pdev) +
++			el_ctx->shadow_indirect_ctx.shadow_ctx_base;
++	rsvd_aperture_free(vgt->pdev, hpa,
++			   el_ctx->shadow_indirect_ctx.ctx_size + CACHELINE_BYTES);
++
++	el_ctx->shadow_indirect_ctx.guest_ctx_base = 0;
++	el_ctx->shadow_indirect_ctx.shadow_ctx_base = 0;
++	el_ctx->shadow_indirect_ctx.ctx_size = 0;
++
++	return;
++}
++
+ static void vgt_release_shadow_cmdbuf(struct vgt_device *vgt,
+ 				      struct shadow_batch_buffer *s_buf)
+ {
+@@ -1854,6 +1948,14 @@ static void vgt_manipulate_cmd_buf(struct vgt_device *vgt,
+ 		vgt_create_shadow_rb(vgt, el_ctx);
+ 	}
+ 
++	if (el_ctx->shadow_indirect_ctx.ctx_size !=
++			(guest_state->rcs_indirect_ctx.val &
++				INDIRECT_CTX_SIZE_MASK) *
++					CACHELINE_BYTES) {
++		vgt_destroy_shadow_indirect_ctx(vgt, el_ctx);
++		vgt_create_shadow_indirect_ctx(vgt, el_ctx);
++	}
++
+ 	vgt_scan_vring(vgt, ring_id);
+ 
+ 	/* the function is used to update ring/buffer only. No real submission inside */
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.h b/drivers/gpu/drm/i915/vgt/execlists.h
+index 73f79fe..2c78b50 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.h
++++ b/drivers/gpu/drm/i915/vgt/execlists.h
+@@ -193,6 +193,19 @@ struct shadow_ring_buffer {
+ 	uint32_t ring_size;
+ };
+ 
++#define INDIRECT_CTX_ADDR_MASK 0xffffffc0
++#define INDIRECT_CTX_SIZE_MASK 0x3f
++struct shadow_indirect_context {
++	unsigned long guest_ctx_base;
++	unsigned long shadow_ctx_base;
++	uint32_t ctx_size;
++};
++
++#define BB_PER_CTX_ADDR_MASK 0xfffff000
++struct shadow_batch_buffer_per_ctx {
++	unsigned long guest_bb_base;
++	unsigned long shadow_bb_base;
++};
+ /* Relocation for MI_BATCH_BUFFER_START to privilege batch buffers */
+ 
+ /* one context can have one ring buffer, but multiple batch buffers.
+@@ -241,6 +254,8 @@ struct execlist_context {
+ 
+ 	struct shadow_ring_buffer shadow_rb;
+ 	struct shadow_batch_buffer shadow_priv_bb;
++	struct shadow_indirect_context shadow_indirect_ctx;
++	struct shadow_batch_buffer_per_ctx shadow_bb_per_ctx;
+ 
+ 	struct hlist_node node;
+ };
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index ea8ef30..504d42d 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -194,6 +194,9 @@ module_param_named(shadow_cmd_buffer, shadow_cmd_buffer, int, 0400);
+ int shadow_ctx_check = 0;
+ module_param_named(shadow_ctx_check, shadow_ctx_check, int, 0600);
+ 
++int shadow_indirect_ctx_bb = 0;
++module_param_named(shadow_indirect_ctx_bb, shadow_indirect_ctx_bb, int, 0400);
++
+ static struct vgt_ops __vgt_ops = {
+ 	.emulate_read = vgt_emulate_read,
+ 	.emulate_write = vgt_emulate_write,
+@@ -956,6 +959,9 @@ static int vgt_initialize(struct pci_dev *dev)
+ 	if (!IS_BDWPLUS(pdev) || bypass_scan_mask)
+ 		shadow_cmd_buffer = 0;
+ 
++	/*shadow indirect ctx and per bb rely on shadow_cmd_buffer*/
++	shadow_indirect_ctx_bb &= shadow_cmd_buffer;
++
+ 	pdev->ctx_check = 0;
+ 	pdev->ctx_switch = 0;
+ 	pdev->magic = 0;
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 6f071c4..c469c1b 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -100,6 +100,7 @@ extern bool vgt_lock_irq;
+ extern int shadow_execlist_context;
+ extern int shadow_cmd_buffer;
+ extern int shadow_ctx_check;
++extern int shadow_indirect_ctx_bb;
+ extern bool propagate_monitor_to_guest;
+ extern bool irq_based_ctx_switch;
+ extern int preallocated_shadow_pages;
+-- 
+1.7.10.4
+

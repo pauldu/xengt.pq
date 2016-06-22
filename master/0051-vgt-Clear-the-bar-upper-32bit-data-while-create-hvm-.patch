@@ -1,0 +1,71 @@
+From 55c7aef0a4b803fe8bea56e408bcfb3b52a91741 Mon Sep 17 00:00:00 2001
+From: Yulei Zhang <yulei.zhang@intel.com>
+Date: Thu, 23 Apr 2015 10:40:16 +0800
+Subject: [PATCH 051/403] vgt: Clear the bar upper 32bit data while create hvm
+ instance      and enlarge the max VM number to 7
+
+This patch is the fix for bug#737.
+
+Signed-off-by: Yulei Zhang <yulei.zhang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/instance.c |    9 ++++++---
+ drivers/gpu/drm/i915/vgt/vgt.h      |    3 ++-
+ 2 files changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/instance.c b/drivers/gpu/drm/i915/vgt/instance.c
+index 7ce4273..4ae60d3 100644
+--- a/drivers/gpu/drm/i915/vgt/instance.c
++++ b/drivers/gpu/drm/i915/vgt/instance.c
+@@ -45,14 +45,14 @@ struct vgt_device *vmid_2_vgt_device(int vmid)
+ 	return NULL;
+ }
+ 
+-static int allocate_vgt_id(void)
++static int allocate_vgt_id(struct pgt_device *pdev)
+ {
+ 	unsigned long bit_index;
+ 
+ 	ASSERT(vgt_id_alloc_bitmap != ~0UL)
+ 	do {
+ 		bit_index = ffz (vgt_id_alloc_bitmap);
+-		if (bit_index >= VGT_MAX_VMS) {
++		if (bit_index >= (IS_BDW(pdev) ? VGT_MAX_VMS : VGT_MAX_VMS_HSW)) {
+ 			vgt_err("vGT: allocate_vgt_id() failed\n");
+ 			return -ENOSPC;
+ 		}
+@@ -126,7 +126,7 @@ int create_vgt_instance(struct pgt_device *pdev, struct vgt_device **ptr_vgt, vg
+ 
+ 	atomic_set(&vgt->crashing, 0);
+ 
+-	if ((rc = vgt->vgt_id = allocate_vgt_id()) < 0 )
++	if ((rc = vgt->vgt_id = allocate_vgt_id(pdev)) < 0 )
+ 		goto err2;
+ 
+ 	vgt->vm_id = vp.vm_id;
+@@ -190,6 +190,9 @@ int create_vgt_instance(struct pgt_device *pdev, struct vgt_device **ptr_vgt, vg
+ 		cfg_space[VGT_REG_CFG_COMMAND] &= ~(_REGBIT_CFG_COMMAND_IO |
+ 						_REGBIT_CFG_COMMAND_MEMORY |
+ 						_REGBIT_CFG_COMMAND_MASTER);
++		/* Clear the bar upper 32bit and let hvmloader to assign the new value */
++		memset (&vgt->state.cfg_space[VGT_REG_CFG_SPACE_BAR0 + 4], 0, 4);
++		memset (&vgt->state.cfg_space[VGT_REG_CFG_SPACE_BAR1 + 4], 0, 4);
+ 	}
+ 
+ 	vgt_info("aperture: [0x%llx, 0x%llx] guest [0x%llx, 0x%llx] "
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index d895a94..f1b33d4 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -282,7 +282,8 @@ struct vgt_rsvd_ring {
+ #define VGT_VBLANK_TIMEOUT	50	/* in ms */
+ 
+ /* Maximum VMs supported by vGT. Actual number is device specific */
+-#define VGT_MAX_VMS			4
++#define VGT_MAX_VMS_HSW 		4
++#define VGT_MAX_VMS			8
+ #define VGT_RSVD_APERTURE_SZ		(32*SIZE_1MB)	/* reserve 8MB for vGT itself */
+ 
+ #define GTT_PAGE_SHIFT		12
+-- 
+1.7.10.4
+

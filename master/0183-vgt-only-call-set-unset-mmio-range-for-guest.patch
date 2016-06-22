@@ -1,0 +1,26 @@
+From 9d248ac4707e602d76022ff988601995f8fe4a49 Mon Sep 17 00:00:00 2001
+From: Jike Song <jike.song@intel.com>
+Date: Thu, 24 Sep 2015 19:21:33 +0800
+Subject: [PATCH 183/403] vgt: only call set/unset mmio range for guest
+
+Signed-off-by: Jike Song <jike.song@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/utility.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/utility.c b/drivers/gpu/drm/i915/vgt/utility.c
+index f40e780..8c366ab 100644
+--- a/drivers/gpu/drm/i915/vgt/utility.c
++++ b/drivers/gpu/drm/i915/vgt/utility.c
+@@ -998,7 +998,7 @@ int vgt_hvm_set_trap_area(struct vgt_device *vgt, int map)
+ 	char *cfg_space = &vgt->state.cfg_space[0];
+ 	uint64_t bar_s, bar_e;
+ 
+-	if (!vgt_pci_mmio_is_enabled(vgt))
++	if (!vgt->vm_id || !vgt_pci_mmio_is_enabled(vgt))
+ 		return 0;
+ 
+ 	cfg_space += VGT_REG_CFG_SPACE_BAR0;
+-- 
+1.7.10.4
+

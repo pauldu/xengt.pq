@@ -1,0 +1,406 @@
+From 56735eb60a3a47cb393f3be87cdab81685191124 Mon Sep 17 00:00:00 2001
+From: Fred Gao <fred.gao@intel.com>
+Date: Fri, 16 Oct 2015 10:12:16 +0800
+Subject: [PATCH 266/403] Shadow ring buffer implementation
+
+Generate a shadow ring buffer while creating a context.
+In workload submission time, if ring buffer info is changed,
+like rb base or size, the shadow ring buffer will be reconstructed.
+Workload is copied into shadow ring buffer when gvt scheduler
+schedules guest workload to run.
+
+With this commit the patch list still applies to guest command buffer,
+and the guest buffer will be submitted to hardware instead of shadow
+ones. Later commit will enable shadow buffers.
+
+Signed-off-by: Fred Gao <fred.gao@intel.com>
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |   76 ++++++++++++++++++++++++--
+ drivers/gpu/drm/i915/vgt/cmd_parser.h |    2 +
+ drivers/gpu/drm/i915/vgt/execlists.c  |   96 +++++++++++++++++++++++++++++++--
+ drivers/gpu/drm/i915/vgt/execlists.h  |    8 +++
+ drivers/gpu/drm/i915/vgt/render.h     |    2 +
+ drivers/gpu/drm/i915/vgt/trace.h      |   20 +++++++
+ drivers/gpu/drm/i915/vgt/vgt.c        |    3 ++
+ drivers/gpu/drm/i915/vgt/vgt.h        |    2 +
+ 8 files changed, 201 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index ed7a355..067d191 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -2544,6 +2544,7 @@ static int __vgt_scan_vring(struct vgt_device *vgt, int ring_id, vgt_reg_t head,
+ 	s.ring_tail = gma_tail;
+ 
+ 	s.request_id = rs->request_id;
++	s.el_ctx = rs->el_ctx;
+ 
+ 	if (bypass_scan_mask & (1 << ring_id)) {
+ 		add_tail_entry(&s, tail, 100, 0, 0);
+@@ -2618,6 +2619,61 @@ out:
+ 	return rc;
+ }
+ 
++static int vgt_copy_rb_to_shadow(struct vgt_device *vgt,
++				  struct execlist_context *el_ctx,
++				  uint32_t head,
++				  uint32_t tail)
++{
++	uint32_t rb_size;
++	uint32_t left_len;
++	uint32_t rb_offset;
++	unsigned long vbase, sbase;
++
++	rb_size = el_ctx->shadow_rb.ring_size;
++	vbase = el_ctx->shadow_rb.guest_rb_base;
++	sbase = el_ctx->shadow_rb.shadow_rb_base;
++
++	trace_shadow_rb_copy(vgt->vm_id, el_ctx->ring_id,
++			     el_ctx->guest_context.lrca,
++			     el_ctx->shadow_lrca,
++			     rb_size, vbase, sbase, head, tail);
++
++	if (head <= tail)
++		left_len = tail - head;
++	else
++		left_len = rb_size - head + tail;
++
++	rb_offset = head;
++
++	while (left_len > 0) {
++		void *ip_va, *ip_sva;
++		uint32_t ip_buf_len;
++		uint32_t copy_len;
++		ip_va = vgt_gma_to_va(vgt->gtt.ggtt_mm, vbase + rb_offset);
++		if (ip_va == NULL) {
++			vgt_err("VM-%d(ring-%d): gma %lx is invalid!\n",
++				vgt->vm_id, el_ctx->ring_id, vbase + rb_offset);
++			dump_stack();
++			return EFAULT;
++		}
++
++		ip_buf_len = PAGE_SIZE - ((vbase + rb_offset) & (PAGE_SIZE - 1));
++		if (left_len <= ip_buf_len)
++			copy_len = left_len;
++		else
++			copy_len = ip_buf_len;
++
++		ip_sva = (uint32_t *)v_aperture(vgt->pdev, sbase + rb_offset);
++		hypervisor_read_va(vgt, ip_va, ip_sva,
++				   copy_len, 1);
++
++		left_len -= copy_len;
++		rb_offset = (rb_offset + copy_len) & (rb_size - 1);
++	}
++
++	return 0;
++}
++
+ /*
+  * Scan the guest ring.
+  *   Return 0: success
+@@ -2627,7 +2683,7 @@ int vgt_scan_vring(struct vgt_device *vgt, int ring_id)
+ {
+ 	vgt_state_ring_t *rs = &vgt->rb[ring_id];
+ 	vgt_ringbuffer_t *vring = &rs->vring;
+-	int ret;
++	int ret = 0;
+ 	cycles_t t0, t1;
+ 	struct vgt_statistics *stat = &vgt->stat;
+ 
+@@ -2642,11 +2698,21 @@ int vgt_scan_vring(struct vgt_device *vgt, int ring_id)
+ 
+ 	stat->vring_scan_cnt++;
+ 	rs->request_id++;
+-	ret = __vgt_scan_vring(vgt, ring_id, rs->last_scan_head,
+-		vring->tail & RB_TAIL_OFF_MASK,
+-		vring->start, _RING_CTL_BUF_SIZE(vring->ctl));
+ 
+-	rs->last_scan_head = vring->tail;
++	/* copy the guest rb into shadow rb */
++	if (shadow_ring_buffer) {
++		ret = vgt_copy_rb_to_shadow(vgt, rs->el_ctx,
++				    vring->head,
++				    vring->tail & RB_TAIL_OFF_MASK);
++	}
++
++	if (ret == 0) {
++		ret = __vgt_scan_vring(vgt, ring_id, rs->last_scan_head,
++			vring->tail & RB_TAIL_OFF_MASK,
++			vring->start, _RING_CTL_BUF_SIZE(vring->ctl));
++
++		rs->last_scan_head = vring->tail;
++	}
+ 
+ 	t1 = get_cycles();
+ 	stat->vring_scan_cycles += t1 - t0;
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.h b/drivers/gpu/drm/i915/vgt/cmd_parser.h
+index fa81187..246d6dc 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.h
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.h
+@@ -485,6 +485,8 @@ struct parser_exec_state {
+ 
+ 	uint32_t *ip_buf_va;
+ 	void *ip_buf;
++
++	struct execlist_context *el_ctx;
+ };
+ 
+ #define CMD_TAIL_NUM	1024
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 7928c97b..bbb20ec 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -176,6 +176,9 @@ static inline enum vgt_ring_id vgt_get_ringid_from_lrca(struct vgt_device *vgt,
+ 	return ring_id;
+ }
+ 
++static void vgt_create_shadow_rb(struct vgt_device *vgt, struct execlist_context *el_ctx);
++static void vgt_destroy_shadow_rb(struct vgt_device *vgt, struct execlist_context *el_ctx);
++
+ /* a queue implementation
+  *
+  * It is used to hold the submitted execlists through writing ELSP.
+@@ -924,6 +927,7 @@ static struct execlist_context *vgt_create_execlist_context(struct vgt_device *v
+ 		vgt_el_create_shadow_context(vgt, ring_id, el_ctx);
+ 
+ 	vgt_el_create_shadow_ppgtt(vgt, ring_id, el_ctx);
++	vgt_create_shadow_rb(vgt, el_ctx);
+ 
+ 	trace_ctx_lifecycle(vgt->vm_id, ring_id,
+ 			el_ctx->guest_context.lrca, "create");
+@@ -960,6 +964,9 @@ static void vgt_destroy_execlist_context(struct vgt_device *vgt,
+ 		vgt_clean_guest_page(vgt, &el_ctx->ctx_pages[i].guest_page);
+ 	}
+ 
++	/* free the shadow cmd buffers */
++	vgt_destroy_shadow_rb(vgt, el_ctx);
++
+ 	// free the shadow context;
+ 	if (vgt_require_shadow_context(vgt)) {
+ 		unsigned long start;
+@@ -1401,7 +1408,74 @@ static inline bool vgt_hw_ELSP_write(struct vgt_device *vgt,
+ 	!(((tail) >= (last_tail)) &&				\
+ 	  ((tail) <= (head)))))
+ 
+-static void vgt_update_ring_info(struct vgt_device *vgt,
++/* Shadow ring buffer implementation */
++static void vgt_create_shadow_rb(struct vgt_device *vgt,
++				 struct execlist_context *el_ctx)
++{
++	unsigned long shadow_hpa;
++	unsigned long shadow_gma;
++	uint32_t rb_size;
++	unsigned long rb_gma;
++	struct reg_state_ctx_header *reg_state;
++
++	if (!shadow_ring_buffer)
++		return;
++
++	ASSERT(el_ctx->shadow_rb.shadow_rb_base == 0);
++
++	reg_state = vgt_get_reg_state_from_lrca(vgt,
++				el_ctx->guest_context.lrca);
++
++	rb_size = _RING_CTL_BUF_SIZE(reg_state->rb_ctrl.val);
++	if ((rb_size >= 2 * SIZE_1MB) || (rb_size == 0)) {
++		vgt_err("VM-%d: RB size <0x%x> is invalid. "
++			"Shadow RB will not be created!\n",
++			vgt->vm_id, rb_size);
++		return;
++	}
++
++	rb_gma = reg_state->rb_start.val;
++	shadow_hpa = rsvd_aperture_alloc(vgt->pdev, rb_size);
++	if (shadow_hpa == 0) {
++		vgt_err("VM-%d: Failed to allocate gm for shadow privilege bb!\n",
++			vgt->vm_id);
++		return;
++	}
++
++	shadow_gma = aperture_2_gm(vgt->pdev, shadow_hpa);
++	el_ctx->shadow_rb.guest_rb_base = rb_gma;
++
++	el_ctx->shadow_rb.shadow_rb_base = shadow_gma;
++	el_ctx->shadow_rb.ring_size = rb_size;
++
++	return;
++}
++
++static void vgt_destroy_shadow_rb(struct vgt_device *vgt,
++				  struct execlist_context *el_ctx)
++{
++	unsigned long hpa;
++	if (!shadow_ring_buffer)
++		return;
++
++	if (el_ctx->shadow_rb.ring_size == 0)
++		return;
++
++	ASSERT(el_ctx->shadow_rb.shadow_rb_base);
++	hpa = phys_aperture_base(vgt->pdev) +
++			el_ctx->shadow_rb.shadow_rb_base;
++	rsvd_aperture_free(vgt->pdev, hpa,
++			   el_ctx->shadow_rb.ring_size);
++
++	el_ctx->shadow_rb.guest_rb_base = 0;
++	el_ctx->shadow_rb.shadow_rb_base = 0;
++	el_ctx->shadow_rb.ring_size = 0;
++
++	return;
++}
++
++/* perform command buffer scan and shadowing */
++static void vgt_manipulate_cmd_buf(struct vgt_device *vgt,
+ 			struct execlist_context *el_ctx)
+ {
+ 	struct reg_state_ctx_header *guest_state;
+@@ -1438,7 +1512,7 @@ static void vgt_update_ring_info(struct vgt_device *vgt,
+ 	vgt->rb[ring_id].has_ppgtt_mode_enabled = 1;
+ 	vgt->rb[ring_id].has_ppgtt_base_set = 1;
+ 	vgt->rb[ring_id].request_id = el_ctx->request_id;
+-
++	vgt->rb[ring_id].el_ctx = el_ctx;
+ #if 0
+ 	/* keep this trace for debug purpose */
+ 	trace_printk("VRING: HEAD %04x TAIL %04x START %08x last_scan %08x PREEMPTION %d DPY %d\n",
+@@ -1454,6 +1528,22 @@ static void vgt_update_ring_info(struct vgt_device *vgt,
+ 		vgt->rb[ring_id].last_scan_head = el_ctx->last_scan_head;
+ 	}
+ 
++	if ((vring->start != el_ctx->shadow_rb.shadow_rb_base) &&
++	    (el_ctx->shadow_rb.guest_rb_base != vring->start)) {
++		vgt_dbg(VGT_DBG_EXECLIST,
++			"VM-%d: rb base is changed in workload submission "
++			 "from 0x%lx to 0x%x\n",
++			 vgt->vm_id,
++			 el_ctx->shadow_rb.guest_rb_base,
++			 vring->start);
++		el_ctx->shadow_rb.guest_rb_base = vring->start;
++	}
++
++	if (el_ctx->shadow_rb.ring_size != _RING_CTL_BUF_SIZE(vring->ctl)) {
++		vgt_destroy_shadow_rb(vgt, el_ctx);
++		vgt_create_shadow_rb(vgt, el_ctx);
++	}
++
+ 	vgt_scan_vring(vgt, ring_id);
+ 
+ 	/* the function is used to update ring/buffer only. No real submission inside */
+@@ -1566,7 +1656,7 @@ void vgt_submit_execlist(struct vgt_device *vgt, enum vgt_ring_id ring_id)
+ 
+ 		ASSERT_VM(ring_id == ctx->ring_id, vgt);
+ 		vgt_update_shadow_ctx_from_guest(vgt, ctx);
+-		vgt_update_ring_info(vgt, ctx);
++		vgt_manipulate_cmd_buf(vgt, ctx);
+ 
+ 		trace_ctx_lifecycle(vgt->vm_id, ring_id,
+ 			ctx->guest_context.lrca, "schedule_to_run");
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.h b/drivers/gpu/drm/i915/vgt/execlists.h
+index 8547cef..3113f71 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.h
++++ b/drivers/gpu/drm/i915/vgt/execlists.h
+@@ -179,6 +179,12 @@ struct shadow_ctx_page {
+ 	struct vgt_device *vgt;
+ };
+ 
++struct shadow_ring_buffer {
++	unsigned long guest_rb_base;
++	unsigned long shadow_rb_base;
++	uint32_t ring_size;
++};
++
+ struct execlist_context {
+ 	struct ctx_desc_format guest_context;
+ 	uint32_t shadow_lrca;
+@@ -202,6 +208,8 @@ struct execlist_context {
+ 	/* used for lazy context shadowing optimization */
+ 	gtt_entry_t shadow_entry_backup[MAX_EXECLIST_CTX_PAGES];
+ 
++	struct shadow_ring_buffer shadow_rb;
++
+ 	struct hlist_node node;
+ };
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/render.h b/drivers/gpu/drm/i915/vgt/render.h
+index 637028a..412317e 100644
+--- a/drivers/gpu/drm/i915/vgt/render.h
++++ b/drivers/gpu/drm/i915/vgt/render.h
+@@ -134,6 +134,8 @@ typedef struct {
+ 	struct vgt_exec_list execlist_slots[EL_QUEUE_SLOT_NUM];
+ 	struct vgt_elsp_store elsp_store;
+ 	int csb_write_ptr;
++
++	struct execlist_context *el_ctx;
+ } vgt_state_ring_t;
+ 
+ struct vgt_render_context_ops {
+diff --git a/drivers/gpu/drm/i915/vgt/trace.h b/drivers/gpu/drm/i915/vgt/trace.h
+index 1320bd6..2098c40 100644
+--- a/drivers/gpu/drm/i915/vgt/trace.h
++++ b/drivers/gpu/drm/i915/vgt/trace.h
+@@ -345,6 +345,26 @@ TRACE_EVENT(ctx_write_trap,
+ 				__entry->pa, __entry->bytes)
+ );
+ 
++TRACE_EVENT(shadow_rb_copy,
++		TP_PROTO(int vm_id, int ring_id, uint32_t guest_lrca, uint32_t shadow_lrca, uint32_t size, unsigned long vbase, unsigned long sbase, uint32_t rb_head, uint32_t tail),
++
++		TP_ARGS(vm_id, ring_id, guest_lrca, shadow_lrca, size, vbase, sbase, rb_head, tail),
++
++		TP_STRUCT__entry(
++			__array(char, buf, MAX_BUF_LEN)
++		),
++
++		TP_fast_assign(
++			snprintf(__entry->buf, MAX_BUF_LEN,
++				"VM-%d (ring <%d> ctx-0x%x(sctx-0x%x)): copy shadow ring. "
++				"size:0x%x, base: 0x%lx(sbase:0x%lx), head: 0x%x, tail: 0x%x\n",
++				vm_id, ring_id, guest_lrca, shadow_lrca,
++				size, vbase, sbase, rb_head, tail);
++		),
++
++		TP_printk("%s", __entry->buf)
++);
++
+ #endif /* _VGT_TRACE_H_ */
+ 
+ /* This part must be out of protection */
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 7b31d9e..de57321 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -191,6 +191,9 @@ module_param_named(vgt_preliminary_hw_support, vgt_preliminary_hw_support, bool,
+ int shadow_execlist_context = 0;
+ module_param_named(shadow_execlist_context, shadow_execlist_context, int, 0400);
+ 
++int shadow_ring_buffer = 0;
++module_param_named(shadow_ring_buffer, shadow_ring_buffer, int, 0400);
++
+ /* Very frequent set/clear write protection can see wrong write trap even if
+ + * write protection has been cleared. Below option is to disable the context
+ + * protection between ctx submission and ctx completion. Normal context shadow
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 590083b..43dfd48 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -97,6 +97,7 @@ extern int reset_dur_threshold;
+ extern int reset_max_threshold;
+ extern bool vgt_lock_irq;
+ extern int shadow_execlist_context;
++extern int shadow_ring_buffer;
+ extern bool wp_submitted_ctx;
+ extern bool propagate_monitor_to_guest;
+ extern bool irq_based_ctx_switch;
+@@ -188,6 +189,7 @@ typedef struct {
+ #define vgt_sreg(vgt, off)	((vgt_reg_t *)((char *)vgt->state.sReg + off))
+ 
+ struct vgt_mm;
++struct execlist_context;
+ 
+ #define vgt_el_queue_head(vgt, ring_id) \
+ 	((vgt)->rb[ring_id].el_slots_head)
+-- 
+1.7.10.4
+

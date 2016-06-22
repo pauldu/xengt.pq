@@ -1,0 +1,33 @@
+From 7574a7ef8d5e12e5f9b519ba40f579c2cd2e2dcb Mon Sep 17 00:00:00 2001
+From: pei <pei.zhang@intel.com>
+Date: Fri, 19 Feb 2016 15:58:05 +0800
+Subject: [PATCH 355/403] Remove incorrect register from restore list
+
+vgt_restore_status is called everytime when the foreground display
+switch happens and this function would restore the original display
+related registers. In BWD and SKL platforms, the LINOFF register
+doesn't exists any more. Add a judgment to avoid warning print.
+
+Signed-off-by: Pei Zhang <pei.zhang@intel.com>
+Signed-off-by: Min He <min.he@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/display.c |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/display.c b/drivers/gpu/drm/i915/vgt/display.c
+index b79e0e9..089d912 100644
+--- a/drivers/gpu/drm/i915/vgt/display.c
++++ b/drivers/gpu/drm/i915/vgt/display.c
+@@ -51,7 +51,8 @@ static int vgt_restore_state(struct vgt_device *vgt, enum pipe pipe)
+ 		vgt_restore_sreg(vgt, VGT_DSPSTRIDE(pipe));
+ 		vgt_restore_sreg(vgt, VGT_DSPSURF(pipe));
+ 		vgt_restore_sreg(vgt, VGT_DSPTILEOFF(pipe));
+-		vgt_restore_sreg(vgt, VGT_DSPLINOFF(pipe));
++		if (IS_HSW(vgt->pdev))
++			vgt_restore_sreg(vgt, VGT_DSPLINOFF(pipe));
+ 
+ 		vgt_restore_sreg(vgt, VGT_CURPOS(pipe));
+ 		vgt_restore_sreg(vgt, VGT_CURCNTR(pipe));
+-- 
+1.7.10.4
+

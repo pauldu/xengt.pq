@@ -1,0 +1,30 @@
+From cac0278d302e23363826f7071d0b889838221f10 Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Thu, 28 Jan 2016 15:39:21 +0800
+Subject: [PATCH 328/403] passthru regs: remove registers not used
+
+{0x1c050, 4, F_PT, 0, D_BDW_PLUS, NULL, NULL},
+Description: not used in BDW.
+Conclusion: remove it.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |    2 --
+ 1 file changed, 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 9477353..b673f44 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -3630,8 +3630,6 @@ reg_attr_t vgt_reg_info_bdw[] = {
+ 
+ {_REG_VCS2_MI_MODE, 4, F_RDR_MODE, 0, D_BDW_PLUS, NULL, NULL},
+ {_REG_VCS2_INSTPM, 4, F_RDR_MODE, 0, D_BDW_PLUS, NULL, NULL},
+-/* TODO: need a handler */
+-{0x1c050, 4, F_PT, 0, D_BDW_PLUS, NULL, NULL},
+ 
+ {_REG_VCS2_TIMESTAMP, 8, F_PT, 0, D_BDW_PLUS, NULL, NULL},
+ 
+-- 
+1.7.10.4
+

@@ -1,0 +1,96 @@
+From e586cbac4301820e80c390e4cf480c42ee6781a7 Mon Sep 17 00:00:00 2001
+From: Jike Song <jike.song@intel.com>
+Date: Tue, 14 Jul 2015 18:02:41 +0800
+Subject: [PATCH 123/403] [fix bug822] i915/vgt: modulization wrt. both XenGT
+ and KVMGT
+
+KVM has a problem of detecting host, since it's simply native.
+In our implementation, kvmgt_check_host() is only capable to
+determine KVM guest, it takes all other cases as in host.
+
+So it's easy to get wrong from i915_start_vgt: we fail XenGT
+host detection but succeed in KVMGT, while we're actually in
+Xen DomU(say, a XenGT HVM guest).
+
+The safe way is to call xen_initial_domain() and xen_domain()
+explicitly from i915/vgt. Fortunately these symbols are compatible
+for !CONFIG_XEN kernels.
+
+This patch also introduce a "name" field for kernel_dm, for
+module unloading.
+
+Signed-off-by: Jike Song <jike.song@intel.com>
+diff --git a/drivers/gpu/drm/i915/vgt/hypercall.h b/drivers/gpu/drm/i915/vgt/hypercall.h
+index 3d3403f..02c9f58 100644
+--- a/drivers/gpu/drm/i915/vgt/hypercall.h
++++ b/drivers/gpu/drm/i915/vgt/hypercall.h
+@@ -30,6 +30,7 @@ struct guest_page;
+ struct vgt_device;
+ enum map_type;
+ struct kernel_dm {
++	const char *name;
+ 	unsigned long (*g2m_pfn)(int vm_id, unsigned long g_pfn);
+ 	int (*pause_domain)(int vm_id);
+ 	int (*shutdown_domain)(int vm_id);
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index b845d98..ffd6a74 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -1237,7 +1237,7 @@ void i915_stop_vgt(void)
+ {
+ 	vgt_destroy();
+ 	vgt_klog_cleanup();
+-	symbol_put(xengt_kdm);
++	__symbol_put(vgt_pkdm->name);
+ 	vgt_pkdm = NULL;
+ 	vgt_ops = NULL;
+ }
+@@ -1246,22 +1246,28 @@ bool i915_start_vgt(struct pci_dev *pdev)
+ {
+ 	vgt_ops = &__vgt_ops;
+ 
+-	vgt_pkdm = try_then_request_module(symbol_get(xengt_kdm), "xengt");
+-	if (vgt_pkdm == NULL || !hypervisor_check_host()) {
+-		vgt_in_xen = false;
+-		printk("vgt: Could not load xengt MPT service\n");
++	if (xen_initial_domain()) {
++		/* Xen Dom0 */
++		vgt_pkdm = try_then_request_module(symbol_get(xengt_kdm), "xengt");
++		if (!vgt_pkdm)
++			return false;
++	} else if (xen_domain()) {
++		/* Xen DomU */
++		return false;
++	} else {
++		/* not in Xen. Try KVMGT */
+ 		vgt_pkdm = try_then_request_module(symbol_get(kvmgt_kdm), "kvm");
+-		if (vgt_pkdm == NULL) {
+-			vgt_warn("vgt: Could not load kvmgt MPT service\n");
++		if (!vgt_pkdm)
+ 			return false;
+-		}
++
++		vgt_in_xen = false;
+ 	}
+ 
++
+ 	if (!vgt_check_host())
+ 		return false;
+ 
+ 	vgt_param_check();
+-
+ 	vgt_klog_init();
+ 
+ 	return vgt_initialize(pdev) == 0;
+diff --git a/drivers/xen/xengt.c b/drivers/xen/xengt.c
+index 4ce5467..f2a5078 100644
+--- a/drivers/xen/xengt.c
++++ b/drivers/xen/xengt.c
+@@ -1130,6 +1130,7 @@ static bool xen_write_va(struct vgt_device *vgt, void *va, void *val,
+ }
+ 
+ static struct kernel_dm xengt_kdm = {
++	.name = "xengt_kdm",
+ 	.g2m_pfn = xen_g2m_pfn,
+ 	.pause_domain = xen_pause_domain,
+ 	.shutdown_domain = xen_shutdown_domain,

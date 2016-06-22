@@ -1,0 +1,60 @@
+From 290cb35977842ec339d3aba50dd484376e9569c3 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Thu, 13 Aug 2015 00:59:10 +0800
+Subject: [PATCH 221/403] vgt/skl: introduce DPLL_STATUS read handler
+
+Emulate DPLL_STATUS register on SKL
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |   27 ++++++++++++++++++++++++++-
+ 1 file changed, 26 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index cc40206..e958ebc 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -2414,6 +2414,31 @@ static bool skl_lcpll_write(struct vgt_device *vgt, unsigned int offset,
+ 	return true;
+ }
+ 
++static bool dpll_status_read(struct vgt_device *vgt, unsigned int offset,
++	void *p_data, unsigned int bytes)
++{
++	u32 v = 0;
++
++	if (is_current_display_owner(vgt))
++		goto out;
++
++	if (__vreg(vgt, 0x46010) & (1 << 31))
++		v |= (1 << 0);
++
++	if (__vreg(vgt, 0x46014) & (1 << 31))
++		v |= (1 << 8);
++
++	if (__vreg(vgt, 0x46040) & (1 << 31))
++		v |= (1 << 16);
++
++	if (__vreg(vgt, 0x46060) & (1 << 31))
++		v |= (1 << 24);
++
++	__vreg(vgt, offset) = __sreg(vgt, offset) = v;
++out:
++	return default_mmio_read(vgt, offset, p_data, bytes);
++}
++
+ /*
+  * Track policies of all captured registers
+  *
+@@ -3526,7 +3551,7 @@ reg_attr_t vgt_reg_info_skl[] = {
+ {0x6C054, 4, F_DPY, 0, D_SKL, NULL, NULL},
+ {0x6c058, 4, F_DPY, 0, D_SKL, NULL, NULL},
+ {0x6c05c, 4, F_DPY, 0, D_SKL, NULL, NULL},
+-{0X6c060, 4, F_DPY, 0, D_SKL, NULL, NULL},
++{0X6c060, 4, F_DPY, 0, D_SKL, dpll_status_read, NULL},
+ 
+ {SKL_PS_WIN_POS(PIPE_A, 0), 4, F_DPY, 0, D_SKL, NULL, NULL},
+ {SKL_PS_WIN_POS(PIPE_A, 1), 4, F_DPY, 0, D_SKL, NULL, NULL},
+-- 
+1.7.10.4
+

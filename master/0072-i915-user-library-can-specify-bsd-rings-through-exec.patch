@@ -1,0 +1,53 @@
+From bc5ac2aebb59103b07b761d0948b512bfa5d6401 Mon Sep 17 00:00:00 2001
+From: "Zheng, Xiao" <xiao.zheng@intel.com>
+Date: Wed, 13 May 2015 13:55:11 +0800
+Subject: [PATCH 072/403] i915: user library can specify bsd rings through
+ exec flag
+
+MSDK are trying to specify the BSD ring to use from UMD drivers, however we lack
+of these interfaces in current i915kmd driver.
+Manually merge two must have patchs from drm-intel.
+
+Merged patchs from below:
+patch[1/2] drm/i915: Specify bsd rings through exec flag
+commit: 8d360dffd6d8634868e433128d5178bea14cc42c
+[http://cgit.freedesktop.org/drm-intel/commit/?id=8d360dffd6d8634868e433128d5178
+bea14cc42c]
+
+patch[2/2] drm/i915: add I915_PARAM_HAS_BSD2 to i915_getparam
+commit: 08e16dc874e672f1a1472a495c8351b8ce5d34d5
+[http://cgit.freedesktop.org/drm-intel/commit/?id=08e16dc874e672f1a1472a495c8351
+b8ce5d34d5]
+
+Please remove these commits after we rebase to newer kernel version
+
+Signed-off-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/i915_gem_execbuffer.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/i915_gem_execbuffer.c b/drivers/gpu/drm/i915/i915_gem_execbuffer.c
+index a0a07d3..a59a818 100644
+--- a/drivers/gpu/drm/i915/i915_gem_execbuffer.c
++++ b/drivers/gpu/drm/i915/i915_gem_execbuffer.c
+@@ -1405,7 +1405,7 @@ i915_gem_do_execbuffer(struct drm_device *dev, void *data,
+ 	}
+ 
+ 	if (((args->flags & I915_EXEC_RING_MASK) != I915_EXEC_BSD) &&
+-	    ((args->flags & I915_EXEC_BSD_MASK) != 0)) {
++		((args->flags & I915_EXEC_BSD_MASK) != 0)) {
+ 		DRM_DEBUG("execbuf with non bsd ring but with invalid "
+ 			"bsd dispatch flags: %d\n", (int)(args->flags));
+ 		return -EINVAL;
+@@ -1430,7 +1430,7 @@ i915_gem_do_execbuffer(struct drm_device *dev, void *data,
+ 				break;
+ 			default:
+ 				DRM_DEBUG("execbuf with unknown bsd ring: %d\n",
+-					  (int)(args->flags & I915_EXEC_BSD_MASK));
++					(int)(args->flags & I915_EXEC_BSD_MASK));
+ 				return -EINVAL;
+ 			}
+ 		} else
+-- 
+1.7.10.4
+

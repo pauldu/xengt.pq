@@ -1,0 +1,33 @@
+From 505db3652443e441c83dba48c197e6322722ac39 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Mon, 11 May 2015 19:29:23 +0800
+Subject: [PATCH 070/403] vgt: address a corner case in ppgtt oos refinement
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/gtt.c |    9 +++++++--
+ 1 file changed, 7 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index f28bb5f..ee5899b 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -1182,8 +1182,13 @@ static bool ppgtt_handle_guest_write_page_table_bytes(void *gp,
+ 	if (!ppgtt_handle_guest_write_page_table(gpt, &we, index))
+ 		return false;
+ 
+-	if (can_do_out_of_sync(gpt) && !ppgtt_set_guest_page_oos(vgt, gpt))
+-		return false;
++	if (spt_out_of_sync) {
++		if (gpt->oos_page)
++			ops->set_entry(gpt->oos_page->mem, &we, index, false, NULL);
++
++		if (can_do_out_of_sync(gpt) && !ppgtt_set_guest_page_oos(vgt, gpt))
++			return false;
++	}
+ 
+ 	return true;
+ }
+-- 
+1.7.10.4
+

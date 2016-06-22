@@ -1,0 +1,30 @@
+From fe24100695736c7a5fd715f1865cff8da7f713d0 Mon Sep 17 00:00:00 2001
+From: "Zheng, Xiao" <xiao.zheng@intel.com>
+Date: Tue, 12 Jan 2016 14:45:48 +0800
+Subject: [PATCH 313/403] vgt/skl: Set default vGPU schedule interval to 1ms
+
+after change:
+HSW: vGPU schedule interval minimal time is 15ms by default
+BDW/SKL: vGPU schedule interval minimal time is 1ms by default
+
+Signed-off-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/vgt.h |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 828eab5c..1f73010 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -1268,7 +1268,7 @@ static inline void vgt_init_sched_info(struct vgt_device *vgt)
+ 	if (timer_based_qos) {
+ 
+ 		if (tbs_period_ms == -1) {
+-			tbs_period_ms = IS_BDW(vgt->pdev) ?
++			tbs_period_ms = IS_BDWPLUS(vgt->pdev) ?
+ 				VGT_TBS_PERIOD_MIN : VGT_TBS_PERIOD_MAX;
+ 		}
+ 
+-- 
+1.7.10.4
+

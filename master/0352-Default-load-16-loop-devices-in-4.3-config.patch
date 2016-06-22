@@ -1,0 +1,33 @@
+From 9fe99d4295614206a51ebfcbf05cf6198423bb17 Mon Sep 17 00:00:00 2001
+From: Terrence Xu <terrence.xu@intel.com>
+Date: Tue, 23 Feb 2016 13:37:22 +0800
+Subject: [PATCH 352/403] Default load 16 loop devices in 4.3 config
+
+Since in Xen4.6, create guest by raw image needs loop device, and we
+always create 7 guest with totally 14 raw images.
+So in kernel side, default load 16 loop devices will bring convenience
+to us.
+
+Signed-off-by: Terrence Xu <terrence.xu@intel.com>
+---
+ config-4.3.0-host |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/config-4.3.0-host b/config-4.3.0-host
+index b64d335..b4d4f19 100644
+--- a/config-4.3.0-host
++++ b/config-4.3.0-host
+@@ -1410,8 +1410,8 @@ CONFIG_PARIDE_PG=m
+ # CONFIG_BLK_DEV_DAC960 is not set
+ # CONFIG_BLK_DEV_UMEM is not set
+ # CONFIG_BLK_DEV_COW_COMMON is not set
+-CONFIG_BLK_DEV_LOOP=m
+-CONFIG_BLK_DEV_LOOP_MIN_COUNT=8
++CONFIG_BLK_DEV_LOOP=y
++CONFIG_BLK_DEV_LOOP_MIN_COUNT=16
+ CONFIG_BLK_DEV_CRYPTOLOOP=m
+ # CONFIG_BLK_DEV_DRBD is not set
+ CONFIG_BLK_DEV_NBD=m
+-- 
+1.7.10.4
+

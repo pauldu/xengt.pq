@@ -1,0 +1,103 @@
+From 08974d7ca143b6913dd5c26b6ef5f8219bd3b83d Mon Sep 17 00:00:00 2001
+From: Xiaoguang Chen <xiaoguang.chen@intel.com>
+Date: Thu, 9 Jul 2015 22:38:59 +0800
+Subject: [PATCH 117/403] kvmgt porting configuration space and kvmgt
+ initialization
+
+Add kvmgt related initialization and vgt configure space initialization
+
+Signed-off-by: Jike Song <jike.song@intel.com>
+Signed-off-by: Xiaoguang Chen <xiaoguang.chen@intel.com>
+diff --git a/drivers/gpu/drm/i915/i915_vgpu.h b/drivers/gpu/drm/i915/i915_vgpu.h
+index de27bee..d38e320 100644
+--- a/drivers/gpu/drm/i915/i915_vgpu.h
++++ b/drivers/gpu/drm/i915/i915_vgpu.h
+@@ -176,6 +176,16 @@ struct vgt_if {
+ /* get one bit of the data, bit is starting from zeor */
+ #define VGT_GET_BIT(data, bit)		VGT_GET_BITS(data, bit, bit)
+ 
++typedef struct {
++	int vm_id;
++	int aperture_sz; /* in MB */
++	int gm_sz;  /* in MB */
++	int fence_sz;
++
++	int vgt_primary; /* 0/1: config the vgt device as secondary/primary VGA,
++						-1: means the ioemu doesn't supply a value */
++} vgt_params_t;
++
+ struct vgt_device;
+ struct pgt_device;
+ struct kernel_dm;
+@@ -193,6 +203,7 @@ struct vgt_ops {
+ 	void (*panic)(void);
+ 	unsigned int (*pa_to_mmio_offset)(struct vgt_device *, uint64_t);
+ 	bool (*expand_shadow_page_mempool)(struct pgt_device *);
++	int (*del_state_sysfs)(vgt_params_t);
+ };
+ extern struct vgt_ops *vgt_ops;
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/sysfs.c b/drivers/gpu/drm/i915/vgt/sysfs.c
+index 1c54890..65e6808 100644
+--- a/drivers/gpu/drm/i915/vgt/sysfs.c
++++ b/drivers/gpu/drm/i915/vgt/sysfs.c
+@@ -33,7 +33,7 @@ static void vgt_kobj_release(struct kobject *kobj)
+ }
+ 
+ static int vgt_add_state_sysfs(vgt_params_t vp);
+-static int vgt_del_state_sysfs(vgt_params_t vp);
++int vgt_del_state_sysfs(vgt_params_t vp);
+ static ssize_t vgt_create_instance_store(struct kobject *kobj, struct kobj_attribute *attr,
+ 			const char *buf, size_t count)
+ {
+@@ -1082,7 +1082,7 @@ kobj_fail:
+ 	return retval;
+ }
+ 
+-static int vgt_del_state_sysfs(vgt_params_t vp)
++int vgt_del_state_sysfs(vgt_params_t vp)
+ {
+ 	struct vgt_device *vgt;
+ 	int i;
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 1e808f2..f329698 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -186,6 +186,7 @@ static struct vgt_ops __vgt_ops = {
+ 	.panic = vgt_panic,
+ 	.pa_to_mmio_offset = vgt_pa_to_mmio_offset,
+ 	.expand_shadow_page_mempool = vgt_expand_shadow_page_mempool,
++	.del_state_sysfs = vgt_del_state_sysfs,
+ };
+ 
+ LIST_HEAD(pgt_devices);
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 8b32e7e..a420a91 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -2743,17 +2743,6 @@ bool vgt_reg_isr_read(struct vgt_device *vgt, unsigned int reg,
+ void vgt_reg_watchdog_handler(struct vgt_device *state,
+ 	uint32_t reg, uint32_t val, bool write, ...);
+ extern char *vgt_irq_name[EVENT_MAX];
+-
+-typedef struct {
+-	int vm_id;
+-	int aperture_sz; /* in MB */
+-	int gm_sz;	/* in MB */
+-	int fence_sz;
+-
+-	int vgt_primary; /* 0/1: config the vgt device as secondary/primary VGA,
+-						-1: means the ioemu doesn't supply a value */
+-} vgt_params_t;
+-
+ ssize_t get_avl_vm_aperture_gm_and_fence(struct pgt_device *pdev, char *buf,
+ 		ssize_t buf_sz);
+ vgt_reg_t mmio_g2h_gmadr(struct vgt_device *vgt, unsigned long reg, vgt_reg_t g_value);
+@@ -2797,6 +2786,7 @@ extern void i915_handle_error(struct drm_device *dev, bool wedged,
+ extern int i915_wait_error_work_complete(struct drm_device *dev);
+ 
+ int vgt_reset_device(struct pgt_device *pgt);
++int vgt_del_state_sysfs(vgt_params_t vp);
+ void reset_cached_interrupt_registers(struct pgt_device *pdev);
+ 
+ int create_vgt_instance(struct pgt_device *pdev, struct vgt_device **ptr_vgt, vgt_params_t vp);

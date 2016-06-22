@@ -1,0 +1,122 @@
+From c635ff6f8a9f08fcb96b7b99e9e8c347cc49e59b Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Wed, 18 Nov 2015 09:37:47 +0800
+Subject: [PATCH 279/403] Kill VM for out-of-memory of reserved aperture
+
+Collected data shows that the shadow memory usage for one VM running
+heavy workload is about 1M. Mornally reserved aperture is big enough
+for multiple VMs. But since real time scenaro could vary. In extreme
+cases that reserved aperture is used up, VM will be killed.
+
+This commit added some missing error handling path of the
+out-of-memory case.
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/aperture_gm.c |    9 ++-------
+ drivers/gpu/drm/i915/vgt/execlists.c   |   20 +++++++++++++-------
+ 2 files changed, 15 insertions(+), 14 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/aperture_gm.c b/drivers/gpu/drm/i915/vgt/aperture_gm.c
+index 77d609a..ed2e7d2 100644
+--- a/drivers/gpu/drm/i915/vgt/aperture_gm.c
++++ b/drivers/gpu/drm/i915/vgt/aperture_gm.c
+@@ -111,12 +111,7 @@ vgt_reg_t mmio_h2g_gmadr(struct vgt_device *vgt, unsigned long reg, vgt_reg_t h_
+ }
+ 
+ /* Allocate pages in reserved aperture.
+- * TODO: rsvd_aperture_alloc() and rsvd_aperture_free() are invoked on both vgt
+- * driver initialization/destroy and vgt instance creation/destroy: for the
+- * latter case, we use vgt_sysfs_lock to achieve mutual exclusive. However,
+- * it looks vgt_sysfs_lock is not the correct mechanism: we should lock the
+- * the data, not the sysfs code. We could need use small granularity locks for
+- * different GFX resources and data structures.
++ * Return 0 if failed.
+  */
+ unsigned long rsvd_aperture_alloc(struct pgt_device *pdev, unsigned long size)
+ {
+@@ -131,7 +126,7 @@ unsigned long rsvd_aperture_alloc(struct pgt_device *pdev, unsigned long size)
+ 	if (start >= VGT_RSVD_APERTURE_BITMAP_BITS) {
+ 		vgt_err("Out of memory for reserved aperture allocation "
+ 				"of size 0x%lx!\n", size);
+-		BUG();
++		return 0;
+ 	}
+ 
+ 	bitmap_set(pdev->rsvd_aperture_bitmap, start, nr_pages);
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index a938fa2..a66e2cc 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -174,7 +174,7 @@ static inline enum vgt_ring_id vgt_get_ringid_from_lrca(struct vgt_device *vgt,
+ 	return ring_id;
+ }
+ 
+-static void vgt_create_shadow_rb(struct vgt_device *vgt, struct execlist_context *el_ctx);
++static int vgt_create_shadow_rb(struct vgt_device *vgt, struct execlist_context *el_ctx);
+ static void vgt_destroy_shadow_rb(struct vgt_device *vgt, struct execlist_context *el_ctx);
+ static void vgt_release_shadow_cmdbuf(struct vgt_device *vgt, struct shadow_batch_buffer *p);
+ 
+@@ -1089,7 +1089,13 @@ static struct execlist_context *vgt_create_execlist_context(
+ 			vgt_free_el_context(el_ctx);
+ 			return NULL;
+ 		}
+-		vgt_create_shadow_rb(vgt, el_ctx);
++
++		ret = vgt_create_shadow_rb(vgt, el_ctx);
++		if (ret) {
++			vgt_el_destroy_shadow_context(vgt, ring_id, el_ctx);
++			vgt_free_el_context(el_ctx);
++			return NULL;
++		}
+ 	}
+ 
+ 	vgt_el_create_shadow_ppgtt(vgt, ring_id, el_ctx);
+@@ -1588,7 +1594,7 @@ static inline bool vgt_hw_ELSP_write(struct vgt_device *vgt,
+ 	  ((tail) <= (head)))))
+ 
+ /* Shadow implementation of command buffers */
+-static void vgt_create_shadow_rb(struct vgt_device *vgt,
++static int vgt_create_shadow_rb(struct vgt_device *vgt,
+ 				 struct execlist_context *el_ctx)
+ {
+ 	unsigned long shadow_hpa;
+@@ -1598,7 +1604,7 @@ static void vgt_create_shadow_rb(struct vgt_device *vgt,
+ 	struct reg_state_ctx_header *reg_state;
+ 
+ 	if (!shadow_cmd_buffer)
+-		return;
++		return 0;
+ 
+ 	ASSERT(el_ctx->shadow_rb.shadow_rb_base == 0);
+ 
+@@ -1610,7 +1616,7 @@ static void vgt_create_shadow_rb(struct vgt_device *vgt,
+ 		vgt_err("VM-%d: RB size <0x%x> is invalid. "
+ 			"Shadow RB will not be created!\n",
+ 			vgt->vm_id, rb_size);
+-		return;
++		return -1;
+ 	}
+ 
+ 	rb_gma = reg_state->rb_start.val;
+@@ -1618,7 +1624,7 @@ static void vgt_create_shadow_rb(struct vgt_device *vgt,
+ 	if (shadow_hpa == 0) {
+ 		vgt_err("VM-%d: Failed to allocate gm for shadow privilege bb!\n",
+ 			vgt->vm_id);
+-		return;
++		return -1;
+ 	}
+ 
+ 	shadow_gma = aperture_2_gm(vgt->pdev, shadow_hpa);
+@@ -1627,7 +1633,7 @@ static void vgt_create_shadow_rb(struct vgt_device *vgt,
+ 	el_ctx->shadow_rb.shadow_rb_base = shadow_gma;
+ 	el_ctx->shadow_rb.ring_size = rb_size;
+ 
+-	return;
++	return 0;
+ }
+ 
+ static void vgt_destroy_shadow_rb(struct vgt_device *vgt,
+-- 
+1.7.10.4
+

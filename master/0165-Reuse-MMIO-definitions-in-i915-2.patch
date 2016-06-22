@@ -1,0 +1,2342 @@
+From 777e3d951204a2e205daa9837472779e6f66fd86 Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Wed, 9 Sep 2015 14:21:30 +0800
+Subject: [PATCH 165/403] Reuse MMIO definitions in i915 - 2
+
+This is the second part of the MMIO macro definition reuse from i915.
+The patch is cooked by Panwen, and revisited together with Zhiyuan.
+The patch is tested by comparing the binarl output of i915.ko, making
+sure that there is no binary changes introduced by this commit.
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Signed-off-by: Panwen Yang <panwen.yang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c        |    8 +-
+ drivers/gpu/drm/i915/vgt/cmd_parser.h        |    4 +-
+ drivers/gpu/drm/i915/vgt/debugfs.c           |   16 +-
+ drivers/gpu/drm/i915/vgt/display.c           |  104 +++---
+ drivers/gpu/drm/i915/vgt/edid.c              |   62 ++--
+ drivers/gpu/drm/i915/vgt/fb_decoder.c        |   22 +-
+ drivers/gpu/drm/i915/vgt/gtt.c               |    2 +-
+ drivers/gpu/drm/i915/vgt/handlers.c          |  144 ++++----
+ drivers/gpu/drm/i915/vgt/interrupt.c         |   56 +--
+ drivers/gpu/drm/i915/vgt/legacy/render_hsw.c |   48 +--
+ drivers/gpu/drm/i915/vgt/mmio.c              |    8 +-
+ drivers/gpu/drm/i915/vgt/reg.h               |  505 ++++----------------------
+ drivers/gpu/drm/i915/vgt/render.c            |    4 +-
+ drivers/gpu/drm/i915/vgt/sysfs.c             |    6 +-
+ drivers/gpu/drm/i915/vgt/vgt.h               |    6 +-
+ 15 files changed, 320 insertions(+), 675 deletions(-)
+ mode change 100644 => 100755 drivers/gpu/drm/i915/vgt/reg.h
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index a1514e6..515d214 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -875,7 +875,7 @@ static int vgt_cmd_handler_pipe_control(struct parser_exec_state *s)
+ 
+ 
+ 	for (i = 1; i < cmd_len;) {
+-		if (cmd_val(s, i) & PIPE_CONTROL_POST_SYNC)
++		if (cmd_val(s, i) & PIPE_CONTROL_MMIO_WRITE)
+ 			rc |= cmd_reg_handler(s,
+ 				cmd_val(s, i+1) & BIT_RANGE_MASK(22, 2), i, "pipe_ctrl");
+ 		else if (cmd_val(s, i) & (2 << 14))
+@@ -1682,16 +1682,16 @@ static struct cmd_info cmd_info[] = {
+ 
+ 	{"ME_SEMAPHORE_WAIT", OP_MI_SEMAPHORE_WAIT, F_LEN_VAR, R_ALL, D_BDW, ADDR_FIX_1(2), 8, NULL},
+ 
+-	{"MI_STORE_DATA_IMM", OP_MI_STORE_DATA_IMM, F_LEN_VAR, R_ALL, D_HSW,
++	{"MI_STORE_DWORD_IMM", OP_MI_STORE_DWORD_IMM, F_LEN_VAR, R_ALL, D_HSW,
+ 		ADDR_FIX_1(2), 10, NULL},
+ 
+-	{"MI_STORE_DATA_IMM", OP_MI_STORE_DATA_IMM, F_LEN_VAR, R_ALL, D_BDW,
++	{"MI_STORE_DWORD_IMM", OP_MI_STORE_DWORD_IMM, F_LEN_VAR, R_ALL, D_BDW,
+ 		ADDR_FIX_1(1), 10, NULL},
+ 
+ 	{"MI_STORE_DATA_INDEX", OP_MI_STORE_DATA_INDEX, F_LEN_VAR, R_ALL, D_ALL,
+ 		0, 8, NULL},
+ 
+-	{"MI_LOAD_REGISTER_IMM", OP_MI_LOAD_REGISTER_IMM, F_LEN_VAR, R_ALL, D_ALL, 0, 8, vgt_cmd_handler_lri},
++	{"MI_LOAD_REGISTER_IMM", OP_MI_LRI_CMD, F_LEN_VAR, R_ALL, D_ALL, 0, 8, vgt_cmd_handler_lri},
+ 
+ 	{"MI_UPDATE_GTT", OP_MI_UPDATE_GTT, F_LEN_VAR, R_RCS, D_PRE_BDW,
+ 		0, 8, vgt_cmd_handler_mi_update_gtt},
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.h b/drivers/gpu/drm/i915/vgt/cmd_parser.h
+index 202eab0..536cd48 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.h
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.h
+@@ -74,9 +74,9 @@ struct decode_info{
+ #define OP_MI_SEMAPHORE_SIGNAL		    0x1B  /* BDW+ */
+ #define OP_MI_SEMAPHORE_WAIT		    0x1C  /* BDW+ */
+ 
+-#define OP_MI_STORE_DATA_IMM                0x20
++#define OP_MI_STORE_DWORD_IMM		    0x20
+ #define OP_MI_STORE_DATA_INDEX              0x21
+-#define OP_MI_LOAD_REGISTER_IMM             0x22
++#define OP_MI_LRI_CMD                       0x22
+ #define OP_MI_UPDATE_GTT                    0x23
+ #define OP_MI_STORE_REGISTER_MEM            0x24
+ #define OP_MI_FLUSH_DW                      0x26
+diff --git a/drivers/gpu/drm/i915/vgt/debugfs.c b/drivers/gpu/drm/i915/vgt/debugfs.c
+index 9da14a6..cafa63d 100644
+--- a/drivers/gpu/drm/i915/vgt/debugfs.c
++++ b/drivers/gpu/drm/i915/vgt/debugfs.c
+@@ -505,7 +505,7 @@ static void vgt_dump_dpy_mmio(struct seq_file *m, struct pgt_device *pdev,
+ 		char P = VGT_PIPE_CHAR(pipe);
+ 		reg = VGT_DSPCNTR(pipe);
+ 		val = vgt_get_mmio_value(pdev, vgt, reg);
+-		enabled = !!(val & _PRI_PLANE_ENABLE);
++		enabled = !!(val & DISPLAY_PLANE_ENABLE);
+ 		seq_printf(m, "\tDSPCTL_%c(0x%x): 0x%08x (%s)\n",
+ 			P, reg, val, (enabled ? "enabled" : "disabled"));
+ 		if (enabled) {
+@@ -544,17 +544,17 @@ static void vgt_dump_dpy_mmio(struct seq_file *m, struct pgt_device *pdev,
+ 
+ 		reg = _VGT_TRANS_DDI_FUNC_CTL(pipe);
+ 		val = vgt_get_mmio_value(pdev, vgt, reg);
+-		enabled = !!(val & _REGBIT_TRANS_DDI_FUNC_ENABLE);
++		enabled = !!(val & TRANS_DDI_FUNC_ENABLE);
+ 		seq_printf(m, "\tTRANS_DDI_FUNC_CTL_%c(0x%x): 0x%08x (%s)\n",
+ 			P, reg, val, (enabled ? "enabled" : "disabled"));
+ 
+ 		if (enabled) {
+ 			vgt_reg_t ddi_select, mode_select;
+ 
+-			ddi_select = val & _REGBIT_TRANS_DDI_PORT_MASK;
+-			mode_select = val & _REGBIT_TRANS_DDI_MODE_SELECT_MASK;
++			ddi_select = val & TRANS_DDI_PORT_MASK;
++			mode_select = val & TRANS_DDI_MODE_SELECT_MASK;
+ 
+-			switch (ddi_select >> _TRANS_DDI_PORT_SHIFT) {
++			switch (ddi_select >> TRANS_DDI_PORT_SHIFT) {
+ 				case 0:
+ 					str = "No Port Connected"; break;
+ 				case 1:
+@@ -608,11 +608,11 @@ static void vgt_dump_dpy_mmio(struct seq_file *m, struct pgt_device *pdev,
+ 
+ 	reg = TRANS_DDI_FUNC_CTL_EDP;
+ 	val = vgt_get_mmio_value(pdev, vgt, reg);
+-	enabled = !!(val & _REGBIT_TRANS_DDI_FUNC_ENABLE);
++	enabled = !!(val & TRANS_DDI_FUNC_ENABLE);
+ 	seq_printf(m, "\tTRANS_DDI_FUNC_CTL_EDP(0x%x): 0x%08x (%s)\n",
+ 		reg, val, (enabled ? "enabled" : "disabled"));
+ 	if (enabled) {
+-		vgt_reg_t edp_input = val &_REGBIT_TRANS_DDI_EDP_INPUT_MASK;
++		vgt_reg_t edp_input = val &TRANS_DDI_EDP_INPUT_MASK;
+ 		switch (edp_input >> _TRANS_DDI_EDP_INPUT_SHIFT) {
+ 			case 0:
+ 				str = "Plane A 0"; break;
+@@ -656,7 +656,7 @@ static void vgt_dump_dpy_mmio(struct seq_file *m, struct pgt_device *pdev,
+ 			}
+ 			reg = _PCH_TRANSACONF;
+ 			val = vgt_get_mmio_value(pdev, vgt, reg);
+-			enabled = !!(val & _REGBIT_TRANS_ENABLE);
++			enabled = !!(val & TRANS_ENABLE);
+ 			seq_printf(m, "\tPCH TRANS_CONF(0x%x): 0x%08x (%s)\n",
+ 				reg, val, (enabled ? "enabled" : "disabled"));
+ 		}
+diff --git a/drivers/gpu/drm/i915/vgt/display.c b/drivers/gpu/drm/i915/vgt/display.c
+index 78b81f7..c5d03d6 100644
+--- a/drivers/gpu/drm/i915/vgt/display.c
++++ b/drivers/gpu/drm/i915/vgt/display.c
+@@ -129,7 +129,7 @@ void do_vgt_fast_display_switch(struct pgt_device *pdev)
+ 
+ 	for (pipe = PIPE_A; pipe < I915_MAX_PIPES; ++ pipe) {
+ 		vgt_restore_state(to_vgt, pipe);
+-		if (_PRI_PLANE_ENABLE & __vreg(to_vgt, VGT_DSPCNTR(pipe))) {
++		if (DISPLAY_PLANE_ENABLE & __vreg(to_vgt, VGT_DSPCNTR(pipe))) {
+ 			set_panel_fitting(to_vgt, pipe);
+ 		}
+ 	}
+@@ -367,7 +367,7 @@ void vgt_update_monitor_status(struct vgt_device *vgt)
+ 	if (dpy_has_monitor_on_port(vgt, PORT_A)) {
+ 		__vreg(vgt, DDI_BUF_CTL_A) |= _DDI_BUFCTL_DETECT_MASK;
+ 		if (IS_PREBDW(vgt->pdev))
+-			__vreg(vgt, DEISR) |= _REGBIT_DP_A_HOTPLUG_IVB;
++			__vreg(vgt, DEISR) |= DE_DP_A_HOTPLUG_IVB;
+ 		else
+ 			__vreg(vgt, GEN8_DE_PORT_ISR) |= GEN8_PORT_DP_A_HOTPLUG;
+ 	}
+@@ -377,19 +377,19 @@ enum vgt_pipe get_edp_input(uint32_t wr_data)
+ {
+ 	enum vgt_pipe pipe = I915_MAX_PIPES;
+ 
+-	if ((_REGBIT_TRANS_DDI_FUNC_ENABLE & wr_data) == 0) {
++	if ((TRANS_DDI_FUNC_ENABLE & wr_data) == 0) {
+ 		return I915_MAX_PIPES;
+ 	}
+ 
+-	switch (wr_data & _REGBIT_TRANS_DDI_EDP_INPUT_MASK) {
+-		case _REGBIT_TRANS_DDI_EDP_INPUT_A_ON:
+-		case _REGBIT_TRANS_DDI_EDP_INPUT_A_ONOFF:
++	switch (wr_data & TRANS_DDI_EDP_INPUT_MASK) {
++		case TRANS_DDI_EDP_INPUT_A_ON:
++		case TRANS_DDI_EDP_INPUT_A_ONOFF:
+ 			pipe = PIPE_A;
+ 			break;
+-		case _REGBIT_TRANS_DDI_EDP_INPUT_B_ONOFF:
++		case TRANS_DDI_EDP_INPUT_B_ONOFF:
+ 			pipe = PIPE_B;
+ 			break;
+-		case _REGBIT_TRANS_DDI_EDP_INPUT_C_ONOFF:
++		case TRANS_DDI_EDP_INPUT_C_ONOFF:
+ 			pipe = PIPE_C;
+ 			break;
+ 		default:
+@@ -420,13 +420,13 @@ static void vgt_update_irq_reg(struct vgt_device *vgt)
+ 		recalculate_and_update_ier(vgt->pdev, DEIER);
+ 		recalculate_and_update_imr(vgt->pdev, DEIMR);
+ 	} else {
+-		recalculate_and_update_ier(vgt->pdev, _REG_DE_PIPE_IER(PIPE_A));
+-		recalculate_and_update_ier(vgt->pdev, _REG_DE_PIPE_IER(PIPE_B));
+-		recalculate_and_update_ier(vgt->pdev, _REG_DE_PIPE_IER(PIPE_C));
++		recalculate_and_update_ier(vgt->pdev, GEN8_DE_PIPE_IER(PIPE_A));
++		recalculate_and_update_ier(vgt->pdev, GEN8_DE_PIPE_IER(PIPE_B));
++		recalculate_and_update_ier(vgt->pdev, GEN8_DE_PIPE_IER(PIPE_C));
+ 
+-		recalculate_and_update_imr(vgt->pdev, _REG_DE_PIPE_IMR(PIPE_A));
+-		recalculate_and_update_imr(vgt->pdev, _REG_DE_PIPE_IMR(PIPE_B));
+-		recalculate_and_update_imr(vgt->pdev, _REG_DE_PIPE_IMR(PIPE_C));
++		recalculate_and_update_imr(vgt->pdev, GEN8_DE_PIPE_IMR(PIPE_A));
++		recalculate_and_update_imr(vgt->pdev, GEN8_DE_PIPE_IMR(PIPE_B));
++		recalculate_and_update_imr(vgt->pdev, GEN8_DE_PIPE_IMR(PIPE_C));
+ 	}
+ 
+ 	return;
+@@ -447,7 +447,7 @@ bool rebuild_pipe_mapping(struct vgt_device *vgt, unsigned int reg, uint32_t new
+ 	virtual_pipe = get_pipe(reg, new_data);
+ 
+ 	/*disable pipe case*/
+-	if ((_REGBIT_TRANS_DDI_FUNC_ENABLE & new_data) == 0) {
++	if ((TRANS_DDI_FUNC_ENABLE & new_data) == 0) {
+ 		if (reg == TRANS_DDI_FUNC_CTL_EDP) {
+ 			/*for disable case, we need to get edp input from old value
+ 			since the new data does not contain the edp input*/
+@@ -463,16 +463,16 @@ bool rebuild_pipe_mapping(struct vgt_device *vgt, unsigned int reg, uint32_t new
+ 
+ 	/*enable pipe case*/
+ 	ASSERT((reg == TRANS_DDI_FUNC_CTL_EDP) ||
+-			(new_data & _REGBIT_TRANS_DDI_PORT_MASK));
++			(new_data & TRANS_DDI_PORT_MASK));
+ 
+ 	if (reg == TRANS_DDI_FUNC_CTL_EDP) {
+ 		// In such case, it is virtual PORT_A mapping to physical PORT_A
+ 		hw_value = VGT_MMIO_READ(vgt->pdev, TRANS_DDI_FUNC_CTL_EDP);
+-		if (_REGBIT_TRANS_DDI_FUNC_ENABLE & hw_value)
++		if (TRANS_DDI_FUNC_ENABLE & hw_value)
+ 			physical_pipe = get_edp_input(hw_value);
+ 	} else {
+ 		enum vgt_port vport, vport_override;
+-		vport = (new_data & _REGBIT_TRANS_DDI_PORT_MASK) >> _TRANS_DDI_PORT_SHIFT;
++		vport = (new_data & TRANS_DDI_PORT_MASK) >> TRANS_DDI_PORT_SHIFT;
+ 		vport_override = vgt->ports[vport].port_override;
+ 		if (vport_override == I915_MAX_PORTS) {
+ 			vgt_warn("Unexpected driver behavior to enable TRANS_DDI"
+@@ -480,21 +480,21 @@ bool rebuild_pipe_mapping(struct vgt_device *vgt, unsigned int reg, uint32_t new
+ 			physical_pipe = I915_MAX_PIPES;
+ 		} else if (vport_override == PORT_A) {
+ 			hw_value = VGT_MMIO_READ(vgt->pdev, TRANS_DDI_FUNC_CTL_EDP);
+-			if (_REGBIT_TRANS_DDI_FUNC_ENABLE & hw_value)
++			if (TRANS_DDI_FUNC_ENABLE & hw_value)
+ 				physical_pipe = get_edp_input(hw_value);
+ 								
+ 		} else {
+ 			for (i = 0; i <= TRANSCODER_C; i++) {
+ 				enum vgt_port pport;
+ 				hw_value = VGT_MMIO_READ(vgt->pdev, _VGT_TRANS_DDI_FUNC_CTL(i));
+-				pport = (hw_value & _REGBIT_TRANS_DDI_PORT_MASK) >>
+-						_TRANS_DDI_PORT_SHIFT;
++				pport = (hw_value & TRANS_DDI_PORT_MASK) >>
++						TRANS_DDI_PORT_SHIFT;
+ 
+ 				printk("%s: Enable. pport = %d, vport = %d, "
+ 					"hw_value = 0x%08x, new_data = 0x%08x\n",
+ 			       		__FUNCTION__, pport, vport, hw_value, new_data);
+ 
+-				if (!(_REGBIT_TRANS_DDI_FUNC_ENABLE & hw_value)) {
++				if (!(TRANS_DDI_FUNC_ENABLE & hw_value)) {
+ 					continue;
+ 				}
+ 
+@@ -529,7 +529,7 @@ bool update_pipe_mapping(struct vgt_device *vgt, unsigned int physical_reg, uint
+ 	physical_pipe = get_pipe(physical_reg, physical_wr_data);
+ 
+ 	/*disable pipe case*/
+-	if ((_REGBIT_TRANS_DDI_FUNC_ENABLE & physical_wr_data) == 0) {
++	if ((TRANS_DDI_FUNC_ENABLE & physical_wr_data) == 0) {
+ 		for (i = 0; i < I915_MAX_PIPES; i ++) {
+ 			if(vgt->pipe_mapping[i] == physical_pipe) {
+ 				vgt_set_pipe_mapping(vgt, i, I915_MAX_PIPES);
+@@ -547,19 +547,19 @@ bool update_pipe_mapping(struct vgt_device *vgt, unsigned int physical_reg, uint
+ 			virtual_pipe = get_edp_input(__vreg(vgt, TRANS_DDI_FUNC_CTL_EDP));
+ 		}
+ 	} else {
+-		pport = (physical_wr_data & _REGBIT_TRANS_DDI_PORT_MASK) >> _TRANS_DDI_PORT_SHIFT;
++		pport = (physical_wr_data & TRANS_DDI_PORT_MASK) >> TRANS_DDI_PORT_SHIFT;
+ 	}
+ 
+ 	for (i = 0; i <= TRANSCODER_C; i++) {
+ 		enum vgt_port vport, vport_override;
+ 		virtual_wr_data = __vreg(vgt, _VGT_TRANS_DDI_FUNC_CTL(i));
+-		vport = (virtual_wr_data & _REGBIT_TRANS_DDI_PORT_MASK) >>
+-				_TRANS_DDI_PORT_SHIFT;
++		vport = (virtual_wr_data & TRANS_DDI_PORT_MASK) >>
++				TRANS_DDI_PORT_SHIFT;
+ 		vport_override = vgt->ports[vport].port_override;
+ 
+ 		printk("%s: Enable. pport = %d, vport = %d\n", __FUNCTION__, pport, vport);
+ 
+-		if (!(_REGBIT_TRANS_DDI_FUNC_ENABLE & virtual_wr_data) ||
++		if (!(TRANS_DDI_FUNC_ENABLE & virtual_wr_data) ||
+ 			(vport_override == I915_MAX_PORTS)) {
+ 			continue;
+ 		}
+@@ -578,7 +578,7 @@ bool update_pipe_mapping(struct vgt_device *vgt, unsigned int physical_reg, uint
+ 
+ 	if (current_foreground_vm(vgt->pdev) == vgt &&
+ 		virtual_pipe != I915_MAX_PIPES &&
+-		(_PRI_PLANE_ENABLE & VGT_MMIO_READ(vgt->pdev, VGT_DSPCNTR(physical_pipe)))) {
++		(DISPLAY_PLANE_ENABLE & VGT_MMIO_READ(vgt->pdev, VGT_DSPCNTR(physical_pipe)))) {
+ 		vgt_restore_state(vgt, virtual_pipe);
+ 	}
+ 
+@@ -616,8 +616,8 @@ bool set_panel_fitting(struct vgt_device *vgt, enum vgt_pipe pipe)
+ 		vgt_dbg(VGT_DBG_DPY, "try to set panel fitting before pipe is mapped!\n");
+ 		return false;
+ 	}
+-	if (((_PRI_PLANE_ENABLE & __vreg(vgt, VGT_DSPCNTR(pipe))) == 0) ||
+-		(_PRI_PLANE_ENABLE & VGT_MMIO_READ(vgt->pdev, VGT_DSPCNTR(real_pipe))) == 0) {
++	if (((DISPLAY_PLANE_ENABLE & __vreg(vgt, VGT_DSPCNTR(pipe))) == 0) ||
++		(DISPLAY_PLANE_ENABLE & VGT_MMIO_READ(vgt->pdev, VGT_DSPCNTR(real_pipe))) == 0) {
+ 		return false;
+ 	}
+ 	src_width = (__vreg(vgt, VGT_PIPESRC(pipe)) & 0xffff0000) >> 16;
+@@ -631,7 +631,7 @@ bool set_panel_fitting(struct vgt_device *vgt, enum vgt_pipe pipe)
+ 	v_total_reg = VGT_VTOTAL(real_pipe);
+ 
+ 	edp_trans_code = VGT_MMIO_READ(vgt->pdev, TRANS_DDI_FUNC_CTL_EDP);
+-	if ((_REGBIT_TRANS_DDI_FUNC_ENABLE & edp_trans_code)) {
++	if ((TRANS_DDI_FUNC_ENABLE & edp_trans_code)) {
+ 		if (real_pipe == get_edp_input(edp_trans_code)) {
+ 			h_total_reg = _REG_HTOTAL_EDP;
+ 			v_total_reg = _REG_VTOTAL_EDP;
+@@ -649,15 +649,15 @@ bool set_panel_fitting(struct vgt_device *vgt, enum vgt_pipe pipe)
+ 	/*fixed panel fitting mode to 3x3 mode, Restriction : A 3x3 capable filter must not be enabled
+ 		when the pipe horizontal source size is greater than 2048 pixels*/
+ 	if (IS_HSW(vgt->pdev))
+-		pf_ctl =  _REGBIT_PF_FILTER_MED_3x3 | _REGBIT_PF_PIPE_SEL(real_pipe);
++		pf_ctl =  PF_FILTER_MED_3x3 | PF_PIPE_SEL_IVB(real_pipe);
+ 	else /*after BDW the panel fitter is on the pipe, no need to assign.*/
+-		pf_ctl =  _REGBIT_PF_FILTER_MED_3x3;
++		pf_ctl =  PF_FILTER_MED_3x3;
+ 
+ 	/*enable panel fitting only when the source mode does not eqaul to the target mode*/
+ 	if (src_width != target_width || src_height != target_height ) {
+ 		vgt_dbg(VGT_DBG_DPY, "enable panel fitting for VM %d, pipe %d, src_width:%d, src_height: %d, tgt_width:%d, tgt_height:%d!\n",
+ 			vgt->vm_id, real_pipe, src_width, src_height, target_width, target_height);
+-		pf_ctl = pf_ctl | _REGBIT_PF_ENABLE;
++		pf_ctl = pf_ctl | PF_ENABLE;
+ 	} else {
+ 		vgt_dbg(VGT_DBG_DPY, "disable panel fitting for VM %d, for pipe %d!\n", vgt->vm_id, real_pipe);
+ 	}
+@@ -685,11 +685,11 @@ bool set_panel_fitting(struct vgt_device *vgt, enum vgt_pipe pipe)
+ 	}
+ 
+ 	VGT_MMIO_WRITE(vgt->pdev, VGT_PIPESRC(real_pipe),  ((src_width -1) << 16) | (src_height - 1));
+-	VGT_MMIO_WRITE(vgt->pdev, VGT_PF_WIN_POS(real_pipe), 0);
+-	VGT_MMIO_WRITE(vgt->pdev, VGT_PF_CTL(real_pipe), pf_ctl);
++	VGT_MMIO_WRITE(vgt->pdev, PF_WIN_POS(real_pipe), 0);
++	VGT_MMIO_WRITE(vgt->pdev, PF_CTL(real_pipe), pf_ctl);
+ 	/* PF ctrl is a double buffered registers and gets updated when window
+ 	 size registered is updated*/
+-	VGT_MMIO_WRITE(vgt->pdev, VGT_PF_WIN_SZ(real_pipe),  (target_width << 16) | target_height);
++	VGT_MMIO_WRITE(vgt->pdev, PF_WIN_SZ(real_pipe),  (target_width << 16) | target_height);
+ 	return true;
+ }
+ 
+@@ -741,16 +741,16 @@ void vgt_set_power_well(struct vgt_device *vgt, bool to_enable)
+ 	uint32_t tmp;
+ 
+ 	tmp = VGT_MMIO_READ(vgt->pdev, HSW_PWR_WELL_DRIVER);
+-	is_enabled = tmp & _REGBIT_HSW_PWR_WELL_STATE;
+-	enable_requested = tmp & _REGBIT_HSW_PWR_WELL_ENABLE;
++	is_enabled = tmp & HSW_PWR_WELL_STATE_ENABLED;
++	enable_requested = tmp & HSW_PWR_WELL_ENABLE_REQUEST;
+ 
+ 	if (to_enable) {
+ 		if (!enable_requested)
+-			VGT_MMIO_WRITE(vgt->pdev, HSW_PWR_WELL_DRIVER, _REGBIT_HSW_PWR_WELL_ENABLE);
++			VGT_MMIO_WRITE(vgt->pdev, HSW_PWR_WELL_DRIVER, HSW_PWR_WELL_ENABLE_REQUEST);
+ 
+ 		if (!is_enabled) {
+ 			if (wait_for_atomic((VGT_MMIO_READ(vgt->pdev, HSW_PWR_WELL_DRIVER) &
+-				      _REGBIT_HSW_PWR_WELL_STATE), 20))
++				      HSW_PWR_WELL_STATE_ENABLED), 20))
+ 				vgt_err("Timeout enabling power well\n");
+ 		}
+ 	} else {
+@@ -865,7 +865,7 @@ void vgt_flush_port_info(struct vgt_device *vgt, struct gt_port *port)
+ 		for (i = 0; i <= 3; i++) {
+ 			unsigned int ddi_value;
+ 			ddi_value = VGT_MMIO_READ(vgt->pdev, reg_ddi[i]);
+-			if (_REGBIT_TRANS_DDI_FUNC_ENABLE & ddi_value) {
++			if (TRANS_DDI_FUNC_ENABLE & ddi_value) {
+ 				update_pipe_mapping(vgt, reg_ddi[i], ddi_value);
+ 			}
+ 		}
+@@ -912,29 +912,29 @@ void vgt_dpy_init_modes(vgt_reg_t *mmio_array)
+ 				~_DDI_BUFCTL_DETECT_MASK;
+ 
+ 	for (port = PORT_A; port <= PORT_E; ++ port) {
+-		offset = VGT_DDI_BUF_CTL(port);
++		offset = DDI_BUF_CTL(port);
+ 		mmio_array[REG_INDEX(offset)] &= ~_REGBIT_DDI_BUF_ENABLE;
+-		offset = VGT_DP_TP_CTL(port);
+-		mmio_array[REG_INDEX(offset)] &= ~_REGBIT_DP_TP_ENABLE;
++		offset =VGT_DP_TP_CTL(port);
++		mmio_array[REG_INDEX(offset)] &= ~DP_TP_CTL_ENABLE;
+ 	}
+ 
+ 	for (pipe = PIPE_A; pipe <= PIPE_C; ++ pipe) {
+ 		offset = _VGT_TRANS_DDI_FUNC_CTL(pipe);
+-		mmio_array[REG_INDEX(offset)] &= ~_REGBIT_TRANS_DDI_FUNC_ENABLE;
++		mmio_array[REG_INDEX(offset)] &= ~TRANS_DDI_FUNC_ENABLE;
+ 		offset = VGT_PIPECONF(pipe);
+ 		mmio_array[REG_INDEX(offset)] &= ~_REGBIT_PIPE_ENABLE;
+ 		offset = VGT_TRANSCONF(pipe);
+-		mmio_array[REG_INDEX(offset)] &= ~_REGBIT_TRANS_ENABLE;
+-		offset = VGT_PF_CTL(pipe);
+-		mmio_array[REG_INDEX(offset)] &= ~_REGBIT_PF_ENABLE;
++		mmio_array[REG_INDEX(offset)] &= ~TRANS_ENABLE;
++		offset = PF_CTL(pipe);
++		mmio_array[REG_INDEX(offset)] &= ~PF_ENABLE;
+ 	}
+ 
+ 	mmio_array[REG_INDEX(TRANS_DDI_FUNC_CTL_EDP)] &=
+-				~_REGBIT_TRANS_DDI_FUNC_ENABLE;
++				~TRANS_DDI_FUNC_ENABLE;
+ 	mmio_array[REG_INDEX(_REG_PIPE_EDP_CONF)] &=
+ 				~_REGBIT_PIPE_ENABLE;
+ 
+ 	mmio_array[REG_INDEX(SPLL_CTL)] &= ~_REGBIT_SPLL_CTL_ENABLE;
+-	mmio_array[REG_INDEX(WRPLL_CTL1)] &= ~_REGBIT_WRPLL_ENABLE;
+-	mmio_array[REG_INDEX(WRPLL_CTL2)] &= ~_REGBIT_WRPLL_ENABLE;
++	mmio_array[REG_INDEX(WRPLL_CTL1)] &= ~WRPLL_PLL_ENABLE;
++	mmio_array[REG_INDEX(WRPLL_CTL2)] &= ~WRPLL_PLL_ENABLE;
+ }
+diff --git a/drivers/gpu/drm/i915/vgt/edid.c b/drivers/gpu/drm/i915/vgt/edid.c
+index a88d20e..d76bc3e 100644
+--- a/drivers/gpu/drm/i915/vgt/edid.c
++++ b/drivers/gpu/drm/i915/vgt/edid.c
+@@ -174,16 +174,16 @@ static bool vgt_gmbus0_mmio_write(struct vgt_device *vgt,
+ 
+ 	vgt->vgt_i2c_edid.gmbus.phase = GMBUS_IDLE_PHASE;
+ 
+-	/* FIXME: never clear _GMBUS_HW_WAIT */
+-	__vreg(vgt, PCH_GMBUS2) &= ~ _GMBUS_ACTIVE;
+-	__vreg(vgt, PCH_GMBUS2) |= _GMBUS_HW_RDY | _GMBUS_HW_WAIT;
++	/* FIXME: never clear GMBUS_HW_WAIT_PHASE */
++	__vreg(vgt, PCH_GMBUS2) &= ~ GMBUS_ACTIVE;
++	__vreg(vgt, PCH_GMBUS2) |= GMBUS_HW_RDY | GMBUS_HW_WAIT_PHASE;
+ 
+ 	if (dpy_has_monitor_on_port(vgt, port) && !dpy_port_is_dp(vgt, port)) {
+ 		vgt->vgt_i2c_edid.port = port;
+ 		vgt->vgt_i2c_edid.edid_available = true;
+-		__vreg(vgt, PCH_GMBUS2) &= ~_GMBUS_NAK;
++		__vreg(vgt, PCH_GMBUS2) &= ~GMBUS_SATOER;
+ 	} else {
+-		__vreg(vgt, PCH_GMBUS2) |= _GMBUS_NAK;
++		__vreg(vgt, PCH_GMBUS2) |= GMBUS_SATOER;
+ 	}
+ 
+ 	memcpy(p_data, (char *)vgt->state.vReg + offset, bytes);
+@@ -196,9 +196,9 @@ void vgt_reset_gmbus_controller(struct vgt_device *vgt)
+ 	/* TODO: clear gmbus0 ? */
+ 	//__vreg(vgt, PCH_GMBUS0) = 0;
+ 	//__vreg(vgt, PCH_GMBUS1) = 0;
+-	__vreg(vgt, PCH_GMBUS2) = _GMBUS_HW_RDY;
++	__vreg(vgt, PCH_GMBUS2) = GMBUS_HW_RDY;
+ 	if (!vgt->vgt_i2c_edid.edid_available) {
+-		__vreg(vgt, PCH_GMBUS2) |= _GMBUS_NAK;
++		__vreg(vgt, PCH_GMBUS2) |= GMBUS_SATOER;
+ 	}
+ 	//__vreg(vgt, PCH_GMBUS3) = 0;
+ 	//__vreg(vgt, PCH_GMBUS4) = 0;
+@@ -214,9 +214,9 @@ void *p_data, unsigned int bytes)
+ 	struct vgt_i2c_edid_t *i2c_edid = &vgt->vgt_i2c_edid;
+ 
+ 	vgt_reg_t wvalue = *(vgt_reg_t *)p_data;
+-	if (__vreg(vgt, offset) & _GMBUS_SW_CLR_INT) {
+-		if (!(wvalue & _GMBUS_SW_CLR_INT)) {
+-			__vreg(vgt, offset) &= ~_GMBUS_SW_CLR_INT;
++	if (__vreg(vgt, offset) & GMBUS_SW_CLR_INT) {
++		if (!(wvalue & GMBUS_SW_CLR_INT)) {
++			__vreg(vgt, offset) &= ~GMBUS_SW_CLR_INT;
+ 			vgt_reset_gmbus_controller(vgt);
+ 		}
+ 		/* TODO: "This bit is cleared to zero when an event
+@@ -226,16 +226,16 @@ void *p_data, unsigned int bytes)
+ 		 1) INT status bit cleared
+ 		 2) HW_RDY bit asserted
+ 		 */
+-		if (wvalue & _GMBUS_SW_CLR_INT) {
+-			__vreg(vgt, PCH_GMBUS2) &= ~_GMBUS_INT_STAT;
+-			__vreg(vgt, PCH_GMBUS2) |= _GMBUS_HW_RDY;
++		if (wvalue & GMBUS_SW_CLR_INT) {
++			__vreg(vgt, PCH_GMBUS2) &= ~GMBUS_INT;
++			__vreg(vgt, PCH_GMBUS2) |= GMBUS_HW_RDY;
+ 		}
+ 
+ 		/* For virtualization, we suppose that HW is always ready,
+-		 * so _GMBUS_SW_RDY should always be cleared
++		 * so GMBUS_SW_RDY should always be cleared
+ 		 */
+-		if (wvalue & _GMBUS_SW_RDY)
+-			wvalue &= ~_GMBUS_SW_RDY;
++		if (wvalue & GMBUS_SW_RDY)
++			wvalue &= ~GMBUS_SW_RDY;
+ 
+ 		i2c_edid->gmbus.total_byte_count =
+ 			gmbus1_total_byte_count(wvalue);
+@@ -251,7 +251,7 @@ void *p_data, unsigned int bytes)
+ 					vgt->vgt_id, slave_addr);
+ 		}
+ 
+-		if (wvalue & _GMBUS_CYCLE_INDEX) {
++		if (wvalue & GMBUS_CYCLE_INDEX) {
+ 			i2c_edid->current_edid_read = gmbus1_slave_index(wvalue);
+ 		}
+ 
+@@ -276,11 +276,11 @@ void *p_data, unsigned int bytes)
+ 					 */
+ 					i2c_edid->gmbus.phase = GMBUS_IDLE_PHASE;
+ 					/*
+-					FIXME: never clear _GMBUS_WAIT
++					FIXME: never clear GMBUS_WAIT
+ 					__vreg(vgt, PCH_GMBUS2) &=
+-						~(_GMBUS_ACTIVE | _GMBUS_HW_WAIT);
++						~(GMBUS_ACTIVE | GMBUS_HW_WAIT_PHASE);
+ 					*/
+-					__vreg(vgt, PCH_GMBUS2) &= ~_GMBUS_ACTIVE;
++					__vreg(vgt, PCH_GMBUS2) &= ~GMBUS_ACTIVE;
+ 				}
+ 				break;
+ 			case NIDX_NS_W:
+@@ -292,9 +292,9 @@ void *p_data, unsigned int bytes)
+ 				 * START (-->INDEX) -->DATA
+ 				 */
+ 				i2c_edid->gmbus.phase = GMBUS_DATA_PHASE;
+-				__vreg(vgt, PCH_GMBUS2) |= _GMBUS_ACTIVE;
+-				/* FIXME: never clear _GMBUS_WAIT */
+-				//__vreg(vgt, PCH_GMBUS2) &= ~_GMBUS_HW_WAIT;
++				__vreg(vgt, PCH_GMBUS2) |= GMBUS_ACTIVE;
++				/* FIXME: never clear GMBUS_WAIT */
++				//__vreg(vgt, PCH_GMBUS2) &= ~GMBUS_HW_WAIT_PHASE;
+ 				break;
+ 			default:
+ 				vgt_err("Unknown/reserved GMBUS cycle detected!");
+@@ -305,9 +305,9 @@ void *p_data, unsigned int bytes)
+ 		 * (1) in a new GMBUS cycle
+ 		 * (2) by generating a stop
+ 		 */
+-		/* FIXME: never clear _GMBUS_WAIT
++		/* FIXME: never clear GMBUS_WAIT
+ 		if (gmbus1_bus_cycle(wvalue) != GMBUS_NOCYCLE)
+-			__vreg(vgt, PCH_GMBUS2) &= ~_GMBUS_HW_WAIT;
++			__vreg(vgt, PCH_GMBUS2) &= ~GMBUS_HW_WAIT_PHASE;
+ 		*/
+ 
+ 		__vreg(vgt, offset) = wvalue;
+@@ -334,7 +334,7 @@ bool vgt_gmbus3_mmio_read(struct vgt_device *vgt, unsigned int offset,
+ 	vgt_reg_t reg_data = 0;
+ 
+ 	/* Data can only be recevied if previous settings correct */
+-	if (__vreg(vgt, PCH_GMBUS1) & _GMBUS_SLAVE_READ) {
++	if (__vreg(vgt, PCH_GMBUS1) & GMBUS_SLAVE_READ) {
+ 		if (byte_left <= 0) {
+ 			memcpy((char *)p_data, (char *)vgt->state.vReg + offset, bytes);
+ 			return true;
+@@ -363,7 +363,7 @@ bool vgt_gmbus3_mmio_read(struct vgt_device *vgt, unsigned int offset,
+ 					break;
+ 			}
+ 			//if (i2c_bus->gmbus.phase == GMBUS_WAIT_PHASE)
+-			//__vreg(vgt, PCH_GMBUS2) |= _GMBUS_HW_WAIT;
++			//__vreg(vgt, PCH_GMBUS2) |= GMBUS_HW_WAIT_PHASE;
+ 
+ 			vgt_init_i2c_edid(vgt);
+ 		}
+@@ -382,8 +382,8 @@ static bool vgt_gmbus2_mmio_read(struct vgt_device *vgt, unsigned int offset,
+ 		void *p_data, unsigned int bytes)
+ {
+ 	vgt_reg_t value = __vreg(vgt, offset);
+-	if (!(__vreg(vgt, offset) & _GMBUS_IN_USE)) {
+-		__vreg(vgt, offset) |= _GMBUS_IN_USE;
++	if (!(__vreg(vgt, offset) & GMBUS_INUSE)) {
++		__vreg(vgt, offset) |= GMBUS_INUSE;
+ 	}
+ 
+ 	memcpy(p_data, (void *)&value, bytes);
+@@ -394,8 +394,8 @@ bool vgt_gmbus2_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ 		void *p_data, unsigned int bytes)
+ {
+ 	vgt_reg_t wvalue = *(vgt_reg_t *)p_data;
+-	if (wvalue & _GMBUS_IN_USE)
+-		__vreg(vgt, offset) &= ~_GMBUS_IN_USE;
++	if (wvalue & GMBUS_INUSE)
++		__vreg(vgt, offset) &= ~GMBUS_INUSE;
+ 	/* All other bits are read-only */
+ 	return true;
+ }
+diff --git a/drivers/gpu/drm/i915/vgt/fb_decoder.c b/drivers/gpu/drm/i915/vgt/fb_decoder.c
+index 6ce1e74..a76ec8d 100644
+--- a/drivers/gpu/drm/i915/vgt/fb_decoder.c
++++ b/drivers/gpu/drm/i915/vgt/fb_decoder.c
+@@ -54,13 +54,13 @@ int vgt_decode_primary_plane_format(struct vgt_device *vgt,
+ 	u32	val, fmt;
+ 
+ 	val = __vreg(vgt, VGT_DSPCNTR(pipe));
+-	plane->enabled = !!(val & _PRI_PLANE_ENABLE);
++	plane->enabled = !!(val & DISPLAY_PLANE_ENABLE);
+ 	if (!plane->enabled)
+ 		return 0;
+ 
+-	plane->tiled = !!(val & _PRI_PLANE_TILE_MASK);
++	plane->tiled = !!(val & DISPPLANE_TILED);
+ 
+-	fmt = (val & _PRI_PLANE_FMT_MASK) >> _PRI_PLANE_FMT_SHIFT;
++	fmt = (val & DISPPLANE_PIXFORMAT_MASK) >> _PRI_PLANE_FMT_SHIFT;
+ 	if (!hsw_pixel_formats[fmt].bpp) {
+ 		vgt_err("Non-supported pixel format (0x%x)\n", fmt);
+ 		return -EINVAL;
+@@ -170,16 +170,16 @@ int vgt_decode_sprite_plane_format(struct vgt_device *vgt,
+ 	int drm_format;
+ 
+ 	val = __vreg(vgt, VGT_SPRCTL(pipe));
+-	plane->enabled = !!(val & _SPRITE_ENABLE);
++	plane->enabled = !!(val & SPRITE_ENABLE);
+ 	if (!plane->enabled)
+ 		return 0;
+ 
+-	plane->tiled = !!(val & _SPRITE_TILED);
+-	color_order = !!(val & _SPRITE_COLOR_ORDER_MASK);
+-	yuv_order = (val & _SPRITE_YUV_ORDER_MASK) >>
++	plane->tiled = !!(val & SPRITE_TILED);
++	color_order = !!(val & SPRITE_RGB_ORDER_RGBX);
++	yuv_order = (val & SPRITE_YUV_BYTE_ORDER_MASK) >>
+ 				_SPRITE_YUV_ORDER_SHIFT;
+ 
+-	fmt = (val & _SPRITE_FMT_MASK) >> _SPRITE_FMT_SHIFT;
++	fmt = (val & SPRITE_PIXFORMAT_MASK) >> _SPRITE_FMT_SHIFT;
+ 	if (!hsw_pixel_formats_sprite[fmt].bpp) {
+ 		vgt_err("Non-supported pixel format (0x%x)\n", fmt);
+ 		return -EINVAL;
+@@ -418,11 +418,11 @@ int vgt_decode_fb_format(int vmid, struct vgt_fb_format *fb)
+ 		struct vgt_pipe_format *pipe = &fb->pipes[i];
+ 		vgt_reg_t ddi_func_ctl = __vreg(vgt, _VGT_TRANS_DDI_FUNC_CTL(i));
+ 
+-		if (!(ddi_func_ctl & _TRANS_DDI_PORT_SHIFT)) {
++		if (!(ddi_func_ctl & TRANS_DDI_PORT_SHIFT)) {
+ 			pipe->ddi_port = DDI_PORT_NONE;
+ 		} else {
+-			vgt_reg_t port = (ddi_func_ctl & _REGBIT_TRANS_DDI_PORT_MASK) >>
+-						_TRANS_DDI_PORT_SHIFT;
++			vgt_reg_t port = (ddi_func_ctl & TRANS_DDI_PORT_MASK) >>
++						TRANS_DDI_PORT_SHIFT;
+ 			if (port <= DDI_PORT_E)
+ 				pipe->ddi_port = port;
+ 			else
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index cd5155b..7441345 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -2113,7 +2113,7 @@ int ring_ppgtt_mode(struct vgt_device *vgt, int ring_id, u32 off, u32 mode)
+ 	}
+ 
+ 	/* sanity check */
+-	if ((mode & _REGBIT_PPGTT_ENABLE) && (mode & (_REGBIT_PPGTT_ENABLE << 16))) {
++	if ((mode & GFX_PPGTT_ENABLE) && (mode & (GFX_PPGTT_ENABLE << 16))) {
+ 		/* XXX the order of mode enable for PPGTT and PPGTT dir base
+ 		 * setting is not strictly defined, e.g linux driver first
+ 		 * enables PPGTT bit in mode reg, then write PP dir base...
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 99490a2..159dc25 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -120,7 +120,7 @@ static bool fence_mmio_write(struct vgt_device *vgt, unsigned int off,
+ static inline void set_vRC(struct vgt_device *vgt, int c)
+ {
+ 	__vreg(vgt, _REG_GT_CORE_STATUS) = c;
+-	__vreg(vgt, _REG_GT_THREAD_STATUS) = c;
++	__vreg(vgt, GEN6_GT_THREAD_STATUS_REG) = c;
+ }
+ 
+ static void set_vRC_to_C6(struct vgt_device *vgt)
+@@ -197,7 +197,7 @@ static bool mul_force_wake_write(struct vgt_device *vgt, unsigned int offset,
+ 
+ 	vgt_dbg(VGT_DBG_GENERIC, "VM%d write register FORCE_WAKE_MT with %x\n", vgt->vm_id, data);
+ 
+-	if (!IS_BDWPLUS(vgt->pdev) && !(__vreg(vgt, ECOBUS) & ECOBUS_FORCEWAKE_MT_ENABLE)) {
++	if (!IS_BDWPLUS(vgt->pdev) && !(__vreg(vgt, ECOBUS) & FORCEWAKE_MT_ENABLE)) {
+ 		__vreg(vgt, FORCEWAKE_MT) = data;
+ 		return true;
+ 	}
+@@ -217,7 +217,7 @@ static bool mul_force_wake_write(struct vgt_device *vgt, unsigned int offset,
+ 		__vreg(vgt, FORCEWAKE_ACK_HSW) = new_wake;
+ 	} else {
+ 		/* IVB */
+-		__vreg(vgt, _REG_MULFORECEWAKE_ACK) = new_wake;
++		__vreg(vgt, FORCEWAKE_MT_ACK) = new_wake;
+ 	}
+ 
+ 	if (new_wake){
+@@ -301,22 +301,22 @@ static bool gen6_gdrst_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ 
+ 	memcpy(&data, p_data, bytes);
+ 
+-	if (data & _REGBIT_GEN6_GRDOM_FULL) {
++	if (data & GEN6_GRDOM_FULL) {
+ 		vgt_info("VM %d request Full GPU Reset\n", vgt->vm_id);
+ 		ring_bitmap = 0xff;
+ 	}
+ 
+-	if (data & _REGBIT_GEN6_GRDOM_RENDER) {
++	if (data & GEN6_GRDOM_RENDER) {
+ 		vgt_info("VM %d request GPU Render Reset\n", vgt->vm_id);
+ 		ring_bitmap |= (1 << RING_BUFFER_RCS);
+ 	}
+ 
+-	if (data & _REGBIT_GEN6_GRDOM_MEDIA) {
++	if (data & GEN6_GRDOM_MEDIA) {
+ 		vgt_info("VM %d request GPU Media Reset\n", vgt->vm_id);
+ 		ring_bitmap |= (1 << RING_BUFFER_VCS);
+ 	}
+ 
+-	if (data & _REGBIT_GEN6_GRDOM_BLT) {
++	if (data & GEN6_GRDOM_BLT) {
+ 		vgt_info("VM %d request GPU BLT Reset\n", vgt->vm_id);
+ 		ring_bitmap |= (1 << RING_BUFFER_BCS);
+ 	}
+@@ -380,8 +380,8 @@ static bool pch_pp_control_mmio_write(struct vgt_device *vgt, unsigned int offse
+ {
+ 	uint32_t data;
+ 	uint32_t reg;
+-	union PCH_PP_CONTROL_LAYOUT pp_control;
+-	union PCH_PP_STATUS_LAYOUT pp_status;
++	union _PCH_PP_CONTROL pp_control;
++	union _PCH_PP_STAUTS pp_status;
+ 
+ 	reg = offset & ~(bytes - 1);
+ 	if (reg_hw_access(vgt, reg)){
+@@ -390,7 +390,7 @@ static bool pch_pp_control_mmio_write(struct vgt_device *vgt, unsigned int offse
+ 
+ 	data = *(uint32_t*)p_data;
+ 
+-	__vreg(vgt, _REG_PCH_PP_CONTROL) = data;
++	__vreg(vgt, PCH_PP_CONTROL) = data;
+ 
+ 	pp_control.data = data;
+ 	pp_status.data = __vreg(vgt, PCH_PP_STATUS);
+@@ -478,15 +478,15 @@ static bool lcpll_ctl_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ 	if (!reg_hw_access(vgt, reg)) {
+ 		vreg_data = __vreg(vgt, offset);
+ 
+-		if (vreg_data & _REGBIT_LCPLL_PLL_DISABLE)
+-			vreg_data &= ~_REGBIT_LCPLL_PLL_LOCK;
++		if (vreg_data & LCPLL_PLL_DISABLE)
++			vreg_data &= ~LCPLL_PLL_LOCK;
+ 		else
+-			vreg_data |= _REGBIT_LCPLL_PLL_LOCK;
++			vreg_data |= LCPLL_PLL_LOCK;
+ 
+-		if (vreg_data & _REGBIT_LCPLL_CD_SOURCE_FCLK)
+-			vreg_data |= _REGBIT_LCPLL_CD_SOURCE_FCLK_DONE;
++		if (vreg_data & LCPLL_CD_SOURCE_FCLK)
++			vreg_data |= LCPLL_CD_SOURCE_FCLK_DONE;
+ 		else
+-			vreg_data &= ~_REGBIT_LCPLL_CD_SOURCE_FCLK_DONE;
++			vreg_data &= ~LCPLL_CD_SOURCE_FCLK_DONE;
+ 
+ 		__vreg(vgt, offset) = vreg_data;
+ 	}
+@@ -712,7 +712,7 @@ static bool dpy_trans_ddi_ctl_write(struct vgt_device *vgt, unsigned int offset,
+ 		is_current_display_owner(vgt) &&
+ 		offset == TRANS_DDI_FUNC_CTL_EDP &&
+ 		PIPE_A  == get_edp_input(*((uint32_t *)p_data))) {
+-		*((uint32_t *)p_data) |= _REGBIT_TRANS_DDI_EDP_INPUT_A_ONOFF;
++		*((uint32_t *)p_data) |= TRANS_DDI_EDP_INPUT_A_ONOFF;
+ 		vgt_set_power_well(vgt, true);
+ 	}
+ 
+@@ -885,7 +885,7 @@ static bool ddi_buf_ctl_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ 		(!(reg_val & _REGBIT_DDI_BUF_ENABLE))) {
+ 		if (!reg_hw_access(vgt, offset)) {
+ 			__vreg(vgt, _REG_DP_TP_STATUS_E) &=
+-				~_REGBIT_DP_TP_STATUS_AUTOTRAIN_DONE;
++				~DP_TP_STATUS_AUTOTRAIN_DONE;
+ 		}
+ 	}
+ 
+@@ -926,9 +926,9 @@ static bool fdi_auto_training_started(struct vgt_device *vgt)
+ 	vgt_reg_t tx_ctl = __vreg(vgt, _REG_DP_TP_CTL_E);
+ 
+ 	if ((ddi_buf_ctl & _REGBIT_DDI_BUF_ENABLE) &&
+-		(rx_ctl & _REGBIT_FDI_RX_ENABLE) &&
++		(rx_ctl & FDI_RX_ENABLE) &&
+ 		(rx_ctl & _REGBIT_FDI_RX_FDI_AUTO_TRAIN_ENABLE) &&
+-		(tx_ctl & _REGBIT_DP_TP_ENABLE) &&
++		(tx_ctl & DP_TP_CTL_ENABLE) &&
+ 		(tx_ctl & _REGBIT_DP_TP_FDI_AUTO_TRAIN_ENABLE)) {
+ 			rc = true;
+ 	}
+@@ -950,18 +950,18 @@ static bool check_fdi_rx_train_status(struct vgt_device *vgt,
+ 	fdi_rx_ctl = VGT_FDI_RX_CTL(pipe);
+ 
+ 	if (train_pattern == FDI_LINK_TRAIN_PATTERN1) {
+-		fdi_rx_train_bits =_REGBIT_FDI_LINK_TRAIN_PATTERN_1_CPT;
+-		fdi_tx_train_bits = _REGBIT_FDI_LINK_TRAIN_PATTERN_1;
++		fdi_rx_train_bits =FDI_LINK_TRAIN_PATTERN_1_CPT;
++		fdi_tx_train_bits = FDI_LINK_TRAIN_PATTERN_1;
+ 		fdi_iir_check_bits = _REGBIT_FDI_RX_BIT_LOCK;
+ 	} else if (train_pattern == FDI_LINK_TRAIN_PATTERN2) {
+-		fdi_rx_train_bits = _REGBIT_FDI_LINK_TRAIN_PATTERN_2_CPT;
+-		fdi_tx_train_bits = _REGBIT_FDI_LINK_TRAIN_PATTERN_2;
++		fdi_rx_train_bits = FDI_LINK_TRAIN_PATTERN_2_CPT;
++		fdi_tx_train_bits = FDI_LINK_TRAIN_PATTERN_2;
+ 		fdi_iir_check_bits = _REGBIT_FDI_RX_SYMBOL_LOCK;
+ 	} else {
+ 		BUG();
+ 	}
+ 
+-	fdi_rx_check_bits = _REGBIT_FDI_RX_ENABLE | fdi_rx_train_bits;
++	fdi_rx_check_bits = FDI_RX_ENABLE | fdi_rx_train_bits;
+ 	fdi_tx_check_bits = _REGBIT_FDI_TX_ENABLE | fdi_tx_train_bits;
+ 
+ 	/* If imr bit not been masked */
+@@ -1018,7 +1018,7 @@ static bool update_fdi_rx_iir_status(struct vgt_device *vgt, unsigned int offset
+ 		if (offset == _FDI_RXA_CTL) {
+ 			if (fdi_auto_training_started(vgt))
+ 				__vreg(vgt, _REG_DP_TP_STATUS_E) |=
+-					_REGBIT_DP_TP_STATUS_AUTOTRAIN_DONE;
++					DP_TP_STATUS_AUTOTRAIN_DONE;
+ 		}
+ 	}
+ 	return rc;
+@@ -1039,12 +1039,12 @@ static bool dp_tp_ctl_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ 	rc = default_mmio_write(vgt, offset, p_data, bytes);
+ 
+ 	if (!reg_hw_access(vgt, offset)) {
+-		port = VGT_DP_TP_CTL_PORT(offset);
++		port = DP_TP_PORT(offset);
+ 		ctl_val = __vreg(vgt, offset);
+ 		val = (ctl_val & DP_TP_CTL_10_8_MASK) >> DP_TP_CTL_8_SHIFT;
+ 
+ 		if (val == 0x2) {
+-			dp_tp_status_reg = VGT_DP_TP_STATUS(port);
++			dp_tp_status_reg = DP_TP_STATUS(port);
+ 			__vreg(vgt, dp_tp_status_reg) |= (1 << DP_TP_STATUS_25_SHIFT);
+ 			__sreg(vgt, dp_tp_status_reg) = __vreg(vgt, dp_tp_status_reg);
+ 		}
+@@ -1096,25 +1096,25 @@ static bool pch_adpa_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ 	if (reg_hw_access(vgt, offset))
+ 		return true;
+ 
+-	if (new & _REGBIT_ADPA_CRT_HOTPLUG_FORCE_TRIGGER) {
++	if (new & ADPA_CRT_HOTPLUG_FORCE_TRIGGER) {
+ 
+ 		if ((new & _REGBIT_ADPA_DAC_ENABLE)) {
+ 			vgt_warn("HOTPLUG_FORCE_TRIGGER is set while VGA is enabled!\n");
+ 		}
+ 
+ 		/* emulate the status based on monitor connection information */
+-		new &= ~_REGBIT_ADPA_CRT_HOTPLUG_FORCE_TRIGGER;
++		new &= ~ADPA_CRT_HOTPLUG_FORCE_TRIGGER;
+ 
+ 		if (dpy_has_monitor_on_port(vgt, PORT_E))
+-			new |= _REGBIT_ADPA_CRT_HOTPLUG_MONITOR_MASK;
++			new |= ADPA_CRT_HOTPLUG_MONITOR_MASK;
+ 		else
+-			new &= ~_REGBIT_ADPA_CRT_HOTPLUG_MONITOR_MASK;
++			new &= ~ADPA_CRT_HOTPLUG_MONITOR_MASK;
+ 	} else {
+ 		/* ignore the status bits in new value
+ 		 * since they are read only actually
+ 		 */
+-		new = (new & ~_REGBIT_ADPA_CRT_HOTPLUG_MONITOR_MASK) |
+-			(old & _REGBIT_ADPA_CRT_HOTPLUG_MONITOR_MASK);
++		new = (new & ~ADPA_CRT_HOTPLUG_MONITOR_MASK) |
++			(old & ADPA_CRT_HOTPLUG_MONITOR_MASK);
+ 	}
+ 
+ 	__vreg(vgt, offset) = __sreg(vgt, offset) = new;
+@@ -1239,7 +1239,7 @@ static bool dpy_plane_ctl_write(struct vgt_device *vgt, unsigned int offset,
+ 
+ 	new_plane_ctl = *(vgt_reg_t *)p_data;
+ 	pipe = VGT_DSPCNTRPIPE(offset);
+-	if ( (_PRI_PLANE_ENABLE & new_plane_ctl) &&  (_PRI_PLANE_ENABLE & __vreg(vgt, offset)) == 0) {
++	if ( (DISPLAY_PLANE_ENABLE & new_plane_ctl) &&  (DISPLAY_PLANE_ENABLE & __vreg(vgt, offset)) == 0) {
+ 		enable_plane = true;
+ 	}
+ 
+@@ -1389,10 +1389,10 @@ static bool south_chicken2_write(struct vgt_device *vgt, unsigned int offset,
+ 		return false;
+ 
+ 	if (!reg_hw_access(vgt, offset)) {
+-		if (__vreg(vgt, offset) & _REGBIT_MPHY_IOSFSB_RESET_CTL)
+-			__vreg(vgt, offset) |= _REGBIT_FDI_MPHY_IOSFSB_RESET_STATUS;
++		if (__vreg(vgt, offset) & FDI_MPHY_IOSFSB_RESET_CTL)
++			__vreg(vgt, offset) |= FDI_MPHY_IOSFSB_RESET_STATUS;
+ 		else
+-			__vreg(vgt, offset) &= ~_REGBIT_FDI_MPHY_IOSFSB_RESET_STATUS;
++			__vreg(vgt, offset) &= ~FDI_MPHY_IOSFSB_RESET_STATUS;
+ 
+ 		__sreg(vgt, offset) = __vreg(vgt, offset);
+ 	}
+@@ -1471,7 +1471,7 @@ static void dp_aux_ch_trigger_interrupt_on_done(struct vgt_device *vgt, vgt_reg_
+ 		event = AUX_CHENNEL_D;
+ 	}
+ 
+-	if (event != EVENT_MAX && (_REGBIT_DP_AUX_CH_CTL_INTERRUPT & value)) {
++	if (event != EVENT_MAX && (DP_AUX_CH_CTL_INTERRUPT & value)) {
+ 		vgt_trigger_virtual_event(vgt, event);
+ 	}
+ }
+@@ -1482,12 +1482,12 @@ static void dp_aux_ch_ctl_trans_done(struct vgt_device *vgt, vgt_reg_t value,
+ 	/* mark transaction done */
+ 	value |= _REGBIT_DP_AUX_CH_CTL_DONE;
+ 	value &= ~_REGBIT_DP_AUX_CH_CTL_SEND_BUSY;
+-	value &= ~_REGBIT_DP_AUX_CH_CTL_RECV_ERR;
++	value &= ~DP_AUX_CH_CTL_RECEIVE_ERROR;
+ 
+ 	if (data_valid) {
+-		value &= ~_REGBIT_DP_AUX_CH_CTL_TIME_OUT_ERR;
++		value &= ~DP_AUX_CH_CTL_TIME_OUT_ERROR;
+ 	} else {
+-		value |= _REGBIT_DP_AUX_CH_CTL_TIME_OUT_ERR;
++		value |= DP_AUX_CH_CTL_TIME_OUT_ERROR;
+ 	}
+ 
+ 	/* message size */
+@@ -1816,10 +1816,10 @@ static bool sbi_mmio_data_read(struct vgt_device *vgt, unsigned int offset,
+ 	rc = default_mmio_read(vgt, offset, p_data, bytes);
+ 
+ 	if (!reg_hw_access(vgt, offset)) {
+-		if (((__vreg(vgt, SBI_CTL_STAT) & _SBI_OPCODE_MASK) >>
+-			_SBI_OPCODE_SHIFT) == _SBI_CMD_CRRD) {
++		if (((__vreg(vgt, SBI_CTL_STAT) & SBI_OPCODE_MASK) >>
++			SBI_OPCODE_SHIFT) == SBI_CMD_CRRD) {
+ 			unsigned int sbi_offset = (__vreg(vgt, SBI_ADDR) &
+-				_SBI_ADDR_OFFSET_MASK) >> _SBI_ADDR_OFFSET_SHIFT;
++				SBI_ADDR_OFFSET_MASK) >> SBI_ADDR_OFFSET_SHIFT;
+ 			vgt_reg_t val = get_sbi_reg_cached_value(vgt, sbi_offset);
+ 			*(vgt_reg_t *)p_data = val;
+ 		}
+@@ -1838,18 +1838,18 @@ static bool sbi_mmio_ctl_write(struct vgt_device *vgt, unsigned int offset,
+ 	if (!reg_hw_access(vgt, offset)) {
+ 		vgt_reg_t data = __vreg(vgt, offset);
+ 
+-		data &= ~(_SBI_STAT_MASK << _SBI_STAT_SHIFT);
+-		data |= _SBI_READY;
++		data &= ~(SBI_STAT_MASK << SBI_STAT_SHIFT);
++		data |= SBI_READY;
+ 
+-		data &= ~(_SBI_RESPONSE_MASK << _SBI_RESPONSE_SHIFT);
+-		data |= _SBI_RESPONSE_SUCCESS;
++		data &= ~(SBI_RESPONSE_MASK << SBI_RESPONSE_SHIFT);
++		data |= SBI_RESPONSE_SUCCESS;
+ 
+ 		__vreg(vgt, offset) = data;
+ 
+-		if (((__vreg(vgt, SBI_CTL_STAT) & _SBI_OPCODE_MASK) >>
+-			_SBI_OPCODE_SHIFT) == _SBI_CMD_CRWR) {
++		if (((__vreg(vgt, SBI_CTL_STAT) & SBI_OPCODE_MASK) >>
++			SBI_OPCODE_SHIFT) == SBI_CMD_CRWR) {
+ 			unsigned int sbi_offset = (__vreg(vgt, SBI_ADDR) &
+-				_SBI_ADDR_OFFSET_MASK) >> _SBI_ADDR_OFFSET_SHIFT;
++				SBI_ADDR_OFFSET_MASK) >> SBI_ADDR_OFFSET_SHIFT;
+ 			vgt_reg_t val = __vreg(vgt, SBI_DATA);
+ 			cache_sbi_reg_value(vgt, sbi_offset, val);
+ 		}
+@@ -2102,16 +2102,16 @@ static bool power_well_ctl_write(struct vgt_device *vgt, unsigned int offset,
+ 
+ 	memcpy ((char *)vgt->state.vReg + offset, p_data, bytes);
+ 
+-	if (value & _REGBIT_HSW_PWR_WELL_ENABLE) {
+-		__vreg(vgt, offset) |= _REGBIT_HSW_PWR_WELL_STATE;
++	if (value & HSW_PWR_WELL_ENABLE_REQUEST) {
++		__vreg(vgt, offset) |= HSW_PWR_WELL_STATE_ENABLED;
+ 	} else {
+-		__vreg(vgt, offset) &= ~_REGBIT_HSW_PWR_WELL_STATE;
++		__vreg(vgt, offset) &= ~HSW_PWR_WELL_STATE_ENABLED;
+ 	}
+ 
+ 	if (is_current_display_owner(vgt)) {
+ 		/* force to enable power well physically */
+ 		if (IS_HSW(vgt->pdev) && enable_panel_fitting && offset == HSW_PWR_WELL_DRIVER) {
+-			value |= _REGBIT_HSW_PWR_WELL_ENABLE;
++			value |= HSW_PWR_WELL_ENABLE_REQUEST;
+ 		}
+ 		VGT_MMIO_WRITE(vgt->pdev, offset, value);
+ 	}
+@@ -2247,13 +2247,13 @@ bool fpga_dbg_mmio_read(struct vgt_device *vgt, unsigned int reg,
+ 	if (!rc)
+ 		return false;
+ 
+-	if (vgt->vm_id == 0 && (__vreg(vgt, reg) & _REGBIT_FPGA_DBG_RM_NOCLAIM)) {
+-		VGT_MMIO_WRITE(vgt->pdev, reg, _REGBIT_FPGA_DBG_RM_NOCLAIM);
++	if (vgt->vm_id == 0 && (__vreg(vgt, reg) & FPGA_DBG_RM_NOCLAIM)) {
++		VGT_MMIO_WRITE(vgt->pdev, reg, FPGA_DBG_RM_NOCLAIM);
+ 
+-		__vreg(vgt, reg) &= ~_REGBIT_FPGA_DBG_RM_NOCLAIM;
++		__vreg(vgt, reg) &= ~FPGA_DBG_RM_NOCLAIM;
+ 		__sreg(vgt, reg) = __vreg(vgt, reg);
+ 
+-		*(vgt_reg_t *)p_data &= ~_REGBIT_FPGA_DBG_RM_NOCLAIM;
++		*(vgt_reg_t *)p_data &= ~FPGA_DBG_RM_NOCLAIM;
+ 	}
+ 
+ 	return true;
+@@ -2285,8 +2285,8 @@ static bool sfuse_strap_mmio_read(struct vgt_device *vgt, unsigned int offset,
+ 	 * for indirect mode, we provide full PORT B,C,D capability to VM
+ 	 */
+ 	if (!propagate_monitor_to_guest && !is_current_display_owner(vgt)) {
+-		*(vgt_reg_t*)p_data |=  (_REGBIT_SFUSE_STRAP_B_PRESENTED
+-			| _REGBIT_SFUSE_STRAP_C_PRESENTED | _REGBIT_SFUSE_STRAP_D_PRESENTED);
++		*(vgt_reg_t*)p_data |=  (SFUSE_STRAP_DDIB_DETECTED
++			| SFUSE_STRAP_DDIC_DETECTED | SFUSE_STRAP_DDID_DETECTED);
+ 	}
+ 	return rc;
+ }
+@@ -2818,7 +2818,7 @@ reg_attr_t vgt_reg_info_general[] = {
+ {_FDI_RXB_TUSIZE1, 4, F_DPY, 0, D_ALL, NULL, NULL},
+ {_FDI_RXB_TUSIZE2, 4, F_DPY, 0, D_ALL, NULL, NULL},
+ 
+-{_REG_PCH_PP_CONTROL, 4, F_DPY, 0, D_ALL, NULL, pch_pp_control_mmio_write},
++{PCH_PP_CONTROL, 4, F_DPY, 0, D_ALL, NULL, pch_pp_control_mmio_write},
+ {PCH_PP_DIVISOR, 4, F_DPY, 0, D_ALL, NULL, NULL},
+ {PCH_PP_STATUS, 4, F_DPY, 0, D_ALL, NULL, NULL},
+ {PCH_LVDS, 4, F_DPY, 0, D_ALL, NULL, NULL},
+@@ -2846,7 +2846,7 @@ reg_attr_t vgt_reg_info_general[] = {
+ {0xE6E1C, 4, F_DPY, 0, D_ALL,
+ 	dpy_reg_mmio_read_3, NULL},
+ {PCH_PORT_HOTPLUG, 4, F_VIRT, 0, D_ALL, NULL, shotplug_ctl_mmio_write},
+-{_REG_LCPLL_CTL, 4, F_DPY, 0, D_ALL, NULL, lcpll_ctl_mmio_write},
++{LCPLL_CTL, 4, F_DPY, 0, D_ALL, NULL, lcpll_ctl_mmio_write},
+ {FUSE_STRAP, 4, F_DPY, 0, D_ALL, NULL, NULL},
+ {DIGITAL_PORT_HOTPLUG_CNTRL, 4, F_DPY, 0, D_ALL, NULL, NULL},
+ 
+@@ -2997,7 +2997,7 @@ reg_attr_t vgt_reg_info_general[] = {
+ {FORCEWAKE, 4, F_VIRT, 0, D_ALL, NULL, force_wake_write},
+ {FORCEWAKE_ACK, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+ {_REG_GT_CORE_STATUS, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+-{_REG_GT_THREAD_STATUS, 4, F_VIRT, 0, D_ALL, NULL, NULL},
++{GEN6_GT_THREAD_STATUS_REG, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+ {GTFIFODBG, 4, F_RDR, 0, D_ALL, NULL, NULL},
+ {GTFIFOCTL, 4, F_RDR, 0, D_ALL, NULL, NULL},
+ {FORCEWAKE_MT, 4, F_VIRT, 0, D_ALL, NULL, mul_force_wake_write},
+@@ -3042,7 +3042,7 @@ reg_attr_t vgt_reg_info_general[] = {
+ 
+ {RSTDBYCTL, 4, F_DOM0, 0, D_ALL, NULL, NULL},
+ 
+-{_REG_GEN6_GDRST, 4, F_DOM0, 0, D_ALL, gen6_gdrst_mmio_read, gen6_gdrst_mmio_write},
++{GEN6_GDRST, 4, F_DOM0, 0, D_ALL, gen6_gdrst_mmio_read, gen6_gdrst_mmio_write},
+ {_REG_FENCE_0_LOW, 0x80, F_VIRT, 0, D_ALL, fence_mmio_read, fence_mmio_write},
+ {VGT_PVINFO_PAGE, VGT_PVINFO_SIZE, F_VIRT, 0, D_ALL, pvinfo_read, pvinfo_write},
+ {CPU_VGACNTRL, 4, F_DOM0, 0, D_ALL, vga_control_r, vga_control_w},
+@@ -3594,15 +3594,15 @@ reg_list_t vgt_gen7_sticky_regs[] = {
+ 	{FORCEWAKE, 4},
+ 	{FORCEWAKE_ACK, 4},
+ 	{_REG_GT_CORE_STATUS, 4},
+-	{_REG_GT_THREAD_STATUS, 4},
++	{GEN6_GT_THREAD_STATUS_REG, 4},
+ 	{GTFIFODBG, 4},
+ 	{GTFIFOCTL, 4},
+ 	{FORCEWAKE_MT, 4},
+-	{_REG_LCPLL_CTL, 4},
++	{LCPLL_CTL, 4},
+ 	{FORCEWAKE_ACK_HSW, 4},
+ 
+ 	/* misc */
+-	{_REG_GEN6_GDRST, 4},
++	{GEN6_GDRST, 4},
+ 	{_REG_FENCE_0_LOW, 0x80},
+ 	{VGT_PVINFO_PAGE, VGT_PVINFO_SIZE},
+ 	{CPU_VGACNTRL, 4},
+@@ -3685,15 +3685,15 @@ reg_list_t vgt_gen8_sticky_regs[] = {
+ 	{FORCEWAKE, 4},
+ 	{FORCEWAKE_ACK, 4},
+ 	{_REG_GT_CORE_STATUS, 4},
+-	{_REG_GT_THREAD_STATUS, 4},
++	{GEN6_GT_THREAD_STATUS_REG, 4},
+ 	{GTFIFODBG, 4},
+ 	{GTFIFOCTL, 4},
+ 	{FORCEWAKE_MT, 4},
+-	{_REG_LCPLL_CTL, 4},
++	{LCPLL_CTL, 4},
+ 	{FORCEWAKE_ACK_HSW, 4},
+ 
+ 	/* misc */
+-	{_REG_GEN6_GDRST, 4},
++	{GEN6_GDRST, 4},
+ 	{_REG_FENCE_0_LOW, 0x80},
+ 	{VGT_PVINFO_PAGE, VGT_PVINFO_SIZE},
+ 	{CPU_VGACNTRL, 4},
+diff --git a/drivers/gpu/drm/i915/vgt/interrupt.c b/drivers/gpu/drm/i915/vgt/interrupt.c
+index e2e90f0..916f289 100644
+--- a/drivers/gpu/drm/i915/vgt/interrupt.c
++++ b/drivers/gpu/drm/i915/vgt/interrupt.c
+@@ -456,7 +456,7 @@ bool vgt_reg_imr_handler(struct vgt_device *vgt,
+ 	/* figure out newly masked/unmasked bits */
+ 	changed = __vreg(vgt, reg) ^ imr;
+ 	if (reg == DEIMR)
+-		changed &= ~_REGBIT_MASTER_INTERRUPT;
++		changed &= ~MASTER_INTERRUPT_ENABLE;
+ 	masked = (__vreg(vgt, reg) & changed) ^ changed;
+ 	unmasked = masked ^ changed;
+ 
+@@ -494,10 +494,10 @@ void recalculate_and_update_ier(struct pgt_device *pdev, vgt_reg_t reg)
+ 	if (device_is_reseting(pdev)) {
+ 		if (IS_BDWPLUS(pdev)) {
+ 			if (reg == GEN8_MASTER_IRQ)
+-				new_ier &= ~_REGBIT_MASTER_IRQ_CONTROL;
++				new_ier &= ~GEN8_MASTER_IRQ_CONTROL;
+ 		} else {
+ 			if (reg == DEIER)
+-				new_ier &= ~_REGBIT_MASTER_INTERRUPT;
++				new_ier &= ~MASTER_INTERRUPT_ENABLE;
+ 		}
+ 	}
+ 
+@@ -531,9 +531,9 @@ bool vgt_reg_master_irq_handler(struct vgt_device *vgt,
+ 	 * only bit 31 is allowed to be modified
+ 	 * and treated as an IER bit.
+ 	 */
+-	ier &= _REGBIT_MASTER_IRQ_CONTROL;
+-	virtual_ier &= _REGBIT_MASTER_IRQ_CONTROL;
+-	__vreg(vgt, reg) &= ~_REGBIT_MASTER_IRQ_CONTROL;
++	ier &= GEN8_MASTER_IRQ_CONTROL;
++	virtual_ier &= GEN8_MASTER_IRQ_CONTROL;
++	__vreg(vgt, reg) &= ~GEN8_MASTER_IRQ_CONTROL;
+ 	__vreg(vgt, reg) |= ier;
+ 
+ 	/* figure out newly enabled/disable bits */
+@@ -1022,7 +1022,7 @@ static void vgt_handle_ring_empty_notify_virt(struct vgt_irq_host_state *hstate,
+ static void vgt_handle_phase_in_virt(struct vgt_irq_host_state *hstate,
+ 	enum vgt_event_type event, struct vgt_device *vgt)
+ {
+-	__vreg(vgt, BLC_PWM_CPU_CTL2) |= _REGBIT_PHASE_IN_IRQ_STATUS;
++	__vreg(vgt, BLC_PWM_CPU_CTL2) |= BLM_PHASE_IN_INTERUPT_STATUS;
+ 	vgt_handle_default_event_virt(hstate, event, vgt);
+ }
+ 
+@@ -1037,14 +1037,14 @@ static void vgt_handle_crt_hotplug_virt(struct vgt_irq_host_state *hstate,
+ 	enum vgt_event_type event, struct vgt_device *vgt)
+ {
+ 	/* update channel status */
+-	if (__vreg(vgt, PCH_ADPA) & _REGBIT_ADPA_CRT_HOTPLUG_ENABLE) {
++	if (__vreg(vgt, PCH_ADPA) & ADPA_CRT_HOTPLUG_ENABLE) {
+ 
+ 		if (!is_current_display_owner(vgt)) {
+ 			__vreg(vgt, PCH_ADPA) &=
+-				~_REGBIT_ADPA_CRT_HOTPLUG_MONITOR_MASK;
++				~ADPA_CRT_HOTPLUG_MONITOR_MASK;
+ 			if (dpy_has_monitor_on_port(vgt, PORT_E))
+ 				__vreg(vgt, PCH_ADPA) |=
+-					_REGBIT_ADPA_CRT_HOTPLUG_MONITOR_MASK;
++					ADPA_CRT_HOTPLUG_MONITOR_MASK;
+ 		}
+ 
+ 		vgt_handle_default_event_virt(hstate, event, vgt);
+@@ -1214,7 +1214,7 @@ static void vgt_handle_phase_in_phys(struct vgt_irq_host_state *hstate,
+ 	struct pgt_device *pdev = hstate->pdev;
+ 
+ 	val = VGT_MMIO_READ(pdev, BLC_PWM_CPU_CTL2);
+-	val &= ~_REGBIT_PHASE_IN_IRQ_STATUS;
++	val &= ~BLM_PHASE_IN_INTERUPT_STATUS;
+ 	VGT_MMIO_WRITE(pdev, BLC_PWM_CPU_CTL2, val);
+ 
+ 	vgt_handle_default_event_phys(hstate, event);
+@@ -1251,7 +1251,7 @@ static void vgt_handle_crt_hotplug_phys(struct vgt_irq_host_state *hstate,
+ 	}
+ 
+ 	/* check blue/green channel status for attachment status */
+-	if (adpa_ctrl & _REGBIT_ADPA_CRT_HOTPLUG_MONITOR_MASK) {
++	if (adpa_ctrl & ADPA_CRT_HOTPLUG_MONITOR_MASK) {
+ 		vgt_info("IRQ: detect crt insert event!\n");
+ 		vgt_set_uevent(vgt_dom0, CRT_HOTPLUG_IN);
+ 	} else {
+@@ -1349,7 +1349,7 @@ static void vgt_base_check_pending_irq(struct vgt_device *vgt)
+ 	struct vgt_irq_host_state *hstate = vgt->pdev->irq_hstate;
+ 	struct vgt_irq_info *info = hstate->info[IRQ_INFO_PCH];
+ 
+-	if (!(__vreg(vgt, DEIER) & _REGBIT_MASTER_INTERRUPT))
++	if (!(__vreg(vgt, DEIER) & MASTER_INTERRUPT_ENABLE))
+ 		return;
+ 
+ 	if ((__vreg(vgt, regbase_to_iir(info->reg_base))
+@@ -1514,7 +1514,7 @@ static void vgt_base_disable_irq(struct vgt_irq_host_state *hstate)
+ 	struct pgt_device *pdev = hstate->pdev;
+ 
+ 	VGT_MMIO_WRITE(pdev, DEIER,
+-			VGT_MMIO_READ(pdev, DEIER) & ~_REGBIT_MASTER_INTERRUPT);
++			VGT_MMIO_READ(pdev, DEIER) & ~MASTER_INTERRUPT_ENABLE);
+ }
+ 
+ static void vgt_base_enable_irq(struct vgt_irq_host_state *hstate)
+@@ -1522,7 +1522,7 @@ static void vgt_base_enable_irq(struct vgt_irq_host_state *hstate)
+ 	struct pgt_device *pdev = hstate->pdev;
+ 
+ 	VGT_MMIO_WRITE(pdev, DEIER,
+-			VGT_MMIO_READ(pdev, DEIER) | _REGBIT_MASTER_INTERRUPT);
++			VGT_MMIO_READ(pdev, DEIER) | MASTER_INTERRUPT_ENABLE);
+ }
+ 
+ struct vgt_irq_ops vgt_base_irq_ops = {
+@@ -1542,13 +1542,13 @@ struct vgt_irq_ops vgt_base_irq_ops = {
+                .bit_to_event = {[0 ... VGT_IRQ_BITWIDTH-1] = EVENT_RESERVED}, \
+        };
+ 
+-DEFINE_VGT_GEN8_IRQ_INFO(gt0, _REG_GT_ISR(0));
+-DEFINE_VGT_GEN8_IRQ_INFO(gt1, _REG_GT_ISR(1));
+-DEFINE_VGT_GEN8_IRQ_INFO(gt2, _REG_GT_ISR(2));
+-DEFINE_VGT_GEN8_IRQ_INFO(gt3, _REG_GT_ISR(3));
+-DEFINE_VGT_GEN8_IRQ_INFO(de_pipe_a, _REG_DE_PIPE_ISR(PIPE_A));
+-DEFINE_VGT_GEN8_IRQ_INFO(de_pipe_b, _REG_DE_PIPE_ISR(PIPE_B));
+-DEFINE_VGT_GEN8_IRQ_INFO(de_pipe_c, _REG_DE_PIPE_ISR(PIPE_C));
++DEFINE_VGT_GEN8_IRQ_INFO(gt0, GEN8_GT_ISR(0));
++DEFINE_VGT_GEN8_IRQ_INFO(gt1, GEN8_GT_ISR(1));
++DEFINE_VGT_GEN8_IRQ_INFO(gt2, GEN8_GT_ISR(2));
++DEFINE_VGT_GEN8_IRQ_INFO(gt3, GEN8_GT_ISR(3));
++DEFINE_VGT_GEN8_IRQ_INFO(de_pipe_a, GEN8_DE_PIPE_ISR(PIPE_A));
++DEFINE_VGT_GEN8_IRQ_INFO(de_pipe_b, GEN8_DE_PIPE_ISR(PIPE_B));
++DEFINE_VGT_GEN8_IRQ_INFO(de_pipe_c, GEN8_DE_PIPE_ISR(PIPE_C));
+ DEFINE_VGT_GEN8_IRQ_INFO(de_port, GEN8_DE_PORT_ISR);
+ DEFINE_VGT_GEN8_IRQ_INFO(de_misc, GEN8_DE_MISC_ISR);
+ DEFINE_VGT_GEN8_IRQ_INFO(pcu, GEN8_PCU_ISR);
+@@ -1560,7 +1560,7 @@ static void vgt_gen8_check_pending_irq(struct vgt_device *vgt)
+ 	int i;
+ 
+ 	if (!(__vreg(vgt, GEN8_MASTER_IRQ) &
+-				_REGBIT_MASTER_IRQ_CONTROL))
++				GEN8_MASTER_IRQ_CONTROL))
+ 		return;
+ 
+ 	for_each_set_bit(i, hstate->irq_info_bitmap, IRQ_INFO_MAX) {
+@@ -1574,7 +1574,7 @@ static void vgt_gen8_check_pending_irq(struct vgt_device *vgt)
+ 			update_upstream_irq(vgt, info);
+ 	}
+ 
+-	if (__vreg(vgt, GEN8_MASTER_IRQ) & ~_REGBIT_MASTER_IRQ_CONTROL)
++	if (__vreg(vgt, GEN8_MASTER_IRQ) & ~GEN8_MASTER_IRQ_CONTROL)
+ 		vgt_inject_virtual_interrupt(vgt);
+ }
+ 
+@@ -1586,7 +1586,7 @@ static irqreturn_t vgt_gen8_irq_handler(struct vgt_irq_host_state *hstate)
+ 	bool rc;
+ 
+ 	master_ctl = VGT_MMIO_READ(pdev, GEN8_MASTER_IRQ);
+-	master_ctl &= ~_REGBIT_MASTER_IRQ_CONTROL;
++	master_ctl &= ~GEN8_MASTER_IRQ_CONTROL;
+ 
+ 	if (!master_ctl)
+ 		return IRQ_NONE;
+@@ -1696,7 +1696,7 @@ static void vgt_gen8_disable_irq(struct vgt_irq_host_state *hstate)
+ 
+ 	VGT_MMIO_WRITE(pdev, GEN8_MASTER_IRQ,
+ 			(VGT_MMIO_READ(pdev, GEN8_MASTER_IRQ)
+-			 & ~_REGBIT_MASTER_IRQ_CONTROL));
++			 & ~GEN8_MASTER_IRQ_CONTROL));
+ 	VGT_POST_READ(pdev, GEN8_MASTER_IRQ);
+ }
+ 
+@@ -1706,7 +1706,7 @@ static void vgt_gen8_enable_irq(struct vgt_irq_host_state *hstate)
+ 
+ 	VGT_MMIO_WRITE(pdev, GEN8_MASTER_IRQ,
+ 			(VGT_MMIO_READ(pdev, GEN8_MASTER_IRQ)
+-			 | _REGBIT_MASTER_IRQ_CONTROL));
++			 | GEN8_MASTER_IRQ_CONTROL));
+ 	VGT_POST_READ(pdev, GEN8_MASTER_IRQ);
+ }
+ 
+@@ -2200,7 +2200,7 @@ void vgt_fini_irq(struct pci_dev *pdev)
+ 
+ 	/* Mask all GEN interrupts */
+ 	VGT_MMIO_WRITE(pgt, DEIER,
+-		VGT_MMIO_READ(pgt, DEIER) & ~_REGBIT_MASTER_INTERRUPT);
++		VGT_MMIO_READ(pgt, DEIER) & ~MASTER_INTERRUPT_ENABLE);
+ 
+ 	hstate->installed = false;
+ }
+diff --git a/drivers/gpu/drm/i915/vgt/legacy/render_hsw.c b/drivers/gpu/drm/i915/vgt/legacy/render_hsw.c
+index baf664d..6338c89 100644
+--- a/drivers/gpu/drm/i915/vgt/legacy/render_hsw.c
++++ b/drivers/gpu/drm/i915/vgt/legacy/render_hsw.c
+@@ -600,7 +600,7 @@ static bool gen7_init_null_context(struct pgt_device *pdev, int id)
+ 		goto err;
+ 	}
+ 
+-	vgt_ring_emit(ring, PIPE_CONTROL(5));
++	vgt_ring_emit(ring, GFX_OP_PIPE_CONTROL(5));
+ 	vgt_ring_emit(ring, PIPE_CONTROL_CS_STALL |
+ 			    PIPE_CONTROL_MEDIA_STATE_CLEAR |
+ 			    PIPE_CONTROL_RENDER_TARGET_CACHE_FLUSH |
+@@ -623,7 +623,7 @@ static bool gen7_init_null_context(struct pgt_device *pdev, int id)
+ 			    MI_LRI_BYTE3_DISABLE);
+ 	vgt_ring_emit(ring, CCID);
+ 	vgt_ring_emit(ring, 0);
+-	vgt_ring_emit(ring, PIPE_CONTROL(5));
++	vgt_ring_emit(ring, GFX_OP_PIPE_CONTROL(5));
+ 	vgt_ring_emit(ring, PIPE_CONTROL_CS_STALL |
+ 			    PIPE_CONTROL_RENDER_TARGET_CACHE_FLUSH |
+ 			    PIPE_CONTROL_INDIRECT_STATE_DISABLE);
+@@ -673,7 +673,7 @@ static bool gen7_save_hw_context(int id, struct vgt_device *vgt)
+ 		return true;
+ 
+ 	/* pipeline flush */
+-	vgt_ring_emit(ring, PIPE_CONTROL(5));
++	vgt_ring_emit(ring, GFX_OP_PIPE_CONTROL(5));
+ 	vgt_ring_emit(ring, PIPE_CONTROL_CS_STALL |
+ 			    PIPE_CONTROL_TLB_INVALIDATE |
+ 			    PIPE_CONTROL_FLUSH_ENABLE);
+@@ -681,7 +681,7 @@ static bool gen7_save_hw_context(int id, struct vgt_device *vgt)
+ 	vgt_ring_emit(ring, 0);
+ 	vgt_ring_emit(ring, 0);
+ 
+-	vgt_ring_emit(ring, PIPE_CONTROL(5));
++	vgt_ring_emit(ring, GFX_OP_PIPE_CONTROL(5));
+ 	vgt_ring_emit(ring, PIPE_CONTROL_RENDER_TARGET_CACHE_FLUSH |
+ 			    PIPE_CONTROL_FLUSH_ENABLE |
+ 			    PIPE_CONTROL_VF_CACHE_INVALIDATE |
+@@ -707,12 +707,12 @@ static bool gen7_save_hw_context(int id, struct vgt_device *vgt)
+ 	vgt_ring_emit(ring, ccid);
+ 
+ 	/* pipeline flush */
+-	vgt_ring_emit(ring, PIPE_CONTROL(5));
++	vgt_ring_emit(ring, GFX_OP_PIPE_CONTROL(5));
+ 	vgt_ring_emit(ring, PIPE_CONTROL_CS_STALL |
+ 			    PIPE_CONTROL_TLB_INVALIDATE |
+ 			    PIPE_CONTROL_FLUSH_ENABLE |
+-			    PIPE_CONTROL_POST_SYNC_IMM |
+-			    PIPE_CONTROL_POST_SYNC_GLOBAL_GTT);
++			    PIPE_CONTROL_QW_WRITE |
++			    PIPE_CONTROL_GLOBAL_GTT_IVB);
+ 	vgt_ring_emit(ring, vgt_data_ctx_magic(pdev));
+ 	vgt_ring_emit(ring, ++pdev->magic);
+ 	vgt_ring_emit(ring, 0);
+@@ -765,15 +765,15 @@ static bool gen7_save_hw_context(int id, struct vgt_device *vgt)
+ #endif
+ 
+ 	/* pipeline flush */
+-	vgt_ring_emit(ring, PIPE_CONTROL(5));
++	vgt_ring_emit(ring, GFX_OP_PIPE_CONTROL(5));
+ 	vgt_ring_emit(ring, PIPE_CONTROL_CS_STALL |
+ 			    PIPE_CONTROL_TLB_INVALIDATE |
+ 			    PIPE_CONTROL_FLUSH_ENABLE |
+ 			    PIPE_CONTROL_MEDIA_STATE_CLEAR |
+ 			    PIPE_CONTROL_DC_FLUSH_ENABLE |
+ 			    PIPE_CONTROL_RENDER_TARGET_CACHE_FLUSH |
+-			    PIPE_CONTROL_POST_SYNC_IMM |
+-			    PIPE_CONTROL_POST_SYNC_GLOBAL_GTT);
++			    PIPE_CONTROL_QW_WRITE |
++			    PIPE_CONTROL_GLOBAL_GTT_IVB);
+ 	vgt_ring_emit(ring, vgt_data_ctx_magic(pdev));
+ 	vgt_ring_emit(ring, ++pdev->magic);
+ 	vgt_ring_emit(ring, 0);
+@@ -867,13 +867,13 @@ static bool vgt_reset_engine(struct pgt_device *pdev, int id)
+ 	ctl = VGT_READ_CTL(pdev, id);
+ 
+ 	/* trigger engine specific reset */
+-	VGT_MMIO_WRITE(pdev, _REG_GEN6_GDRST, _REGBIT_GEN6_GRDOM_RENDER);
++	VGT_MMIO_WRITE(pdev, GEN6_GDRST, GEN6_GRDOM_RENDER);
+ 
+ #define GDRST_COUNT 0x1000
+ 	/* wait for reset complete */
+ 	for (i = 0; i < GDRST_COUNT; i++) {
+-		if (!(VGT_MMIO_READ(pdev, _REG_GEN6_GDRST) &
+-			_REGBIT_GEN6_GRDOM_RENDER))
++		if (!(VGT_MMIO_READ(pdev, GEN6_GDRST) &
++			GEN6_GRDOM_RENDER))
+ 			break;
+ 	}
+ 
+@@ -924,7 +924,7 @@ static bool gen7_restore_hw_context(int id, struct vgt_device *vgt)
+ 	//update_context(vgt, rb->context_save_area);
+ 
+ 	/* pipeline flush */
+-	vgt_ring_emit(ring, PIPE_CONTROL(5));
++	vgt_ring_emit(ring, GFX_OP_PIPE_CONTROL(5));
+ 	vgt_ring_emit(ring, PIPE_CONTROL_CS_STALL |
+ 			    PIPE_CONTROL_TLB_INVALIDATE |
+ 			    PIPE_CONTROL_FLUSH_ENABLE);
+@@ -945,12 +945,12 @@ static bool gen7_restore_hw_context(int id, struct vgt_device *vgt)
+ 	vgt_ring_emit(ring, 0);
+ 
+ 	/* pipeline flush */
+-	vgt_ring_emit(ring, PIPE_CONTROL(5));
++	vgt_ring_emit(ring, GFX_OP_PIPE_CONTROL(5));
+ 	vgt_ring_emit(ring, PIPE_CONTROL_CS_STALL |
+ 			    PIPE_CONTROL_TLB_INVALIDATE |
+ 			    PIPE_CONTROL_FLUSH_ENABLE |
+-			    PIPE_CONTROL_POST_SYNC_IMM |
+-			    PIPE_CONTROL_POST_SYNC_GLOBAL_GTT);
++			    PIPE_CONTROL_QW_WRITE |
++			    PIPE_CONTROL_GLOBAL_GTT_IVB);
+ 	vgt_ring_emit(ring, vgt_data_ctx_magic(pdev));
+ 	vgt_ring_emit(ring, ++pdev->magic);
+ 	vgt_ring_emit(ring, 0);
+@@ -997,13 +997,13 @@ static bool gen7_restore_hw_context(int id, struct vgt_device *vgt)
+ #endif
+ 
+ 	/* pipeline flush */
+-	vgt_ring_emit(ring, PIPE_CONTROL(5));
++	vgt_ring_emit(ring, GFX_OP_PIPE_CONTROL(5));
+ 	vgt_ring_emit(ring, PIPE_CONTROL_CS_STALL |
+ 			    PIPE_CONTROL_TLB_INVALIDATE |
+ 			    PIPE_CONTROL_FLUSH_ENABLE |
+ 			    PIPE_CONTROL_MEDIA_STATE_CLEAR |
+-			    PIPE_CONTROL_POST_SYNC_IMM |
+-			    PIPE_CONTROL_POST_SYNC_GLOBAL_GTT);
++			    PIPE_CONTROL_QW_WRITE |
++			    PIPE_CONTROL_GLOBAL_GTT_IVB);
+ 	vgt_ring_emit(ring, vgt_data_ctx_magic(pdev));
+ 	vgt_ring_emit(ring, ++pdev->magic);
+ 	vgt_ring_emit(ring, 0);
+@@ -1022,17 +1022,17 @@ static bool gen7_restore_hw_context(int id, struct vgt_device *vgt)
+ 
+ #if 0
+ 	/* then restore current context to whatever VM expects */
+-	vgt_ring_emit(ring, MI_LOAD_REGISTER_IMM);
++	vgt_ring_emit(ring, MI_LRI_CMD);
+ 	vgt_ring_emit(ring, CCID);
+ 	vgt_ring_emit(ring, __vreg(vgt, CCID));
+ 
+ 	/* pipeline flush */
+-	vgt_ring_emit(ring, PIPE_CONTROL(5));
++	vgt_ring_emit(ring, GFX_OP_PIPE_CONTROL(5));
+ 	vgt_ring_emit(ring, PIPE_CONTROL_CS_STALL |
+ 			    PIPE_CONTROL_TLB_INVALIDATE |
+ 			    PIPE_CONTROL_FLUSH_ENABLE |
+-			    PIPE_CONTROL_POST_SYNC_IMM |
+-			    PIPE_CONTROL_POST_SYNC_GLOBAL_GTT);
++			    PIPE_CONTROL_QW_WRITE |
++			    PIPE_CONTROL_GLOBAL_GTT_IVB);
+ 	vgt_ring_emit(ring, vgt_data_ctx_magic(pdev));
+ 	vgt_ring_emit(ring, ++pdev->magic);
+ 	vgt_ring_emit(ring, 0);
+diff --git a/drivers/gpu/drm/i915/vgt/mmio.c b/drivers/gpu/drm/i915/vgt/mmio.c
+index 01b32bd..6307f1e 100644
+--- a/drivers/gpu/drm/i915/vgt/mmio.c
++++ b/drivers/gpu/drm/i915/vgt/mmio.c
+@@ -683,7 +683,7 @@ void vgt_setup_reg_info(struct pgt_device *pdev)
+ 				vgt_get_reg_num(D_BDW), true);
+ 
+ 	/* GDRST can be accessed by byte */
+-	mht = vgt_find_mmio_entry(_REG_GEN6_GDRST);
++	mht = vgt_find_mmio_entry(GEN6_GDRST);
+ 	if (mht)
+ 		mht->align_bytes = 1;
+ 
+@@ -798,7 +798,7 @@ void state_vreg_init(struct vgt_device *vgt)
+ 	/* set the bit 0:2 (Thread C-State) to C0
+ 	 * TODO: consider other bit 3:31
+ 	 */
+-	__vreg(vgt, _REG_GT_THREAD_STATUS) = 0;
++	__vreg(vgt, GEN6_GT_THREAD_STATUS_REG) = 0;
+ 
+ 	/* set the bit 0:2(Core C-State ) to C0 */
+ 	__vreg(vgt, _REG_GT_CORE_STATUS) = 0;
+@@ -807,10 +807,10 @@ void state_vreg_init(struct vgt_device *vgt)
+ 
+ 	if (IS_HSW(vgt->pdev)) {
+ 		/*
+-		 * Clear _REGBIT_FPGA_DBG_RM_NOCLAIM for not causing DOM0
++		 * Clear FPGA_DBG_RM_NOCLAIM for not causing DOM0
+ 		 * or Ubuntu HVM complains about unclaimed MMIO registers.
+ 		 */
+-		__vreg(vgt, FPGA_DBG) &= ~_REGBIT_FPGA_DBG_RM_NOCLAIM;
++		__vreg(vgt, FPGA_DBG) &= ~FPGA_DBG_RM_NOCLAIM;
+ 	}
+ }
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/reg.h b/drivers/gpu/drm/i915/vgt/reg.h
+old mode 100644
+new mode 100755
+index 9786aa7..6993f7b
+--- a/drivers/gpu/drm/i915/vgt/reg.h
++++ b/drivers/gpu/drm/i915/vgt/reg.h
+@@ -29,14 +29,9 @@
+ /*
+  * Definition of MMIO registers.
+  */
+-
+ #define _VGT_MMIO_THROUGH_OFFSET(index, a, b)	((a) + (index)*((b)-(a)))
+ #define _VGT_MMIO_GET_INDEX(reg, a, b)		(((reg)-(a))/((b)-(a)))
+ 
+-#define _VGT_PIPE(pipe, a, b)	_VGT_MMIO_THROUGH_OFFSET(pipe, a, b)
+-#define _VGT_PORT(port, a, b)	_VGT_MMIO_THROUGH_OFFSET(port, a, b)
+-#define _VGT_TRANSCODER(tran, a, b)	_VGT_MMIO_THROUGH_OFFSET(tran, a, b)
+-
+ #define _VGT_GET_PIPE(reg, a, b)	_VGT_MMIO_GET_INDEX(reg, a, b)
+ #define _VGT_GET_PORT(reg, a, b)	_VGT_MMIO_GET_INDEX(reg, a, b)
+ 
+@@ -104,12 +99,10 @@ static inline uint32_t __RING_REG(int32_t ring_id, uint32_t rcs_reg)
+ #define RB_TAIL_SIZE_MASK	((1U << 21) - (1U << 12))	/* bit 12 to 20 */
+ #define _RING_CTL_BUF_SIZE(ctl)	(((ctl) & RB_TAIL_SIZE_MASK) + GTT_PAGE_SIZE)
+ #define _RING_CTL_ENABLE	0x1	/* bit 0 */
+-#define _RING_CTL_RB_WAIT	(1 << 11)
+ 
+ #define CCID_MBO_BITS		(1 << 8)	/* bit 8 must be one */
+ #define CCID_EXTENDED_STATE_SAVE_ENABLE		(1 << 3)
+ #define CCID_EXTENDED_STATE_RESTORE_ENABLE	(1 << 2)
+-#define CCID_VALID		(1 << 0)
+ #define _REG_VECS_CXT_SIZE	0x1A1A8
+ 
+ #define	_REGBIT_MI_ASYNC_FLIP_PERFORMANCE_MODE	(1 << 14)
+@@ -120,9 +113,6 @@ static inline uint32_t __RING_REG(int32_t ring_id, uint32_t rcs_reg)
+ #define _REG_VCS2_MI_MODE	0x1c09C
+ #define _REG_BCS_MI_MODE	0x2209C
+ #define _REG_VECS_MI_MODE	0x1A09c
+-#define        _REGBIT_FLUSH_TLB_INVALIDATION_MODE	(1 << 13)
+-#define        _REGBIT_REPLAY_MODE			(1 << 11)
+-#define        _REGBIT_PPGTT_ENABLE			(1 << 9)
+ #define        _REGBIT_PPGTT64_ENABLE                   (1 << 7)
+ #define        _REGBIT_ADDRESS_SWIZZLING		(3 << 4)
+ 
+@@ -285,7 +275,6 @@ static inline uint32_t __RING_REG(int32_t ring_id, uint32_t rcs_reg)
+ #define  _CTXBUF_WRITE_PTR_MASK		(0x7)
+ 
+ #define _REG_FENCE_0_LOW	0x100000
+-#define _REGBIT_FENCE_VALID	(1 << 0)
+ 
+ #define _CURSOR_MODE	0x3f
+ #define _CURSOR_MODE_DISABLE	0x00
+@@ -297,7 +286,7 @@ static inline uint32_t __RING_REG(int32_t ring_id, uint32_t rcs_reg)
+ #define _CURSOR_POS_X_MASK	(0x1fff << _CURSOR_POS_X_SHIFT)
+ #define _CURSOR_SIGN_X_SHIFT	15
+ #define _CURSOR_SIGN_X_MASK	(1 << _CURSOR_SIGN_X_SHIFT)
+-#define _CURSOR_POS_Y_SHIFT	16
++#define _CURSOR_POS_Y_SHIFT		16
+ #define _CURSOR_POS_Y_MASK	(0xfff << _CURSOR_POS_Y_SHIFT)
+ #define _CURSOR_SIGN_Y_SHIFT	31
+ #define _CURSOR_SIGN_Y_MASK	(1 << _CURSOR_SIGN_Y_SHIFT)
+@@ -315,21 +304,16 @@ static inline uint32_t __RING_REG(int32_t ring_id, uint32_t rcs_reg)
+ #define _REG_CURCPOS	0x72088
+ #define _REG_CURCSURFLIVE	0x720AC
+ 
+-#define VGT_CURCNTR_SNB(pipe)	_VGT_PIPE(pipe, _CURACNTR, _CURBCNTR)
+-#define VGT_CURBASE_SNB(pipe)	_VGT_PIPE(pipe, _CURABASE, _CURBBASE)
+-#define VGT_CURPOS_SNB(pipe)	_VGT_PIPE(pipe, _CURAPOS, _CURBPOS)
++#define VGT_CURCNTR_SNB(pipe)	_PIPE(pipe, _CURACNTR, _CURBCNTR)
++#define VGT_CURBASE_SNB(pipe)	_PIPE(pipe, _CURABASE, _CURBBASE)
++#define VGT_CURPOS_SNB(pipe)	_PIPE(pipe, _CURAPOS, _CURBPOS)
+ 
+-#define VGT_CURCNTR(pipe)	_VGT_PIPE(pipe, _CURACNTR, _CURBCNTR_IVB)
+-#define VGT_CURBASE(pipe)	_VGT_PIPE(pipe, _CURABASE, _CURBBASE_IVB)
+-#define VGT_CURPOS(pipe)	_VGT_PIPE(pipe, _CURAPOS, _CURBPOS_IVB)
++#define VGT_CURCNTR(pipe)	_PIPE(pipe, _CURACNTR, _CURBCNTR_IVB)
++#define VGT_CURBASE(pipe)	_PIPE(pipe, _CURABASE, _CURBBASE_IVB)
++#define VGT_CURPOS(pipe)	_PIPE(pipe, _CURAPOS, _CURBPOS_IVB)
+ 
+-#define _PRI_PLANE_ENABLE	(1 << 31)
+-#define	_PRI_PLANE_GAMMA_ENABLE	(1 << 30)
+ #define	_PRI_PLANE_FMT_SHIFT	26
+-#define	_PRI_PLANE_FMT_MASK	(0xf << _PRI_PLANE_FMT_SHIFT)
+-#define	_PRI_PLANE_TRICKLE_FEED_DISABLE	(1 << 14)
+ #define	_PRI_PLANE_TILE_SHIFT	10
+-#define	_PRI_PLANE_TILE_MASK	(1 << _PRI_PLANE_TILE_SHIFT)
+ 
+ #define	_PRI_PLANE_STRIDE_SHIFT	6
+ #define	_PRI_PLANE_STRIDE_MASK	(0x3ff << _PRI_PLANE_STRIDE_SHIFT)
+@@ -349,32 +333,26 @@ static inline uint32_t __RING_REG(int32_t ring_id, uint32_t rcs_reg)
+ #define _REG_DSPBSURFLIVE	0x711AC
+ 
+ 
+-#define VGT_DSPSURF(pipe)	_VGT_PIPE(pipe, _DSPASURF, _REG_DSPBSURF)
+-#define VGT_DSPCNTR(pipe)	_VGT_PIPE(pipe, _DSPACNTR, _REG_DSPBCNTR)
++#define VGT_DSPSURF(pipe)	_PIPE(pipe, _DSPASURF, _REG_DSPBSURF)
++#define VGT_DSPCNTR(pipe)	_PIPE(pipe, _DSPACNTR, _REG_DSPBCNTR)
+ #define VGT_DSPCNTRPIPE(dspcntr)	_VGT_GET_PIPE(dspcntr, _DSPACNTR,_REG_DSPBCNTR)
+ 
+-#define VGT_DSPLINOFF(plane) _VGT_PIPE(plane, _DSPAADDR, _REG_DSPBLINOFF)
+-#define VGT_DSPSTRIDE(plane) _VGT_PIPE(plane, _DSPASTRIDE, _REG_DSPBSTRIDE)
+-#define VGT_DSPTILEOFF(plane) _VGT_PIPE(plane, _DSPATILEOFF, _REG_DSPBTILEOFF)
++#define VGT_DSPLINOFF(plane) _PIPE(plane, _DSPAADDR, _REG_DSPBLINOFF)
++#define VGT_DSPSTRIDE(plane) _PIPE(plane, _DSPASTRIDE, _REG_DSPBSTRIDE)
++#define VGT_DSPTILEOFF(plane) _PIPE(plane, _DSPATILEOFF, _REG_DSPBTILEOFF)
+ 
+ #define VGT_DSPSURFPIPE(dspsurf) _VGT_GET_PIPE(dspsurf, _DSPASURF,_REG_DSPBSURF)
+ #define VGT_DSPSURFLIVEPIPE(dspsurf) _VGT_GET_PIPE(dspsurf, _DSPASURFLIVE, \
+ 							_REG_DSPBSURFLIVE)
+-#define VGT_DSPSURFLIVE(pipe)	_VGT_PIPE(pipe, _DSPASURFLIVE, _REG_DSPBSURFLIVE)
++#define VGT_DSPSURFLIVE(pipe)	_PIPE(pipe, _DSPASURFLIVE, _REG_DSPBSURFLIVE)
+ 
+ #define VGT_CURSURFPIPE(cursurf)	_VGT_GET_PIPE(cursurf, _CURABASE, _CURBBASE_IVB)
+-#define VGT_CURSURF(pipe)	_VGT_PIPE(pipe, _CURABASE, _CURBBASE_IVB)
++#define VGT_CURSURF(pipe)	_PIPE(pipe, _CURABASE, _CURBBASE_IVB)
+ 
+ /* sprite */
+-
+-#define	_SPRITE_ENABLE	(1 << 31)
+ #define	_SPRITE_FMT_SHIFT	25
+-#define	_SPRITE_FMT_MASK	(0x7 << _SPRITE_FMT_SHIFT)
+ #define	_SPRITE_COLOR_ORDER_SHIFT	20
+-#define	_SPRITE_COLOR_ORDER_MASK	(0x1 << _SPRITE_COLOR_ORDER_SHIFT)
+ #define	_SPRITE_YUV_ORDER_SHIFT	16
+-#define	_SPRITE_YUV_ORDER_MASK	(0x3 << _SPRITE_YUV_ORDER_SHIFT)
+-#define	_SPRITE_TILED	(1 << 10)
+ 
+ #define	_SPRITE_STRIDE_SHIFT	6
+ #define	_SPRITE_STRIDE_MASK	(0x1ff << _SPRITE_STRIDE_SHIFT)
+@@ -399,40 +377,18 @@ static inline uint32_t __RING_REG(int32_t ring_id, uint32_t rcs_reg)
+ #define _REG_SPRCSURFLIVE			0x722AC
+ #define _REG_SPRC_SCALE				0x72304
+ 
+-#define VGT_SPRCTL(pipe)	_VGT_PIPE(pipe, _SPRA_CTL, _PLANE_CTL_2_B)
+-#define VGT_SPRSTRIDE(pipe)	_VGT_PIPE(pipe, _SPRA_STRIDE, _PLANE_STRIDE_2_B)
+-#define VGT_SPRPOS(pipe)	_VGT_PIPE(pipe, _PLANE_POS_2_A, _PLANE_POS_2_B)
+-#define VGT_SPRSIZE(pipe)	_VGT_PIPE(pipe, _PLANE_SIZE_2_A, _PLANE_SIZE_2_B)
+-#define VGT_SPRSURF(pipe)	_VGT_PIPE(pipe, _SPRA_SURF, _PLANE_SURF_2_B)
++#define VGT_SPRCTL(pipe)	_PIPE(pipe, _SPRA_CTL, _PLANE_CTL_2_B)
++#define VGT_SPRSTRIDE(pipe)	_PIPE(pipe, _SPRA_STRIDE, _PLANE_STRIDE_2_B)
++#define VGT_SPRPOS(pipe)	_PIPE(pipe, _PLANE_POS_2_A, _PLANE_POS_2_B)
++#define VGT_SPRSIZE(pipe)	_PIPE(pipe, _PLANE_SIZE_2_A, _PLANE_SIZE_2_B)
++#define VGT_SPRSURF(pipe)	_PIPE(pipe, _SPRA_SURF, _PLANE_SURF_2_B)
+ #define VGT_SPRSURFPIPE(sprsurf) _VGT_GET_PIPE(sprsurf, _SPRA_SURF, _PLANE_SURF_2_B)
+-#define VGT_SPRSURFLIVE(pipe)	_VGT_PIPE(pipe, _REG_SPRASURFLIVE, _SPRBSURFLIVE)
+-#define VGT_SPROFFSET(pipe)	_VGT_PIPE(pipe, _PLANE_OFFSET_2_A, _PLANE_OFFSET_2_B)
++#define VGT_SPRSURFLIVE(pipe)	_PIPE(pipe, _REG_SPRASURFLIVE, _SPRBSURFLIVE)
++#define VGT_SPROFFSET(pipe)	_PIPE(pipe, _PLANE_OFFSET_2_A, _PLANE_OFFSET_2_B)
+ 
+ #define VGT_SPRCNTRPIPE(sprcntr) _VGT_GET_PIPE(sprcntr, _SPRA_CTL,_PLANE_CTL_2_B)
+ #define VGT_CURCNTRPIPE(curcntr) _VGT_GET_PIPE(curcntr, _CURACNTR,_CURBCNTR_IVB)
+ 
+-#define _REGBIT_DP_AUX_CH_CTL_SEND_BUSY		(1 << 31)
+-#define _REGBIT_DP_AUX_CH_CTL_DONE		(1 << 30)
+-#define _REGBIT_DP_AUX_CH_CTL_INTERRUPT		(1 << 29)
+-#define _REGBIT_DP_AUX_CH_CTL_TIME_OUT_ERR	(1 << 28)
+-#define _REGBIT_DP_AUX_CH_CTL_RECV_ERR		(1 << 25)
+-#define _REGBIT_DP_AUX_CH_CTL_MESSAGE_SIZE_MASK	(0x1f << 20)
+-#define _REGBIT_DP_AUX_CH_CTL_MESSAGE_SIZE_SHIFT	20
+-#define _REGBIT_DP_AUX_CH_CTL_TIME_OUT_400us	(0 << 26)
+-#define _DP_DETECTED				(1 << 2)
+-#define _DP_AUX_CH_CTL_BIT_CLOCK_2X_SHIFT	0
+-#define _DP_AUX_CH_CTL_PRECHARGE_2US_SHIFT	16
+-
+-#define        ECOBUS_FORCEWAKE_MT_ENABLE	(1<<5)
+-#define _REGBIT_MUL_FORCEWAKE_ENABLE		(1<<5)
+-#define _REG_MULFORECEWAKE_ACK			0x130040
+-#define _REG_GEN6_GDRST	0x941c
+-#define    _REGBIT_GEN6_GRDOM_FULL		(1 << 0)
+-#define    _REGBIT_GEN6_GRDOM_RENDER		(1 << 1)
+-#define    _REGBIT_GEN6_GRDOM_MEDIA		(1 << 2)
+-#define    _REGBIT_GEN6_GRDOM_BLT		(1 << 3)
+-
+-#define _REG_GT_THREAD_STATUS	0x13805C
+ #define _REG_GT_CORE_STATUS	0x138060
+ 
+ #define _REGBIT_RC_HW_CTRL_ENABLE	(1<<31)
+@@ -462,35 +418,9 @@ static inline uint32_t __RING_REG(int32_t ring_id, uint32_t rcs_reg)
+ #define   MI_WAIT_FOR_SPRITE_B_FLIP_PENDING      (1<<10)
+ #define   MI_WAIT_FOR_SPRITE_A_FLIP_PENDING      (1<<2)
+ 
+-#define PIPE_CONTROL(len)		((0x3<<29)|(0x3<<27)|(0x2<<24)|(len-2))
+-#define   PIPE_CONTROL_POST_SYNC_GLOBAL_GTT		(1<<24)
+-#define   PIPE_CONTROL_POST_SYNC			(1<<23)
+-#define   PIPE_CONTROL_CS_STALL				(1<<20)
+-#define   PIPE_CONTROL_TLB_INVALIDATE			(1<<18)
+-#define   PIPE_CONTROL_MEDIA_STATE_CLEAR		(1<<16)
+-#define   PIPE_CONTROL_POST_SYNC_IMM			(1<<14)
+-#define   PIPE_CONTROL_DEPTH_STALL			(1<<13)
+-#define   PIPE_CONTROL_RENDER_TARGET_CACHE_FLUSH	(1<<12)
+-#define   PIPE_CONTROL_INSTRUCTION_CACHE_INVALIDATE	(1<<11) /* MBZ on Ironlake */
+-#define   PIPE_CONTROL_TEXTURE_CACHE_INVALIDATE		(1<<10) /* GM45+ only */
+-#define   PIPE_CONTROL_INDIRECT_STATE_DISABLE		(1<<9)
+-#define   PIPE_CONTROL_NOTIFY				(1<<8)
+-#define   PIPE_CONTROL_FLUSH_ENABLE			(1<<7)
+-#define   PIPE_CONTROL_DC_FLUSH_ENABLE			(1<<5)
+-#define   PIPE_CONTROL_VF_CACHE_INVALIDATE		(1<<4)
+-#define   PIPE_CONTROL_CONST_CACHE_INVALIDATE		(1<<3)
+-#define   PIPE_CONTROL_STATE_CACHE_INVALIDATE		(1<<2)
+-#define   PIPE_CONTROL_STALL_AT_SCOREBOARD		(1<<1)
+-#define   PIPE_CONTROL_DEPTH_CACHE_FLUSH		(1<<0)
+-
++#define	PIPE_CONTROL_DC_FLUSH_ENABLE			(1<<5)
+ #define DUMMY_3D		(0x6d800005)
+ #define PRIM_TRILIST		(0x4)
+-/* PCI config space */
+-#define _REG_LBB	PCI_LBPC
+-/* VGA stuff */
+-
+-#define    VGA_MSR_CGA_MODE	(1<<0)
+-
+ /*
+  * Display engine regs
+  */
+@@ -503,11 +433,7 @@ static inline uint32_t __RING_REG(int32_t ring_id, uint32_t rcs_reg)
+ #define     _PIPE_V_SRCSZ_MASK	(0xfff << _PIPE_V_SRCSZ_SHIFT)
+ #define     _PIPE_H_SRCSZ_SHIFT	16
+ #define     _PIPE_H_SRCSZ_MASK	(0x1fff << _PIPE_H_SRCSZ_SHIFT)
+-/*#define _REG_BCLRPAT_A		_BCLRPAT_A
+-#define _REG_VSYNCSHIFT_A	_VSYNCSHIFT_A
+-*/
+ 
+-/* Pipe B timing regs */
+ /* Pipe C timing regs */
+ #define _REG_HTOTAL_C		0x62000
+ #define _REG_HBLANK_C		0x62004
+@@ -529,71 +455,21 @@ static inline uint32_t __RING_REG(int32_t ring_id, uint32_t rcs_reg)
+ #define _REG_VSYNCSHIFT_EDP	0x6F028
+ 
+ 
+-#define VGT_HTOTAL(pipe)	_VGT_PIPE(pipe, _HTOTAL_A, _HTOTAL_B)
+-#define VGT_HBLANK(pipe)	_VGT_PIPE(pipe, _HBLANK_A, _HBLANK_B)
+-#define VGT_HSYNC(pipe)		_VGT_PIPE(pipe, _HSYNC_A, _HSYNC_B)
+-#define VGT_VTOTAL(pipe)	_VGT_PIPE(pipe, _VTOTAL_A, _VTOTAL_B)
+-#define VGT_VBLANK(pipe)	_VGT_PIPE(pipe, _VBLANK_A, _VBLANK_B)
+-#define VGT_VSYNC(pipe)		_VGT_PIPE(pipe, _VSYNC_A, _VSYNC_B)
+-
+-#define VGT_BCLRPAT(pipe)	_VGT_PIPE(pipe, _BCLRPAT_A, _BCLRPAT_B)
+-#define VGT_VSYNCSHIFT(pipe)	_VGT_PIPE(pipe, _VSYNCSHIFT_A, _VSYNCSHIFT_B)
+-#define VGT_PIPESRC(pipe)	_VGT_PIPE(pipe, _PIPEASRC, _PIPEBSRC)
+-
+-
+-/* PCH */
+-#define    _REGBIT_DREF_CPU_SOURCE_OUTPUT_DISABLE	(0<<13)
+-#define    _REGBIT_DREF_CPU_SOURCE_OUTPUT_DOWNSPREAD	(2<<13)
+-#define    _REGBIT_DREF_CPU_SOURCE_OUTPUT_NONSPREAD	(3<<13)
+-#define    _REGBIT_DREF_CPU_SOURCE_OUTPUT_MASK		(3<<13)
+-#define    _REGBIT_DREF_SSC_SOURCE_DISABLE		(0<<11)
+-#define    _REGBIT_DREF_SSC_SOURCE_ENABLE		(2<<11)
+-#define    _REGBIT_DREF_SSC_SOURCE_MASK			(3<<11)
+-#define    _REGBIT_DREF_NONSPREAD_SOURCE_DISABLE	(0<<9)
+-#define    _REGBIT_DREF_NONSPREAD_CK505_ENABLE		(1<<9)
+-#define    _REGBIT_DREF_NONSPREAD_SOURCE_ENABLE		(2<<9)
+-#define    _REGBIT_DREF_NONSPREAD_SOURCE_MASK		(3<<9)
+-#define    _REGBIT_DREF_SUPERSPREAD_SOURCE_DISABLE	(0<<7)
+-#define    _REGBIT_DREF_SUPERSPREAD_SOURCE_ENABLE	(2<<7)
+-#define    _REGBIT_DREF_SUPERSPREAD_SOURCE_MASK		(3<<7)
+-#define    _REGBIT_DREF_SSC4_DOWNSPREAD			(0<<6)
+-#define    _REGBIT_DREF_SSC4_CENTERSPREAD		(1<<6)
+-#define    _REGBIT_DREF_SSC1_DISABLE			(0<<1)
+-#define    _REGBIT_DREF_SSC1_ENABLE			(1<<1)
+-#define    _REGBIT_DREF_SSC4_DISABLE			(0)
+-#define    _REGBIT_DREF_SSC4_ENABLE			(1)
+-
+-/*
+- * digital port hotplug
+- */
+-
+-
+-#define _REGBIT_DPLL_VCO_ENABLE		(1 << 31)
+-#define VGT_PCH_DPLL(pipe)	_VGT_PIPE(pipe, _REG_PCH_DPLL_A, _REG_PCH_DPLL_B)
++#define VGT_HTOTAL(pipe)	_PIPE(pipe, _HTOTAL_A, _HTOTAL_B)
++#define VGT_HBLANK(pipe)	_PIPE(pipe, _HBLANK_A, _HBLANK_B)
++#define VGT_HSYNC(pipe)		_PIPE(pipe, _HSYNC_A, _HSYNC_B)
++#define VGT_VTOTAL(pipe)	_PIPE(pipe, _VTOTAL_A, _VTOTAL_B)
++#define VGT_VBLANK(pipe)	_PIPE(pipe, _VBLANK_A, _VBLANK_B)
++#define VGT_VSYNC(pipe)		_PIPE(pipe, _VSYNC_A, _VSYNC_B)
+ 
+-#define    FP_CB_TUNE				(0x3<<22)
++#define VGT_BCLRPAT(pipe)	_PIPE(pipe, _BCLRPAT_A, _BCLRPAT_B)
++#define VGT_VSYNCSHIFT(pipe)	_PIPE(pipe, _VSYNCSHIFT_A, _VSYNCSHIFT_B)
++#define VGT_PIPESRC(pipe)	_PIPE(pipe, _PIPEASRC, _PIPEBSRC)
+ 
+-#define VGT_PCH_FP0(pipe)	_VGT_PIPE(pipe, _REG_PCH_FPA0, _REG_PCH_FPB0)
+-#define VGT_PCH_FP1(pipe)	_VGT_PIPE(pipe, _REG_PCH_FPA1, _REG_PCH_FPB1)
++#define VGT_PCH_DPLL(pipe)	_PIPE(pipe, _REG_PCH_DPLL_A, _REG_PCH_DPLL_B)
+ 
+-#define _REGBIT_TRANSA_DPLL_ENABLE		(1 << 3)
+-#define    _REGBIT_TRANSA_DPLLB_SEL		(1 << 0)
+-#define    _REGBIT_TRANSA_DPLLA_SEL		0
+-#define _REGBIT_TRANSB_DPLL_ENABLE		(1 << 7)
+-#define    _REGBIT_TRANSB_DPLLB_SEL		(1 << 4)
+-#define    _REGBIT_TRANSB_DPLLA_SEL		0
+-#define _REGBIT_TRANSC_DPLL_ENABLE		(1 << 11)
+-#define    _REGBIT_TRANSC_DPLLB_SEL		(1 << 8)
+-#define    _REGBIT_TRANSC_DPLLA_SEL		0
+-
+-/*
+- * Clock control & power management
+- */
+-
+-
+-/* refresh rate hardware control */
+-
+-/* PIPE B timing regs are same start from 0x61000 */
++#define VGT_PCH_FP0(pipe)	_PIPE(pipe, _REG_PCH_FPA0, _REG_PCH_FPB0)
++#define VGT_PCH_FP1(pipe)	_PIPE(pipe, _REG_PCH_FPA1, _REG_PCH_FPB1)
+ 
+ /* PIPE C timing regs are same start from 0x61000 */
+ #define _REG_PIPEC_DATA_M1		0x62030
+@@ -606,36 +482,26 @@ static inline uint32_t __RING_REG(int32_t ring_id, uint32_t rcs_reg)
+ #define _REG_PIPEC_LINK_M2		0x62048
+ #define _REG_PIPEC_LINK_N2		0x6204c
+ 
+-#define VGT_PIPE_DATA_M1(pipe) _VGT_PIPE(pipe, _REG_PIPEA_DATA_M1, _REG_PIPEB_DATA_M1)
+-#define VGT_PIPE_DATA_N1(pipe) _VGT_PIPE(pipe, _REG_PIPEA_DATA_N1, _REG_PIPEB_DATA_N1)
+-#define VGT_PIPE_DATA_M2(pipe) _VGT_PIPE(pipe, _REG_PIPEA_DATA_M2, _REG_PIPEB_DATA_M2)
+-#define VGT_PIPE_DATA_N2(pipe) _VGT_PIPE(pipe, _REG_PIPEA_DATA_N2, _REG_PIPEB_DATA_N2)
+-#define VGT_PIPE_LINK_M1(pipe) _VGT_PIPE(pipe, _REG_PIPEA_LINK_M1, _REG_PIPEB_LINK_M1)
+-#define VGT_PIPE_LINK_N1(pipe) _VGT_PIPE(pipe, _REG_PIPEA_LINK_N1, _REG_PIPEB_LINK_N1)
+-#define VGT_PIPE_LINK_M2(pipe) _VGT_PIPE(pipe, _REG_PIPEA_LINK_M2, _REG_PIPEB_LINK_M2)
+-#define VGT_PIPE_LINK_N2(pipe) _VGT_PIPE(pipe, _REG_PIPEA_LINK_N2, _REG_PIPEB_LINK_N2)
++#define VGT_PIPE_DATA_M1(pipe) _PIPE(pipe, _REG_PIPEA_DATA_M1, _REG_PIPEB_DATA_M1)
++#define VGT_PIPE_DATA_N1(pipe) _PIPE(pipe, _REG_PIPEA_DATA_N1, _REG_PIPEB_DATA_N1)
++#define VGT_PIPE_DATA_M2(pipe) _PIPE(pipe, _REG_PIPEA_DATA_M2, _REG_PIPEB_DATA_M2)
++#define VGT_PIPE_DATA_N2(pipe) _PIPE(pipe, _REG_PIPEA_DATA_N2, _REG_PIPEB_DATA_N2)
++#define VGT_PIPE_LINK_M1(pipe) _PIPE(pipe, _REG_PIPEA_LINK_M1, _REG_PIPEB_LINK_M1)
++#define VGT_PIPE_LINK_N1(pipe) _PIPE(pipe, _REG_PIPEA_LINK_N1, _REG_PIPEB_LINK_N1)
++#define VGT_PIPE_LINK_M2(pipe) _PIPE(pipe, _REG_PIPEA_LINK_M2, _REG_PIPEB_LINK_M2)
++#define VGT_PIPE_LINK_N2(pipe) _PIPE(pipe, _REG_PIPEA_LINK_N2, _REG_PIPEB_LINK_N2)
+ 
+-/* VGA port control */
+ /* FDI_RX, FDI_X is hard-wired to Transcoder_X */
+ 
+ #define _REG_FDI_RXC_CTL			0xf200c
+-
+-#define _REGBIT_FDI_RX_ENABLE			(1 << 31)
+-#define _REGBIT_FDI_RX_PLL_ENABLE		(1 << 13)
+ #define _REGBIT_FDI_RX_PORT_WIDTH_MASK		(0x7 << 19)
+ #define _REGBIT_FDI_RX_FDI_AUTO_TRAIN_ENABLE	(0x1 << 10)
+-#define _REGBIT_FDI_LINK_TRAIN_PATTERN_1_CPT	(0 << 8)
+-#define _REGBIT_FDI_LINK_TRAIN_PATTERN_2_CPT	(1 << 8)
+-#define _REGBIT_FDI_LINK_TRAIN_NORMAL_CPT	(3 << 8)
+-#define _REGBIT_FDI_LINK_TRAIN_PATTERN_MASK_CPT	(3 << 8)
+-#define _REGBIT_FDI_RX_ENHANCE_FRAME_ENABLE	(1 << 6)
+-#define _REGBIT_FDI_PCDCLK			(1 << 4)
+ 
+ #define _REG_FDI_RXC_IIR			0xf2014
+ #define _REG_FDI_RXC_IMR			0xf2018
+ 
+-#define VGT_FDI_RX_IIR(pipe) _VGT_PIPE(pipe, _FDI_RXA_IIR, _FDI_RXB_IIR)
+-#define VGT_FDI_RX_IMR(pipe) _VGT_PIPE(pipe, _FDI_RXA_IMR, _FDI_RXB_IMR)
++#define VGT_FDI_RX_IIR(pipe) _PIPE(pipe, _FDI_RXA_IIR, _FDI_RXB_IIR)
++#define VGT_FDI_RX_IMR(pipe) _PIPE(pipe, _FDI_RXA_IMR, _FDI_RXB_IMR)
+ 
+ #define _REGBIT_FDI_RX_INTER_LANE_ALIGN		(1<<10)
+ #define _REGBIT_FDI_RX_SYMBOL_LOCK		(1 << 9) /* train 2*/
+@@ -651,79 +517,26 @@ static inline uint32_t __RING_REG(int32_t ring_id, uint32_t rcs_reg)
+ 
+ 
+ #define VGT_FDI_RX_CTL_BPC_MASK		(0x7 << 16)
+-#define VGT_FDI_RX_CTL(pipe) _VGT_PIPE(pipe, _FDI_RXA_CTL, _FDI_RXB_CTL)
++#define VGT_FDI_RX_CTL(pipe) _PIPE(pipe, _FDI_RXA_CTL, _FDI_RXB_CTL)
+ 
+-#define VGT_FDI_RX_TUSIZE1(pipe) _VGT_PIPE(pipe, _REG_FDI_RXA_TUSIZE1,_REG_FDI_RXB_TUSIZE1)
++#define VGT_FDI_RX_TUSIZE1(pipe) _PIPE(pipe, _REG_FDI_RXA_TUSIZE1,_REG_FDI_RXB_TUSIZE1)
+ 
+ /* CPU: FDI_TX */
+ #define _REG_FDI_TXC_CTL		0x62100
+ 
+ #define _REGBIT_FDI_TX_ENABLE				(1 << 31)
+-#define _REGBIT_FDI_LINK_TRAIN_PATTERN_1		(0 << 28)
+-#define _REGBIT_FDI_LINK_TRAIN_PATTERN_2		(1 << 28)
+-#define _REGBIT_FDI_LINK_TRAIN_NONE			(3 << 28)
+ #define _REGBIT_FDI_TX_PLL_ENABLE			(1 << 14)
+-#define _REGBIT_FDI_LINK_TRAIN_400MV_0DB_SNB_B		(0x0<<22)
+-#define _REGBIT_FDI_LINK_TRAIN_400MV_6DB_SNB_B		(0x3a<<22)
+-#define _REGBIT_FDI_LINK_TRAIN_600MV_3_5DB_SNB_B	(0x39<<22)
+-#define _REGBIT_FDI_LINK_TRAIN_800MV_0DB_SNB_B		(0x38<<22)
+-#define _REGBIT_FDI_LINK_TRAIN_VOL_EMP_MASK		(0x3f<<22)
+ #define _REGBIT_FDI_TX_ENHANCE_FRAME_ENABLE		(1<<18)
+ 
+-#define VGT_FDI_TX_CTL(pipe) _VGT_PIPE(pipe, _FDI_TXA_CTL, _FDI_TXB_CTL)
++#define VGT_FDI_TX_CTL(pipe) _PIPE(pipe, _FDI_TXA_CTL, _FDI_TXB_CTL)
+ 
+ /* CRT */
+ #define _REGBIT_ADPA_DAC_ENABLE			(1 << 31)
+ #define PORT_TRANS_SEL_SHIFT			29
+ #define VGT_PORT_TRANS_SEL_CPT(pipe)		((pipe) << PORT_TRANS_SEL_SHIFT)
+-#define _REGBIT_ADPA_CRT_HOTPLUG_MONITOR_MASK	(3 << 24)
+-#define _REGBIT_ADPA_CRT_HOTPLUG_ENABLE		(1 << 23)
+-#define _REGBIT_ADPA_CRT_HOTPLUG_PERIOD_128	(1 << 22)
+-#define _REGBIT_ADPA_CRT_HOTPLUG_WARMUP_10MS	(1 << 21)
+-#define _REGBIT_ADPA_CRT_HOTPLUG_SAMPLE_4S	(1 << 20)
+-#define _REGBIT_ADPA_CRT_HOTPLUG_VOLTAGE_50	(1 << 18)
+-#define _REGBIT_ADPA_CRT_HOTPLUG_VOLREF_325MV	(0 << 17)
+-#define _REGBIT_ADPA_CRT_HOTPLUG_FORCE_TRIGGER	(1 << 16)
+ #define _REGBIT_ADPA_VSYNC_ACTIVE_HIGH		(1 << 4)
+ #define _REGBIT_ADPA_HSYNC_ACTIVE_HIGH		(1 << 3)
+ 
+-/* Display port */
+-#define _REGBIT_DP_PORT_ENABLE		(1 << 31)
+-#define  _REGBIT_DP_VOLTAGE_0_4		(0 << 25)
+-#define  _REGBIT_DP_VOLTAGE_0_6		(1 << 25)
+-#define  _REGBIT_DP_VOLTAGE_0_8		(2 << 25)
+-#define  _REGBIT_DP_VOLTAGE_1_2		(3 << 25)
+-#define  _REGBIT_DP_VOLTAGE_MASK	(7 << 25)
+-#define  DP_VOLTAGE_SHIFT		25
+-
+-#define _REGBIT_DP_PRE_EMPHASIS_0		(0 << 22)
+-#define _REGBIT_DP_PRE_EMPHASIS_3_5		(1 << 22)
+-#define _REGBIT_DP_PRE_EMPHASIS_6		(2 << 22)
+-#define _REGBIT_DP_PRE_EMPHASIS_9_5		(3 << 22)
+-#define _REGBIT_DP_PRE_EMPHASIS_MASK		(7 << 22)
+-
+-#define _REGBIT_DP_LINK_TRAIN_PAT_1_CPT		(0 << 8)
+-#define _REGBIT_DP_LINK_TRAIN_PAT_2_CPT		(1 << 8)
+-#define _REGBIT_DP_LINK_TRAIN_PAT_IDLE_CPT	(2 << 8)
+-#define _REGBIT_DP_LINK_TRAIN_OFF_CPT		(3 << 8)
+-#define _REGBIT_DP_LINK_TRAIN_MASK_CPT		(7 << 8)
+-#define _REGBIT_DP_AUDIO_OUTPUT_ENABLE		(1 << 6)
+-#define _REGBIT_DP_PORT_DETECTED		(1 << 2)
+-
+-/* legacy or PCH_IBX ? */
+-#define _REGBIT_DP_LINK_TRAIN_MASK		(3 << 28)
+-#define _REGBIT_TRANS_DP_PORT_SEL_MASK	(3 << 29)
+-#define _REGBIT_TRANS_DP_PORT_SEL_NONE	(3 << 29)
+-#define _REGBIT_TRANS_DP_OUTPUT_ENABLE	(1 << 31)
+-#define VGT_TRANS_DP_CTL(pipe)	(_REG_TRANS_DP_A_CTL + (pipe) * 0x01000)
+-#define _REGBIT_TRANS_DP_PORT_SEL_B	(0 << 29)
+-#define _REGBIT_TRANS_DP_PORT_SEL_C	(1 << 29)
+-#define _REGBIT_TRANS_DP_PORT_SEL_D	(2 << 29)
+-
+-
+-/* Digital display A (DP_A, embedded) */
+-#define _REGBIT_DP_PORT_A_DETECTED	(1 << 2)
+-
+ /* HDMI/DVI/SDVO port */
+ #define HDMI_TRANS_SEL_MASK		(3 << 29)
+ #define _REGBIT_HDMI_PORT_ENABLE	(1 << 31)
+@@ -731,15 +544,8 @@ static inline uint32_t __RING_REG(int32_t ring_id, uint32_t rcs_reg)
+ 
+ /* PCH SDVOB multiplex with HDMIB */
+ #define VGT_BACKLIGHT_DUTY_CYCLE_MASK		(0xffff)
+-#define _REGBIT_PANEL_POWER_DOWN_DELAY_MASK	(0x1fff0000)
+-#define _REGBIT_PANEL_POWER_DOWN_DELAY_SHIFT	16
+-#define _REGBIT_PANEL_LIGHT_OFF_DELAY_MASK	(0x1fff)
+-#define _REGBIT_PANEL_LIGHT_OFF_DELAY_SHIFT	0
+ 
+-#define _REGBIT_PANEL_POWER_ON		(1 << 31)
+-#define _REG_PCH_PP_CONTROL		0xc7204
+ #define _REGBIT_POWER_TARGET_ON		(1 << 0)
+-#define _REGBIT_PANEL_UNLOCK_REGS	(0xabcd << 16) /* Write Protect Key is 0xABCD */
+ 
+ 
+ /* Watermark register (Ironlake) */
+@@ -754,7 +560,7 @@ static inline uint32_t __RING_REG(int32_t ring_id, uint32_t rcs_reg)
+ #define CURSOR_MAXWM	0x1f	/* bit 4:0 */
+ 
+ /*Intermediate Pixel Storage*/
+-union PCH_PP_CONTROL_LAYOUT
++union _PCH_PP_CONTROL
+ {
+ 	uint32_t data;
+ 	struct
+@@ -768,7 +574,7 @@ union PCH_PP_CONTROL_LAYOUT
+ 	};
+ };
+ 
+-union PCH_PP_STATUS_LAYOUT
++union _PCH_PP_STAUTS
+ {
+ 	uint32_t data;
+ 	struct
+@@ -786,30 +592,12 @@ union PCH_PP_STATUS_LAYOUT
+ /* CPU panel fitter */
+ 
+ #define _REG_PF_CTL_2			0x69080
+-
+-#define _REGBIT_PF_ENABLE		(1 << 31)
+-#define	_REGBIT_PF_PIPE_SEL_MASK	(3<<29)
+-#define	_REGBIT_PF_PIPE_SEL(pipe)	((pipe)<<29)
+-#define _REGBIT_PF_FILTER_MASK		(3 << 23)
+-#define _REGBIT_PF_FILTER_PROGRAMMED	(0 << 23)
+-#define _REGBIT_PF_FILTER_MED_3x3	(1 << 23)
+-#define _REGBIT_PF_FILTER_EDGE_ENHANCE	(2 << 23)
+-#define _REGBIT_PF_FILTER_EDGE_SOFTEN	(3 << 23)
+-
+ #define _REG_PF_WIN_SZ_2		0x69074
+ #define _REG_PF_WIN_POS_2		0x69070
+ 
+-
+-#define VGT_PF_CTL(pipe)	_VGT_PIPE(pipe, _PFA_CTL_1, _PFB_CTL_1)
+-#define VGT_PF_WIN_SZ(pipe)	_VGT_PIPE(pipe, _PFA_WIN_SZ, _PFB_WIN_SZ)
+-#define    VGT_PF_WIN_POS(pipe) _VGT_PIPE(pipe, _PFA_WIN_POS, _PFB_WIN_POS)
+-
+ /* Per-transcoder DIP controls */
+ 
+-#define _REGBIT_TRANS_ENABLE		(1 << 31)
+-#define _REGBIT_TRANS_STATE_ENABLED	(1 << 30)
+-#define _REGBIT_TRANS_INTERLACE_MASK	(7 << 21)
+-#define VGT_TRANSCONF(plane)	_VGT_PIPE(plane, _PCH_TRANSACONF, _PCH_TRANSBCONF)
++#define VGT_TRANSCONF(plane)	_PIPE(plane, _PCH_TRANSACONF, _PCH_TRANSBCONF)
+ 
+ union _TRANS_CONFIG
+ {
+@@ -826,37 +614,9 @@ union _TRANS_CONFIG
+ 	};
+ };
+ 
+-#define VGT_TRANS_CHICKEN2(pipe) _VGT_PIPE(pipe, _REG_TRANSA_CHICKEN2, _REG_TRANSB_CHICKEN2)
+-#define _REGBIT_TRANS_AUTOTRAIN_GEN_STALL_DISABLE	(1<<31)
+-
+-/* transcoder */
+-#define VGT_TRANS_HTOTAL(pipe)	_VGT_PIPE(pipe, _REG_TRANS_HTOTAL_A, _REG_TRANS_HTOTAL_B)
+-#define VGT_TRANS_HBLANK(pipe)	_VGT_PIPE(pipe, _REG_TRANS_HBLANK_A, _REG_TRANS_HBLANK_B)
+-#define VGT_TRANS_HSYNC(pipe)	 _VGT_PIPE(pipe, _REG_TRANS_HSYNC_A, _REG_TRANS_HSYNC_B)
+-#define VGT_TRANS_VTOTAL(pipe)	_VGT_PIPE(pipe, _REG_TRANS_VTOTAL_A, _REG_TRANS_VTOTAL_B)
+-#define VGT_TRANS_VBLANK(pipe)	_VGT_PIPE(pipe, _REG_TRANS_VBLANK_A, _REG_TRANS_VBLANK_B)
+-#define VGT_TRANS_VSYNC(pipe)	 _VGT_PIPE(pipe, _REG_TRANS_VSYNC_A, _REG_TRANS_VSYNC_B)
+-#define VGT_TRANS_VSYNCSHIFT(pipe)	_VGT_PIPE(pipe, _REG_TRANS_VSYNCSHIFT_A, \
+-					_REG_TRANS_VSYNCSHIFT_B)
+-
+-#define    VGT_FDIA_PHASE_SYNC_SHIFT_EN	18
+-#define VGT_FDIA_PHASE_SYNC_SHIFT_OVR	19
+-#define    VGT_FDI_PHASE_SYNC_EN(pipe)	(1 << (VGT_FDIA_PHASE_SYNC_SHIFT_EN - ((pipe) * 2)))
+-#define VGT_FDI_PHASE_SYNC_OVR(pipe)(1 << (VGT_FDIA_PHASE_SYNC_SHIFT_OVR - ((pipe) *2)))
+-#define    _REGBIT_FDI_MPHY_IOSFSB_RESET_STATUS	(1<<13)
+-#define    _REGBIT_MPHY_IOSFSB_RESET_CTL	(1<<12)
+-#define VGT_TRANSDATA_M1(pipe)	_VGT_PIPE(pipe, _REG_TRANSA_DATA_M1, _REG_TRANSB_DATA_M1)
+-#define VGT_TRANSDATA_N1(pipe)	_VGT_PIPE(pipe, _REG_TRANSA_DATA_N1, _REG_TRANSB_DATA_N1)
+-#define VGT_TRANSDATA_M2(pipe)	_VGT_PIPE(pipe, _REG_TRANSA_DATA_M2, _REG_TRANSB_DATA_M2)
+-#define VGT_TRANSDATA_N2(pipe)	_VGT_PIPE(pipe, _REG_TRANSA_DATA_N2, _REG_TRANSB_DATA_N2)
+ #define _REG_TRANSC_VIDEO_DIP_CTL	0xE2200
+ #define _REG_TRANSC_VIDEO_DIP_DATA	0xE2208
+ #define _REG_TRANSC_VIDEO_DIP_GCP	0xE2210
+-//#define _REG_TRANSC_DP_CTL		TRANS_DP_CTL_C
+-
+-/* Display & cursor control */
+-
+-/* Pipe A */
+ 
+ #define _REG_PIPEBCONF		0x71008
+ #define _REG_PIPEBSTAT		0x71024
+@@ -880,36 +640,27 @@ union _TRANS_CONFIG
+ #define _REGBIT_PIPE_8BPC		(0 << 5)
+ 
+ /* bit fields of pipestat */
+-#define _REGBIT_PIPE_VBLANK_INTERRUPT_STATUS	(1 << 1)
+ 
+-#define VGT_PIPEDSL(pipe)	_VGT_PIPE(pipe, _PIPEADSL, _REG_PIPEBDSL)
+-#define VGT_PIPECONF(pipe)	_VGT_PIPE(pipe, _PIPEACONF, _REG_PIPEBCONF)
+-#define VGT_PIPESTAT(pipe)	_VGT_PIPE(pipe, _PIPEASTAT, _REG_PIPEBSTAT)
+-#define VGT_PIPE_FRMCOUNT(pipe)	_VGT_PIPE(pipe, _PIPEA_FRMCOUNT_G4X, _REG_PIPEB_FRMCOUNT)
+-#define VGT_PIPE_FLIPCOUNT(pipe) _VGT_PIPE(pipe, _PIPEA_FLIPCOUNT_G4X, _REG_PIPEB_FLIPCOUNT)
++#define VGT_PIPEDSL(pipe)	_PIPE(pipe, _PIPEADSL, _REG_PIPEBDSL)
++#define VGT_PIPECONF(pipe)	_PIPE(pipe, _PIPEACONF, _REG_PIPEBCONF)
++#define VGT_PIPESTAT(pipe)	_PIPE(pipe, _PIPEASTAT, _REG_PIPEBSTAT)
++#define VGT_PIPE_FRMCOUNT(pipe)	_PIPE(pipe, _PIPEA_FRMCOUNT_G4X, _REG_PIPEB_FRMCOUNT)
++#define VGT_PIPE_FLIPCOUNT(pipe) _PIPE(pipe, _PIPEA_FLIPCOUNT_G4X, _REG_PIPEB_FLIPCOUNT)
+ 
+ #define VGT_PIPECONFPIPE(pipeconf) _VGT_GET_PIPE(pipeconf, _PIPEACONF, _REG_PIPEBCONF)
+ #define VGT_FRMCOUNTPIPE(frmcount) _VGT_GET_PIPE(frmcount, _PIPEA_FRMCOUNT_G4X, _REG_PIPEB_FRMCOUNT)
+ 
+-/* For Gen 2 */
+-//#define	_REG_CURSIZE		CURSIZE
+-/*
+- * Palette regs
+- */
+-
+-#define VGT_PALETTE(pipe) _VGT_PIPE(pipe, _PALETTE_A_OFFSET, _PALETTE_B_OFFSET)
++#define VGT_PALETTE(pipe) _PIPE(pipe, _PALETTE_A_OFFSET, _PALETTE_B_OFFSET)
+ 
+ /* legacy palette */
+ 
+ #define _REG_LGC_PALETTE_C		0x4b000
+-#define VGT_LGC_PALETTE(pipe) _VGT_PIPE(pipe, _LGC_PALETTE_A, _LGC_PALETTE_B)
+ 
+ /* Display Port */
+ 
+ #define _REG_DP_TP_CTL_C		0x64240
+ #define _REG_DP_TP_CTL_D		0x64340
+ #define _REG_DP_TP_CTL_E		0x64440
+-#define  _REGBIT_DP_TP_ENABLE		(1 << 31)
+ #define  _REGBIT_DP_TP_FDI_AUTO_TRAIN_ENABLE	(1 << 15)
+ #define  _DDI_BUFCTL_DETECT_MASK	0x1
+ #define  _REGBIT_DDI_BUF_ENABLE		(1 << 31)
+@@ -920,18 +671,13 @@ union _TRANS_CONFIG
+ #define _REG_DP_TP_STATUS_C			0x64244
+ #define _REG_DP_TP_STATUS_D			0x64344
+ #define _REG_DP_TP_STATUS_E			0x64444
+-#define  _REGBIT_DP_TP_STATUS_AUTOTRAIN_DONE	(1 << 12)
+-
+-#define VGT_DP_TP_CTL(port)		_VGT_PORT(port, DP_TP_CTL_A, \
++#define VGT_DP_TP_CTL(port)		_PORT(port, DP_TP_CTL_A, \
+ 						DP_TP_CTL_B)
+-#define VGT_DP_TP_CTL_PORT(reg)		_VGT_GET_PORT(reg, DP_TP_CTL_A, \
++
++#define DP_TP_PORT(reg)		_VGT_GET_PORT(reg, DP_TP_CTL_A, \
+ 						DP_TP_CTL_B)
+-#define VGT_DP_TP_STATUS(port)		_VGT_PORT(port, DP_TP_STATUS_A, \
+-						DP_TP_STATUS_B)
+-#define VGT_DP_TP_STATUS_PORT(reg)	_VGT_GET_PORT(reg, DP_TP_STATUS_A, \
++#define DP_TP_STATUS(port)		_PORT(port, DP_TP_STATUS_A, \
+ 						DP_TP_STATUS_B)
+-#define VGT_DDI_BUF_CTL(port)		_VGT_PORT(port, DDI_BUF_CTL_A, \
+-						DDI_BUF_CTL_B)
+ 
+ #define DRM_MODE_DPMS_ON		0
+ 
+@@ -1040,12 +786,7 @@ union _TRANS_CONFIG
+ 
+ /* digital port hotplug */
+ /* GMBUS1 bits definitions */
+-#define _GMBUS_SW_CLR_INT	(1 << 31)
+-#define _GMBUS_SW_RDY		(1 << 30)
+-#define _GMBUS_CYCLE_WAIT	(1 << 25)
+-#define _GMBUS_CYCLE_INDEX	(1 << 26)
+-#define _GMBUS_CYCLE_STOP	(1 << 27)
+-#define _GMBUS_SLAVE_READ	(1 << 0)
++
+ #define GMBUS1_TOTAL_BYTES_SHIFT 16
+ #define GMBUS1_TOTAL_BYTES_MASK 0x1ff
+ #define gmbus1_total_byte_count(v) (((v) >> GMBUS1_TOTAL_BYTES_SHIFT) & GMBUS1_TOTAL_BYTES_MASK)
+@@ -1056,46 +797,22 @@ union _TRANS_CONFIG
+ /* GMBUS0 bits definitions */
+ #define _GMBUS_PIN_SEL_MASK	(0x7)
+ 
+-/* GMBUS2 bits definitions */
+-#define _GMBUS_IN_USE		(1 << 15)
+-#define _GMBUS_HW_WAIT		(1 << 14)
+-#define _GMBUS_HW_RDY		(1 << 11)
+-#define _GMBUS_INT_STAT		(1 << 12)
+-#define _GMBUS_NAK		(1 << 10)
+-#define _GMBUS_ACTIVE		(1 << 9)
+-
+-#define _GMBUS_SLAVE_READ	(1 << 0)
+-#define _GMBUS_SLAVE_WRITE	(0 << 0)
+-#define _GMBUS_BYTE_COUNT_SHIFT	16
+-#define _GMBUS_SLAVE_ADDR_SHIFT	1
+-#define _GMBUS_TRANS_MAX_BYTES	((1 << 9) - 1)
+-
+ #define _REG_RC_PWRCTX_MAXCNT		0x2054
+ #define _REG_VFSKPD			0x2470
+ #define _REG_2D_CG_DIS			0x6200
+ #define _REG_3D_CG_DIS			0x6204			
+ #define _REG_3D_CG_DIS2			0x6208
+ #define _REG_SUPER_QUEUE_CONFIG		0x902c
+-/*
+- * GPIO regs
+- */
+ 
+ /* interrupt related definitions */
+ #define	_REGSHIFT_MASTER_INTERRUPT	31
+-#define	_REGBIT_MASTER_INTERRUPT	(1 << 31)
+-#define	_REGBIT_DP_A_HOTPLUG	(1 << 19)
+-#define	_REGBIT_DP_A_HOTPLUG_IVB	(1 << 27)
+-#define	_REGBIT_PIPE_A_VBLANK	(1 << 7)
+ #define	_REGSHIFT_PCH	21
+ #define	_REGBIT_PCH	(1 << 21)
+ /* GEN7 */
+ #define	_REGSHIFT_PCH_GEN7	28
+ #define	_REGBIT_PCH_GEN7	(1 << 28)
+ 
+-#define	_REGBIT_DP_A_HOTPLUG_STATUS	(3 << 0)
+ #define	_REGBIT_DP_A_PULSE_DURATION	(3 << 2)
+-#define	_REGBIT_DP_A_HOTPLUG_ENABLE	(1 << 4)
+-//#define _REG_GTT_FAULT_STATUS	GEN7_ERR_INT
+ 
+ #define	_REGBIT_CRT_HOTPLUG	(1 << 19)
+ #define	_REGBIT_DP_B_HOTPLUG	(1 << 21)
+@@ -1148,8 +865,6 @@ union _TRANS_CONFIG
+ 
+ /* blacklight PWM control */
+ 
+-#define        _REGBIT_PHASE_IN_IRQ_ENABLE	(1 << 24)
+-#define        _REGBIT_PHASE_IN_IRQ_STATUS	(1 << 26)
+ #define _REG_HISTOGRAM_THRSH	0x48268
+ #define        _REGBIT_HISTOGRAM_IRQ_ENABLE	(1 << 31)
+ #define        _REGBIT_HISTOGRAM_IRQ_STATUS	(1 << 30)
+@@ -1194,12 +909,10 @@ union _TRANS_CONFIG
+ #define VGT_OPREGION_SCIC_SF_REQEUSTEDCALLBACKS	1
+ #define VGT_OPREGION_REG_PARM			0x204
+ 
+-//#define MSAC_APERTURE_SIZE_MASK		0x3
+ #define MSAC_APERTURE_SIZE_128M			(0 << 1)
+ #define MSAC_APERTURE_SIZE_256M			(1 << 1)
+ #define MSAC_APERTURE_SIZE_512M			(3 << 1)
+ 
+-
+ /*
+  * Configuration register definition for BDF: 0:0:0.
+  */
+@@ -1210,81 +923,33 @@ union _TRANS_CONFIG
+ #define    _REGBIT_BDW_GMCH_GMS_MASK    0xff
+ 
+ /* HSW */
+-#define _REG_LCPLL_CTL			0x130040
+-#define  _REGBIT_LCPLL_PLL_DISABLE		(1<<31)
+-#define  _REGBIT_LCPLL_PLL_LOCK			(1<<30)
+-#define  _REGBIT_LCPLL_CLK_FREQ_MASK		(3<<26)
+-#define  _REGBIT_LCPLL_CD_SOURCE_FCLK		(1<<21)
+-#define  _REGBIT_LCPLL_CD_SOURCE_FCLK_DONE	(1<<19)
+-#define  _LCPLL_CLK_FREQ_450		(0<<26)
+-#define  _REGBIT_HSW_CDCLK_LIMIT	(1 << 24)
+-
+-#define   _REGBIT_HSW_PWR_WELL_ENABLE			(1<<31)
+-#define   _REGBIT_HSW_PWR_WELL_STATE				(1<<30)
+-#define   _REGBIT_HSW_PWR_WELL_ENABLE_SINGLE_STEP	(1<<31)
+-#define   _REGBIT_HSW_PWR_WELL_PWR_GATE_OVERRIDE	(1<<20)
+-#define   _REGBIT_HSW_PWR_WELL_FORCE_ON			(1<<19)
+ 
+ #define  _REGBIT_SPLL_CTL_ENABLE	(1 << 31)
+ 
+-#define  _REGBIT_WRPLL_ENABLE	(1 << 31)
+-
+ #define _REG_PORT_CLK_SEL_DDIC	0x46108
+ #define _REG_PORT_CLK_SEL_DDID	0x4610C
+ #define _REG_PORT_CLK_SEL_DDIE	0x46110
+ 
+ #define _REG_TRANS_CLK_SEL_C	0x46148
+-#define _SBI_RESPONSE_MASK		0x3
+-#define _SBI_RESPONSE_SHIFT		0x1
+-#define _SBI_STAT_MASK			0x1
+-#define _SBI_STAT_SHIFT			0x0
+-#define _SBI_RESPONSE_FAIL		(0x1<<_SBI_RESPONSE_SHIFT)
+-#define _SBI_RESPONSE_SUCCESS		(0x0<<_SBI_RESPONSE_SHIFT)
+-#define _SBI_BUSY			(0x1<<_SBI_STAT_SHIFT)
+-#define _SBI_READY			(0x0<<_SBI_STAT_SHIFT)
+-#define _SBI_OPCODE_SHIFT		8
+-#define _SBI_OPCODE_MASK		(0xff << _SBI_OPCODE_SHIFT)
+-#define _SBI_CMD_IORD			2
+-#define _SBI_CMD_IOWR			3
+-#define _SBI_CMD_CRRD			6
+-#define _SBI_CMD_CRWR			7
+-#define _SBI_ADDR_OFFSET_SHIFT		16
+-#define _SBI_ADDR_OFFSET_MASK		(0xffff << _SBI_ADDR_OFFSET_SHIFT)
+-
+-#define _VGT_TRANS_DDI_FUNC_CTL(tran)   _VGT_TRANSCODER(tran, TRANS_DDI_FUNC_CTL_A, \
++#define SBI_RESPONSE_MASK		0x3
++#define SBI_RESPONSE_SHIFT		0x1
++#define SBI_STAT_MASK			0x1
++#define SBI_STAT_SHIFT			0x0
++#define SBI_OPCODE_SHIFT		8
++#define SBI_OPCODE_MASK		(0xff << SBI_OPCODE_SHIFT)
++#define SBI_CMD_IORD			2
++#define SBI_CMD_IOWR			3
++#define SBI_CMD_CRRD			6
++#define SBI_CMD_CRWR			7
++#define SBI_ADDR_OFFSET_SHIFT		16
++#define SBI_ADDR_OFFSET_MASK		(0xffff << SBI_ADDR_OFFSET_SHIFT)
++
++#define _VGT_TRANS_DDI_FUNC_CTL(tran)   _TRANSCODER(tran, TRANS_DDI_FUNC_CTL_A, \
+ 						   TRANS_DDI_FUNC_CTL_B)
+ 
+-
+-#define  _REGBIT_TRANS_DDI_FUNC_ENABLE		(1<<31)
+ /* Those bits are ignored by pipe EDP since it can only connect to DDI A */
+-#define  _TRANS_DDI_PORT_SHIFT			28
+-#define  _REGBIT_TRANS_DDI_PORT_MASK		(7<<_TRANS_DDI_PORT_SHIFT)
+-#define  _REGBIT_TRANS_DDI_SELECT_PORT(x)	((x)<<_TRANS_DDI_PORT_SHIFT)
+-#define  _REGBIT_TRANS_DDI_PORT_NONE		(0<<_TRANS_DDI_PORT_SHIFT)
+ #define  _TRANS_DDI_MODE_SELECT_HIFT		24
+-#define  _REGBIT_TRANS_DDI_MODE_SELECT_MASK	(7<<_TRANS_DDI_MODE_SELECT_HIFT)
+-#define  _REGBIT_TRANS_DDI_MODE_SELECT_HDMI	(0<<_TRANS_DDI_MODE_SELECT_HIFT)
+-#define  _REGBIT_TRANS_DDI_MODE_SELECT_DVI	(1<<_TRANS_DDI_MODE_SELECT_HIFT)
+-#define  _REGBIT_TRANS_DDI_MODE_SELECT_DP_SST	(2<<_TRANS_DDI_MODE_SELECT_HIFT)
+-#define  _REGBIT_TRANS_DDI_MODE_SELECT_DP_MST	(3<<_TRANS_DDI_MODE_SELECT_HIFT)
+-#define  _REGBIT_TRANS_DDI_MODE_SELECT_FDI	(4<<_TRANS_DDI_MODE_SELECT_HIFT)
+-#define  _REGBIT_TRANS_DDI_BPC_MASK		(7<<20)
+-#define  _REGBIT_TRANS_DDI_BPC_8		(0<<20)
+-#define  _REGBIT_TRANS_DDI_BPC_10		(1<<20)
+-#define  _REGBIT_TRANS_DDI_BPC_6		(2<<20)
+-#define  _REGBIT_TRANS_DDI_BPC_12		(3<<20)
+-#define  _REGBIT_TRANS_DDI_PVSYNC		(1<<17)
+-#define  _REGBIT_TRANS_DDI_PHSYNC		(1<<16)
+ #define  _TRANS_DDI_EDP_INPUT_SHIFT		12
+-#define  _REGBIT_TRANS_DDI_EDP_INPUT_MASK	(7<<_TRANS_DDI_EDP_INPUT_SHIFT)
+-#define  _REGBIT_TRANS_DDI_EDP_INPUT_A_ON	(0<<_TRANS_DDI_EDP_INPUT_SHIFT)
+-#define  _REGBIT_TRANS_DDI_EDP_INPUT_A_ONOFF	(4<<_TRANS_DDI_EDP_INPUT_SHIFT)
+-#define  _REGBIT_TRANS_DDI_EDP_INPUT_B_ONOFF	(5<<_TRANS_DDI_EDP_INPUT_SHIFT)
+-#define  _REGBIT_TRANS_DDI_EDP_INPUT_C_ONOFF	(6<<_TRANS_DDI_EDP_INPUT_SHIFT)
+-#define  _REGBIT_TRANS_DDI_BFI_ENABLE		(1<<4)
+-#define  _REGBIT_TRANS_DDI_PORT_WIDTH_X1	(0<<1)
+-#define  _REGBIT_TRANS_DDI_PORT_WIDTH_X2	(1<<1)
+-#define  _REGBIT_TRANS_DDI_PORT_WIDTH_X4	(3<<1)
+ 
+ #define _REG_GEN7_SQ_CHICKEN_MBCUNIT_CONFIG		0x9030
+ #define GEN7_L3SQCREG1				0xB010
+@@ -1293,32 +958,12 @@ union _TRANS_CONFIG
+ #define GEN8_L3SQCREG1				0xB100
+ #define  BDW_WA_L3SQCREG1_DEFAULT		0x784000
+ 
+-#define GEN7_L3CNTLREG2				0xB020
+ #define GEN7_L3CNTLREG3				0xB024
+ #define _REG_PIPE_WM_LINETIME_C			0x45278
+ 
+ #define _REG_HSW_VIDEO_DIP_CTL_C		0x62200
+ #define _REG_HSW_VIDEO_DIP_CTL_EDP		0x6F200
+-#define  _REGBIT_SFUSE_STRAP_B_PRESENTED	(1 << 2)
+-#define  _REGBIT_SFUSE_STRAP_C_PRESENTED	(1 << 1)
+-#define  _REGBIT_SFUSE_STRAP_D_PRESENTED	(1 << 0)
+-
+-#define _REGBIT_FPGA_DBG_RM_NOCLAIM		(1 << 31)
+-
+ /* GEN8 interrupt registers definations */
+-#define  _REGBIT_MASTER_IRQ_CONTROL	(1<<31)
+-#define  _REGBIT_PCU_IRQ			(1<<30)
+-#define  _REGBIT_DE_PCH_IRQ		(1<<23)
+-#define  _REGBIT_DE_MISC_IRQ		(1<<22)
+-#define  _REGBIT_DE_PORT_IRQ		(1<<20)
+-#define  _REGBIT_DE_PIPE_C_IRQ		(1<<18)
+-#define  _REGBIT_DE_PIPE_B_IRQ		(1<<17)
+-#define  _REGBIT_DE_PIPE_A_IRQ		(1<<16)
+-#define  _REGBIT_GT_VECS_IRQ		(1<<6)
+-#define  _REGBIT_GT_VCS2_IRQ		(1<<3)
+-#define  _REGBIT_GT_VCS1_IRQ		(1<<2)
+-#define  _REGBIT_GT_BCS_IRQ		(1<<1)
+-#define  _REGBIT_GT_RCS_IRQ		(1<<0)
+ 
+ #define _REG_GT_ISR(which) (0x44300 + (0x10 * (which)))
+ #define _REG_GT_IMR(which) (0x44304 + (0x10 * (which)))
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index f921e65..cb8decf 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -427,10 +427,10 @@ static bool gen8_reset_engine(int ring_id,
+ 		return false;
+ 	}
+ 
+-	VGT_MMIO_WRITE(pdev, _REG_GEN6_GDRST, _REGBIT_GEN6_GRDOM_RENDER);
++	VGT_MMIO_WRITE(pdev, GEN6_GDRST, GEN6_GRDOM_RENDER);
+ 
+ 	for (count = 1000; count > 0; count --)
+-		if (!(VGT_MMIO_READ(pdev, _REG_GEN6_GDRST) & _REGBIT_GEN6_GRDOM_RENDER))
++		if (!(VGT_MMIO_READ(pdev, GEN6_GDRST) & GEN6_GRDOM_RENDER))
+ 			break;
+ 
+ 	if (!count) {
+diff --git a/drivers/gpu/drm/i915/vgt/sysfs.c b/drivers/gpu/drm/i915/vgt/sysfs.c
+index c872117..95a5aba 100644
+--- a/drivers/gpu/drm/i915/vgt/sysfs.c
++++ b/drivers/gpu/drm/i915/vgt/sysfs.c
+@@ -502,13 +502,13 @@ static bool is_pport_present(struct pgt_device *pgt, struct gt_port *port)
+ 		found = VGT_MMIO_READ(pgt, DDI_BUF_CTL_A) & _DDI_BUFCTL_DETECT_MASK;
+ 		break;
+ 	case PORT_B:
+-		found = VGT_MMIO_READ(pgt, SFUSE_STRAP) & _REGBIT_SFUSE_STRAP_B_PRESENTED;
++		found = VGT_MMIO_READ(pgt,SFUSE_STRAP) & SFUSE_STRAP_DDIB_DETECTED;
+ 		break;
+ 	case PORT_C:
+-		found = VGT_MMIO_READ(pgt, SFUSE_STRAP) & _REGBIT_SFUSE_STRAP_C_PRESENTED;
++		found = VGT_MMIO_READ(pgt,SFUSE_STRAP) & SFUSE_STRAP_DDIC_DETECTED;
+ 		break;
+ 	case PORT_D:
+-		found = VGT_MMIO_READ(pgt, SFUSE_STRAP) & _REGBIT_SFUSE_STRAP_D_PRESENTED;
++		found = VGT_MMIO_READ(pgt,SFUSE_STRAP) & SFUSE_STRAP_DDID_DETECTED;
+ 		break;
+ 	case PORT_E:
+ 		found = true;
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 54482f1..83a9c74 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -801,11 +801,11 @@ static inline enum vgt_pipe vgt_get_pipe_from_port(struct vgt_device *vgt,
+ 
+ 		ddi_func_ctl  = __vreg(vgt, _VGT_TRANS_DDI_FUNC_CTL(pipe));
+ 
+-		if (!(ddi_func_ctl & _REGBIT_TRANS_DDI_FUNC_ENABLE))
++		if (!(ddi_func_ctl & TRANS_DDI_FUNC_ENABLE))
+ 			continue;
+ 
+-		ddi_port_info = (ddi_func_ctl & _REGBIT_TRANS_DDI_PORT_MASK) >>
+-					_TRANS_DDI_PORT_SHIFT;
++		ddi_port_info = (ddi_func_ctl & TRANS_DDI_PORT_MASK) >>
++					TRANS_DDI_PORT_SHIFT;
+ 		if (ddi_port_info == port) {
+ 			// pipe has the port setting same as input
+ 			break;
+-- 
+1.7.10.4
+

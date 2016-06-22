@@ -1,0 +1,141 @@
+From 2186615e5c1d3aac2f0e869568912f0d979d1df7 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Thu, 7 May 2015 05:24:07 +0800
+Subject: [PATCH 066/403] vgt: perf: account oos page statistics
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/debugfs.c |   42 ++++++++++++++++++++++++++++++++++++
+ drivers/gpu/drm/i915/vgt/gtt.c     |   15 +++++++++++++
+ drivers/gpu/drm/i915/vgt/vgt.h     |    5 +++++
+ 3 files changed, 62 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/debugfs.c b/drivers/gpu/drm/i915/vgt/debugfs.c
+index 823d89f..6235134 100644
+--- a/drivers/gpu/drm/i915/vgt/debugfs.c
++++ b/drivers/gpu/drm/i915/vgt/debugfs.c
+@@ -904,6 +904,43 @@ static const struct file_operations vgt_debug_fops = {
+ 	.release = single_release,
+ };
+ 
++static int vgt_oos_page_info_show(struct seq_file *m, void *data)
++{
++	struct pgt_device *pdev = (struct pgt_device *)m->private;
++	unsigned long flags;
++
++	spin_lock_irqsave(&pdev->lock, flags);
++
++	seq_printf(m, "current avail oos page count: %llu.\n",
++		pdev->stat.oos_page_cur_avail_cnt);
++	seq_printf(m, "minimum avail oos page count: %llu.\n",
++		pdev->stat.oos_page_min_avail_cnt);
++	seq_printf(m, "oos page steal count: %llu.\n",
++		pdev->stat.oos_page_steal_cnt);
++	seq_printf(m, "oos page attach count: %llu.\n",
++		pdev->stat.oos_page_attach_cnt);
++	seq_printf(m, "oos page detach count: %llu.\n",
++		pdev->stat.oos_page_detach_cnt);
++
++	spin_unlock_irqrestore(&pdev->lock, flags);
++
++	seq_printf(m, "\n");
++
++	return 0;
++}
++
++static int vgt_oos_page_info_open(struct inode *inode, struct file *file)
++{
++	return single_open(file, vgt_oos_page_info_show, inode->i_private);
++}
++
++static const struct file_operations vgt_oos_page_info_fops = {
++	.open = vgt_oos_page_info_open,
++	.read = seq_read,
++	.llseek = seq_lseek,
++	.release = single_release,
++};
++
+ static int vgt_el_status_show(struct seq_file *m, void *data)
+ {
+ 	struct pgt_device *pdev = (struct pgt_device *)m->private;
+@@ -981,6 +1018,11 @@ struct dentry *vgt_init_debugfs(struct pgt_device *pdev)
+ 	if (!temp_d)
+ 		return NULL;
+ 
++	temp_d = debugfs_create_file("oos_page_info", 0444, d_vgt_debug,
++		pdev, &vgt_oos_page_info_fops);
++	if (!temp_d)
++		return NULL;
++
+ 	temp_d = debugfs_create_file("show_el_status", 0444, d_vgt_debug,
+ 		pdev, &vgt_el_status_fops);
+ 	if (!temp_d)
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index 1337727..90e6fc3 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -1001,6 +1001,9 @@ static bool vgt_detach_oos_page(struct vgt_device *vgt, oos_page_t *oos_page)
+ 	list_del_init(&oos_page->vm_list);
+ 	list_move_tail(&oos_page->list, &pdev->gtt.oos_page_free_list_head);
+ 
++	pdev->stat.oos_page_cur_avail_cnt++;
++	pdev->stat.oos_page_detach_cnt++;
++
+ 	return true;
+ }
+ 
+@@ -1018,9 +1021,14 @@ static oos_page_t *vgt_attach_oos_page(struct vgt_device *vgt,
+ 	list_move_tail(&oos_page->list, &pdev->gtt.oos_page_use_list_head);
+ 	list_add_tail(&oos_page->vm_list, &vgt->gtt.oos_page_list_head);
+ 
++	if (--pdev->stat.oos_page_cur_avail_cnt < pdev->stat.oos_page_min_avail_cnt)
++		pdev->stat.oos_page_min_avail_cnt = pdev->stat.oos_page_cur_avail_cnt;
++
+ 	trace_oos_change(vgt->vm_id, "attach", gpt->oos_page->id,
+ 			gpt, guest_page_to_ppgtt_spt(gpt)->guest_page_type);
+ 
++	pdev->stat.oos_page_attach_cnt++;
++
+ 	return oos_page;
+ }
+ 
+@@ -1050,6 +1058,7 @@ static bool ppgtt_set_guest_page_oos(struct vgt_device *vgt, guest_page_t *gpt)
+ 			|| !vgt_detach_oos_page(vgt, oos_page))
+ 			return false;
+ 		ASSERT(!list_empty(&gtt->oos_page_free_list_head));
++		pdev->stat.oos_page_steal_cnt++;
+ 	} else
+ 		oos_page = container_of(gtt->oos_page_free_list_head.next, oos_page_t, list);
+ 
+@@ -1957,6 +1966,12 @@ static bool vgt_setup_spt_oos(struct pgt_device *pdev)
+ 		list_add_tail(&oos_page->list, &gtt->oos_page_free_list_head);
+ 	}
+ 
++	pdev->stat.oos_page_cur_avail_cnt = preallocated_oos_pages;
++	pdev->stat.oos_page_min_avail_cnt = preallocated_oos_pages;
++	pdev->stat.oos_page_steal_cnt = 0;
++	pdev->stat.oos_page_attach_cnt = 0;
++	pdev->stat.oos_page_detach_cnt = 0;
++
+ 	vgt_info("%d oos pages preallocated\n", preallocated_oos_pages);
+ 
+ 	return true;
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index acc4ba9..9092459 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -1127,6 +1127,11 @@ struct pgt_statistics {
+ 	u64	virq_cycles;
+ 	u64	irq_delay_cycles;
+ 	u64	events[EVENT_MAX];
++	u64	oos_page_cur_avail_cnt;
++	u64	oos_page_min_avail_cnt;
++	u64	oos_page_steal_cnt;
++	u64	oos_page_attach_cnt;
++	u64	oos_page_detach_cnt;
+ };
+ 
+ #define PCI_BDF2(b,df)  ((((b) & 0xff) << 8) | ((df) & 0xff))
+-- 
+1.7.10.4
+

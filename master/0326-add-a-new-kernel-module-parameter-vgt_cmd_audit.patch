@@ -1,0 +1,57 @@
+From e299b7407a232e2d44cef2710a16ef282e8e74e7 Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Thu, 28 Jan 2016 08:42:57 +0800
+Subject: [PATCH 326/403] add a new kernel module parameter vgt_cmd_audit
+
+add an option to disable VM killing to avoid break QA's test if
+any error found.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |    2 +-
+ drivers/gpu/drm/i915/vgt/vgt.c        |    3 +++
+ drivers/gpu/drm/i915/vgt/vgt.h        |    1 +
+ 3 files changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index 978ebf8..fea9f1d 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -3142,7 +3142,7 @@ int vgt_scan_vring(struct vgt_device *vgt, int ring_id)
+ 	stat->vring_scan_cycles += t1 - t0;
+ 
+ err:
+-	if (ret)
++	if (ret && vgt_cmd_audit)
+ 		vgt_kill_vm(vgt);
+ 
+ 	return ret;
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index ac72e9f..fa85a3b 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -197,6 +197,9 @@ module_param_named(shadow_ctx_check, shadow_ctx_check, int, 0600);
+ int shadow_indirect_ctx_bb = 1;
+ module_param_named(shadow_indirect_ctx_bb, shadow_indirect_ctx_bb, int, 0400);
+ 
++int vgt_cmd_audit = 1;
++module_param_named(vgt_cmd_audit, vgt_cmd_audit, int, 0400);
++
+ static struct vgt_ops __vgt_ops = {
+ 	.emulate_read = vgt_emulate_read,
+ 	.emulate_write = vgt_emulate_write,
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index c469c1b..70c24ef 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -101,6 +101,7 @@ extern int shadow_execlist_context;
+ extern int shadow_cmd_buffer;
+ extern int shadow_ctx_check;
+ extern int shadow_indirect_ctx_bb;
++extern int vgt_cmd_audit;
+ extern bool propagate_monitor_to_guest;
+ extern bool irq_based_ctx_switch;
+ extern int preallocated_shadow_pages;
+-- 
+1.7.10.4
+

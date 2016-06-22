@@ -1,0 +1,184 @@
+diff --git a/drivers/gpu/drm/drm_backport.c b/drivers/gpu/drm/drm_backport.c
+deleted file mode 100644
+index 8d19f23..0000000
+--- a/drivers/gpu/drm/drm_backport.c
++++ /dev/null
+@@ -1,178 +0,0 @@
+-/*
+- * Copyright (C) 2015 Red Hat
+- *
+- * This file is subject to the terms and conditions of the GNU General Public
+- * License v2. See the file COPYING in the main directory of this archive for
+- * more details.
+- */
+-
+-#include <drm/drm_backport.h>
+-
+-/*
+- * shrinker
+- */
+-
+-#undef shrinker
+-#undef register_shrinker
+-#undef unregister_shrinker
+-
+-static int shrinker2_shrink(struct shrinker *shrinker, struct shrink_control *sc)
+-{
+-	struct shrinker2 *s2 = container_of(shrinker, struct shrinker2, compat);
+-	int count;
+-
+-	s2->scan_objects(s2, sc);
+-	count = s2->count_objects(s2, sc);
+-	shrinker->seeks = s2->seeks;
+-
+-	return count;
+-}
+-
+-int register_shrinker2(struct shrinker2 *s2)
+-{
+-	s2->compat.shrink = shrinker2_shrink;
+-	s2->compat.seeks = s2->seeks;
+-	register_shrinker(&s2->compat);
+-	return 0;
+-}
+-EXPORT_SYMBOL(register_shrinker2);
+-
+-void unregister_shrinker2(struct shrinker2 *s2)
+-{
+-	unregister_shrinker(&s2->compat);
+-}
+-EXPORT_SYMBOL(unregister_shrinker2);
+-
+-struct workqueue_struct *system_power_efficient_wq __read_mostly;
+-EXPORT_SYMBOL_GPL(system_power_efficient_wq);
+-
+-/**
+- * acpi_evaluate_dsm - evaluate device's _DSM method
+- * @handle: ACPI device handle
+- * @uuid: UUID of requested functions, should be 16 bytes
+- * @rev: revision number of requested function
+- * @func: requested function number
+- * @argv4: the function specific parameter
+- *
+- * Evaluate device's _DSM method with specified UUID, revision id and
+- * function number. Caller needs to free the returned object.
+- *
+- * Though ACPI defines the fourth parameter for _DSM should be a package,
+- * some old BIOSes do expect a buffer or an integer etc.
+- */
+-union acpi_object *
+-acpi_evaluate_dsm(acpi_handle handle, const u8 *uuid, int rev, int func,
+-		  union acpi_object *argv4)
+-{
+-	acpi_status ret;
+-	struct acpi_buffer buf = {ACPI_ALLOCATE_BUFFER, NULL};
+-	union acpi_object params[4];
+-	struct acpi_object_list input = {
+-		.count = 4,
+-		.pointer = params,
+-	};
+-
+-	params[0].type = ACPI_TYPE_BUFFER;
+-	params[0].buffer.length = 16;
+-	params[0].buffer.pointer = (char *)uuid;
+-	params[1].type = ACPI_TYPE_INTEGER;
+-	params[1].integer.value = rev;
+-	params[2].type = ACPI_TYPE_INTEGER;
+-	params[2].integer.value = func;
+-	if (argv4) {
+-		params[3] = *argv4;
+-	} else {
+-		params[3].type = ACPI_TYPE_PACKAGE;
+-		params[3].package.count = 0;
+-		params[3].package.elements = NULL;
+-	}
+-
+-	ret = acpi_evaluate_object(handle, "_DSM", &input, &buf);
+-	if (ACPI_SUCCESS(ret))
+-		return (union acpi_object *)buf.pointer;
+-
+-	if (ret != AE_NOT_FOUND)
+-		acpi_handle_warn(handle,
+-				"failed to evaluate _DSM (0x%x)\n", ret);
+-
+-	return NULL;
+-}
+-EXPORT_SYMBOL(acpi_evaluate_dsm);
+-
+-/**
+- * acpi_check_dsm - check if _DSM method supports requested functions.
+- * @handle: ACPI device handle
+- * @uuid: UUID of requested functions, should be 16 bytes at least
+- * @rev: revision number of requested functions
+- * @funcs: bitmap of requested functions
+- *
+- * Evaluate device's _DSM method to check whether it supports requested
+- * functions. Currently only support 64 functions at maximum, should be
+- * enough for now.
+- */
+-bool acpi_check_dsm(acpi_handle handle, const u8 *uuid, int rev, u64 funcs)
+-{
+-	int i;
+-	u64 mask = 0;
+-	union acpi_object *obj;
+-
+-	if (funcs == 0)
+-		return false;
+-
+-	obj = acpi_evaluate_dsm(handle, uuid, rev, 0, NULL);
+-	if (!obj)
+-		return false;
+-
+-	/* For compatibility, old BIOSes may return an integer */
+-	if (obj->type == ACPI_TYPE_INTEGER)
+-		mask = obj->integer.value;
+-	else if (obj->type == ACPI_TYPE_BUFFER)
+-		for (i = 0; i < obj->buffer.length && i < 8; i++)
+-			mask |= (((u8)obj->buffer.pointer[i]) << (i * 8));
+-	ACPI_FREE(obj);
+-
+-	/*
+-	 * Bit 0 indicates whether there's support for any functions other than
+-	 * function 0 for the specified UUID and revision.
+-	 */
+-	if ((mask & 0x1) && (mask & funcs) == funcs)
+-		return true;
+-
+-	return false;
+-}
+-EXPORT_SYMBOL(acpi_check_dsm);
+-
+-struct device_node *of_get_next_available_child(const struct device_node *node,
+-	struct device_node *prev)
+-{
+-	return NULL;
+-}
+-
+-struct property *of_find_property(const struct device_node *np,
+-				  const char *name,
+-				  int *lenp)
+-{
+-	return NULL;
+-}
+-
+-int of_property_read_u32_array(const struct device_node *np,
+-					     const char *propname,
+-					     u32 *out_values, size_t sz)
+-{
+-	return -ENOSYS;
+-}
+-
+-static int __init drm_backport_init(void)
+-{
+-	system_power_efficient_wq = create_workqueue("events_power_efficient");
+-	return 0;
+-}
+-
+-module_init(drm_backport_init);
+-
+-static void __exit drm_backport_exit(void)
+-{
+-	destroy_workqueue(system_power_efficient_wq);
+-}
+-
+-module_exit(drm_backport_exit);

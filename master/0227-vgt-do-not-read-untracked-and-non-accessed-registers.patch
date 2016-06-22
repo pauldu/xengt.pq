@@ -1,0 +1,39 @@
+From d5c367ade3a32104ab1c1129609da0e2bf3935ca Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Fri, 23 Oct 2015 04:00:49 +0800
+Subject: [PATCH 227/403] vgt: do not read untracked and non-accessed
+ registers
+
+Some registers cannot be read. If they get read, the whole system hang.
+So we only allow the vgt_report tool to read the accessed registers
+or tracked registers.
+
+v2
+
+Take Zhiyuan's comment:
+- Change the magic value from 0xdeadbeef to "-"
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/debugfs.c |    5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/debugfs.c b/drivers/gpu/drm/i915/vgt/debugfs.c
+index c680405..37aa738 100644
+--- a/drivers/gpu/drm/i915/vgt/debugfs.c
++++ b/drivers/gpu/drm/i915/vgt/debugfs.c
+@@ -327,7 +327,10 @@ static int vgt_show_pregs(struct seq_file *m, void *data)
+ 	for(i = 0; i < pdev->reg_num; i++) {
+ 		if (!(i % 16))
+ 			seq_printf(m, "\n%8llx:", i * REG_SIZE);
+-		seq_printf(m, " %x", VGT_MMIO_READ(pdev, i * REG_SIZE));
++		if (!reg_is_accessed(pdev, i * REG_SIZE) && !reg_is_tracked(pdev, i))
++			seq_printf(m, " -");
++		else
++			seq_printf(m, " %x", VGT_MMIO_READ(pdev, i * REG_SIZE));
+ 	}
+ 
+ 	seq_printf(m, "\n");
+-- 
+1.7.10.4
+

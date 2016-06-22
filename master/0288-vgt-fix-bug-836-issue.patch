@@ -1,0 +1,129 @@
+From 168fce8a079ec7b05b6253a526db039c4b71ebf2 Mon Sep 17 00:00:00 2001
+From: "Zheng, Xiao" <xiao.zheng@intel.com>
+Date: Tue, 15 Dec 2015 17:14:38 +0800
+Subject: [PATCH 288/403] vgt: fix bug 836 issue
+
+V4: refined the description and added error process.
+
+V3: refine the logic of the PTE handling.
+
+V2: modified the description of the patch according to Kevin's advise.
+
+It is a workaround for bug 836, and is only for bc branch. In this
+patch, we added a scratch page to each domain and assign this page to
+PTE when removing a PTE entry.
+
+Signed-off-by: Xiao Zheng <xiao.zheng@intel.com>
+Signed-off-by: Min He <min.he@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/gtt.c |   51 +++++++++++++++++++++++++++++++++++++++-
+ drivers/gpu/drm/i915/vgt/gtt.h |    3 +++
+ 2 files changed, 53 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index bf054c0..5121570 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -901,6 +901,9 @@ static bool ppgtt_handle_guest_entry_removal(guest_page_t *gpt,
+ 	if (!ops->test_present(&e))
+ 		return true;
+ 
++	if (ops->get_pfn(&e) == vgt->gtt.scratch_page_mfn)
++		return true;
++
+ 	if (gtt_type_is_pt(get_next_pt_type(we->type))) {
+ 		guest_page_t *g = vgt_find_guest_page(vgt, ops->get_pfn(we));
+ 		if (!g) {
+@@ -910,7 +913,7 @@ static bool ppgtt_handle_guest_entry_removal(guest_page_t *gpt,
+ 		if (!ppgtt_invalidate_shadow_page(guest_page_to_ppgtt_spt(g)))
+ 			goto fail;
+ 	}
+-	e.val64 = 0;
++	ops->set_pfn(&e, vgt->gtt.scratch_page_mfn);
+ 	ppgtt_set_shadow_entry(spt, &e, index);
+ 	return true;
+ fail:
+@@ -1922,6 +1925,49 @@ static void mempool_free_spt(void *element, void *pool_data)
+ 	kfree(spt);
+ }
+ 
++bool vgt_create_scratch_page(struct vgt_device *vgt)
++{
++	struct vgt_vgtt_info *gtt = &vgt->gtt;
++	void *p;
++	void *vaddr;
++	unsigned long mfn;
++
++	gtt->scratch_page = alloc_page(GFP_KERNEL | GFP_ATOMIC);
++	if (!gtt->scratch_page) {
++		vgt_err("Failed to allocate scratch page.\n");
++		return false;
++	}
++
++	/* set to zero */
++	p = kmap_atomic(gtt->scratch_page);
++	memset(p, 0, PAGE_SIZE);
++	kunmap_atomic(p);
++
++	/* translate page to mfn */
++	vaddr = page_address(gtt->scratch_page);
++	mfn = hypervisor_virt_to_mfn(vaddr);
++
++	if (mfn == INVALID_MFN) {
++		vgt_err("fail to translate vaddr:0x%llx\n", (u64)vaddr);
++		__free_page(gtt->scratch_page);
++		gtt->scratch_page = NULL;
++		return false;
++	}
++
++	gtt->scratch_page_mfn = mfn;
++	vgt_info("VM%d create scratch page: mfn=0x%lx\n", vgt->vm_id, mfn);
++	return true;
++}
++
++void vgt_release_scratch_page(struct vgt_device *vgt)
++{
++	if (vgt->gtt.scratch_page != NULL) {
++		__free_page(vgt->gtt.scratch_page);
++		vgt->gtt.scratch_page = NULL;
++		vgt->gtt.scratch_page_mfn = 0;
++	}
++}
++
+ bool vgt_init_vgtt(struct vgt_device *vgt)
+ {
+ 	struct vgt_vgtt_info *gtt = &vgt->gtt;
+@@ -1949,6 +1995,8 @@ bool vgt_init_vgtt(struct vgt_device *vgt)
+ 	}
+ 
+ 	gtt->ggtt_mm = ggtt_mm;
++
++	vgt_create_scratch_page(vgt);
+ 	return true;
+ }
+ 
+@@ -1958,6 +2006,7 @@ void vgt_clean_vgtt(struct vgt_device *vgt)
+ 	struct vgt_mm *mm;
+ 
+ 	ppgtt_free_all_shadow_page(vgt);
++	vgt_release_scratch_page(vgt);
+ 
+ 	list_for_each_safe(pos, n, &vgt->gtt.mm_list_head) {
+ 		mm = container_of(pos, struct vgt_mm, list);
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.h b/drivers/gpu/drm/i915/vgt/gtt.h
+index 63ad2b0..7531b97 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.h
++++ b/drivers/gpu/drm/i915/vgt/gtt.h
+@@ -228,6 +228,9 @@ struct vgt_vgtt_info {
+ 	gtt_entry_t last_partial_ppgtt_access_entry;
+ 	struct guest_page *last_partial_ppgtt_access_gpt;
+ 	bool warn_partial_ppgtt_access_once;
++	struct page *scratch_page;
++	unsigned long scratch_page_mfn;
++
+ };
+ 
+ extern bool vgt_init_vgtt(struct vgt_device *vgt);
+-- 
+1.7.10.4
+

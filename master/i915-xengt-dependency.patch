@@ -1,0 +1,25 @@
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 89b1530..ae99b81 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -1461,7 +1461,7 @@ bool vgt_check_host(void)
+ void i915_stop_vgt(void)
+ {
+ 	vgt_destroy();
+-	__symbol_put(vgt_pkdm->name);
++	symbol_put(xengt_kdm);
+ 	vgt_pkdm = NULL;
+ 	vgt_ops = NULL;
+ }
+@@ -1471,10 +1471,7 @@ bool i915_start_vgt(struct pci_dev *pdev)
+ 	vgt_ops = &__vgt_ops;
+ 
+ 	if (xen_initial_domain()) {
+-		/* Xen Dom0 */
+-		vgt_pkdm = try_then_request_module(symbol_get(xengt_kdm), "xengt");
+-		if (!vgt_pkdm)
+-			return false;
++		vgt_pkdm = &xengt_kdm;
+ 	} else if (xen_domain()) {
+ 		/* Xen DomU */
+ 		return false;

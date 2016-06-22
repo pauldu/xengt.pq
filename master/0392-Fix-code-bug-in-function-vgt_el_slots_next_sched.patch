@@ -1,0 +1,36 @@
+From 117ea88716a357088b475d5558750e6968761d5b Mon Sep 17 00:00:00 2001
+From: Pei Zhang <pei.zhang@intel.com>
+Date: Mon, 28 Mar 2016 15:52:03 +0800
+Subject: [PATCH 392/403] Fix code bug in function vgt_el_slots_next_sched
+
+It's a code bug and head will never equals to 0 which would cause
+an infinite loop if tail is 0.
+
+Signed-off-by: Pei Zhang <pei.zhang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |    6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index a3d17fc..95cd7eb 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -317,12 +317,12 @@ static int vgt_el_slots_next_sched(vgt_state_ring_t *ring_state)
+ 		return -1;
+ 	} else {
+ 		while (ring_state->execlist_slots[head].status != EL_PENDING) {
+-			head ++;
++			head++;
++			if (head == EL_QUEUE_SLOT_NUM)
++				head = 0;
+ 			if (head == tail) {
+ 				head = -1;
+ 				break;
+-			} else if (head == EL_QUEUE_SLOT_NUM) {
+-				head = 0;
+ 			}
+ 		}
+ 		return head;
+-- 
+1.7.10.4
+

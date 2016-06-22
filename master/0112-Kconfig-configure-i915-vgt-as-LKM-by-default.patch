@@ -1,0 +1,77 @@
+From 00eb2201c156bb2ef5e0be1f04810a3099d00f6c Mon Sep 17 00:00:00 2001
+From: Jike Song <jike.song@intel.com>
+Date: Tue, 19 May 2015 18:19:53 +0800
+Subject: [PATCH 112/403] Kconfig: configure i915/vgt as LKM by default
+
+Signed-off-by: Jike Song <jike.song@intel.com>
+Signed-off-by: Niu,Bing <bing.niu@intel.com>
+---
+ config-3.18.0-dom0  |   12 ++++++------
+ drivers/xen/Kconfig |    4 ++--
+ 2 files changed, 8 insertions(+), 8 deletions(-)
+
+diff --git a/config-3.18.0-dom0 b/config-3.18.0-dom0
+index 09aa3c8..ba40749 100644
+--- a/config-3.18.0-dom0
++++ b/config-3.18.0-dom0
+@@ -2098,7 +2098,7 @@ CONFIG_I2C_CHARDEV=m
+ # CONFIG_I2C_MUX is not set
+ CONFIG_I2C_HELPER_AUTO=y
+ CONFIG_I2C_SMBUS=m
+-CONFIG_I2C_ALGOBIT=y
++CONFIG_I2C_ALGOBIT=m
+ 
+ #
+ # I2C Hardware Bus support
+@@ -2547,8 +2547,8 @@ CONFIG_VGA_ARB_MAX_GPUS=16
+ #
+ # Direct Rendering Manager
+ #
+-CONFIG_DRM=y
+-CONFIG_DRM_KMS_HELPER=y
++CONFIG_DRM=m
++CONFIG_DRM_KMS_HELPER=m
+ CONFIG_DRM_KMS_FB_HELPER=y
+ # CONFIG_DRM_LOAD_EDID_FIRMWARE is not set
+ 
+@@ -2565,10 +2565,11 @@ CONFIG_DRM_TDFX=m
+ # CONFIG_DRM_RADEON is not set
+ # CONFIG_DRM_NOUVEAU is not set
+ CONFIG_DRM_I810=m
+-CONFIG_DRM_I915=y
++CONFIG_DRM_I915=m
+ CONFIG_DRM_I915_KMS=y
+ CONFIG_DRM_I915_FBDEV=y
+ # CONFIG_DRM_I915_PRELIMINARY_HW_SUPPORT is not set
++CONFIG_I915_VGT=y
+ # CONFIG_DRM_MGA is not set
+ # CONFIG_DRM_SIS is not set
+ # CONFIG_DRM_VIA is not set
+@@ -3321,8 +3322,7 @@ CONFIG_XEN_ACPI_PROCESSOR=m
+ # CONFIG_XEN_MCE_LOG is not set
+ CONFIG_XEN_HAVE_PVMMU=y
+ CONFIG_XEN_EFI=y
+-CONFIG_I915_VGT=y
+-CONFIG_XENGT=y
++CONFIG_XENGT=m
+ # CONFIG_STAGING is not set
+ CONFIG_X86_PLATFORM_DEVICES=y
+ # CONFIG_ACERHDF is not set
+diff --git a/drivers/xen/Kconfig b/drivers/xen/Kconfig
+index b43ce0c..bb3c275 100644
+--- a/drivers/xen/Kconfig
++++ b/drivers/xen/Kconfig
+@@ -292,8 +292,8 @@ config XEN_HAVE_VPMU
+        bool
+ 
+ config XENGT
+-	bool "Xen Dom0 support for i915 vgt device model"
++	tristate "Xen Dom0 support for i915 vgt device model"
+ 	depends on XEN_DOM0 && I915_VGT
+-	default y
++	default m
+ 
+ endmenu
+-- 
+1.7.10.4
+

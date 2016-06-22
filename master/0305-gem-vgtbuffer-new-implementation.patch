@@ -1,0 +1,226 @@
+From b30db6795175e60a2c42e1b36c37f7ac86920fc6 Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Tue, 22 Dec 2015 09:46:05 +0800
+Subject: [PATCH 305/403] gem vgtbuffer new implementation
+
+This is a design change of the vgtbuffer for the guest framebuffer
+sharing with Dom0
+
+old design
+----------
+
+1, General idea of the guest fb sharing
+
+In the compositor mode of display, dom0/host needs to get the guest
+framebuffer to do more rendering, so that the guest VM's screen can
+show up flexibly, e.g., in an X window of dom0/host.
+
+In order to do that, a new gem object type "vgtbuffer" is introduced
+to i915. Different from normal gem object in i915, vgtbuffer does not
+have its own backing storage. Instead, it borrows the page frames
+acting as guest VM's framebuffer as its own backing storage.
+
+From high level, it works this way:
+	a) vgt notifies kernel/userspace the guest OS page flip by
+	   monitoring the related guest MMIO changes and commands.
+	b) user space issue IOCTL to create vgtbuffer gem object.
+	c) kernel creates the gem object, and record the guest FB base
+           address (gfx address) from MMIO.
+	d) When needed, the vgtbuffer will be bound to graphics
+	   memory, and be used as normal gem object for rendering.
+
+The key thing of above design is that vgtbuffer gem object can be used
+for rendering just like normal gem objects. In order to do that, the
+vgtbuffer should be able to be bound to GM, that is, get its own
+graphics memory address.
+
+Guest framebuffer must be inside GGTT, whereas the vgtbuffer can be
+in either GGTT or PPGTT, depending on the requirement of the
+rendering.
+
+Next section describes how it is done in old design.
+
+2, Binding vgtbuffer gem object to GM
+
+The old design introduced a special flag "has_vmfb_mapping" in gem
+object. Then when i915 gem framework tries to bind a gem object to GM,
+there are different handling to vgtbuffer gem object.
+
+Different from normal gem objects, the binding of vgtbuffer is done
+this way: driver will get the guest FB's start address recorded in
+vgtbuffer, then read the GTT entries one by one, copy the entry to the
+PTE corresponding to vgtbuffer's graphics memory space.
+
+Problems of the old design
+--------------------------
+
+The itelm <2> of old design has below problems:
+ - We have to implement our own binding functions for vgtbuffer in
+   i915 gem framework. That part keeps changing in i915, and the
+   functions easily encounter conflict in kernel rebase.
+ - We changed too much in i915 gem framework. This is hard to be
+   general enough for upstream.
+
+new design
+----------
+
+Actually we can have simpler option for vgtbuffer. Instead of doing
+binding work by ourselves, we can just prepare the backing storage as
+required by gem object and let i915 handle the rest.
+
+Since the vgtbuffer corresponds to the guest framebuffer, which is
+from guest physical memory, we may not be able to get "page struct"
+for them. That is the only blocking issue.
+
+Fortunately i915 gem framework has had similar cases. A gem object can
+have stolen memory as its backing storage. In such case, the backing
+storage does not have "page struct" as well, and i915 has handled the
+case in the framework well.
+
+So back to the case of vgtbuffer, we can simply prepare the backing
+storage of vgtbuffer like gem objects with stolen memory as backing
+storage. That is what I did in this patch.
+
+set the "sg_table" for vgt buffer gem objects like stolen gem, so that
+the tricky things in gtt/ppgtt bind/unbind is not needed.
+
+TODO
+----
+
+- The patch is not yet tested on SKL
+- More careful consideration of the error handling path and the life
+  cycle of vgtbuffer gem object.
+- Reconsider the get_pages implementation for vgtbuffer. Right now
+  the backing storage of vgtbuffer is created while the gem object
+  is created, just like the gem stolen, and each time guests switch
+  the framebuffer, the user space will re-create a vgtbuffer gem
+  object. We may consider to only have one gem object, but switch its
+  backing storage.
+
+v5:
+ - pin gem object so that its backing storage will not be swapped. (Zhi)
+
+v4:
+ - Change patch order (Kevin)
+ - Separate some refactor code out of this patch to make it clearer
+
+v3:
+ - Split the IOCTL enabling code into a separate patch (Kevin)
+ - Rename a function of "i915_pages_create_for_vgtbuffer" to "i915_create_sg_pages_for_vgtbuffer" (Kevin)
+ - Another TODO added for the get_pages function of vgtbuffer.
+
+v2:
+ - Add detailed description of the patch (Kevin)
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/i915_gem_vgtbuffer.c |   73 +++++++++++++++++++++++++++--
+ 1 file changed, 70 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
+index 9f194ec..934374f 100644
+--- a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
++++ b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
+@@ -32,18 +32,79 @@ struct vgt_device;
+ 
+ static int i915_gem_vgtbuffer_get_pages(struct drm_i915_gem_object *obj)
+ {
+-	return 0;
++	BUG();
++	return -EINVAL;
+ }
+ 
+ static void i915_gem_vgtbuffer_put_pages(struct drm_i915_gem_object *obj)
+ {
++	/* backing storage is pinned */
++	BUG();
++}
++
++static void i915_gem_vgtbuffer_release(struct drm_i915_gem_object *obj)
++{
++	sg_free_table(obj->pages);
++	kfree(obj->pages);
+ }
+ 
+ static const struct drm_i915_gem_object_ops i915_gem_vgtbuffer_ops = {
+ 	.get_pages = i915_gem_vgtbuffer_get_pages,
+ 	.put_pages = i915_gem_vgtbuffer_put_pages,
++	.release = i915_gem_vgtbuffer_release,
+ };
+ 
++#define GEN8_DECODE_PTE(pte) \
++	((dma_addr_t)(((((u64)pte) >> 12) & 0x7ffffffULL) << 12))
++
++#define GEN7_DECODE_PTE(pte) \
++	((dma_addr_t)(((((u64)pte) & 0x7f0) << 28) | (u64)(pte & 0xfffff000)))
++
++static struct sg_table *
++i915_create_sg_pages_for_vgtbuffer(struct drm_device *dev,
++			     u32 start, u32 num_pages)
++{
++	struct drm_i915_private *dev_priv = dev->dev_private;
++	struct sg_table *st;
++	struct scatterlist *sg;
++	int i;
++
++	st = kmalloc(sizeof(*st), GFP_KERNEL);
++	if (st == NULL)
++		return NULL;
++
++	if (sg_alloc_table(st, num_pages, GFP_KERNEL)) {
++		kfree(st);
++		return NULL;
++	}
++
++	if (INTEL_INFO(dev)->gen >= 8) {
++		gen8_pte_t __iomem *gtt_entries =
++			(gen8_pte_t __iomem *)dev_priv->gtt.gsm +
++			(start >> PAGE_SHIFT);
++		for_each_sg(st->sgl, sg, num_pages, i) {
++			sg->offset = 0;
++			sg->length = PAGE_SIZE;
++			sg_dma_address(sg) =
++				GEN8_DECODE_PTE(readq(&gtt_entries[i]));
++			sg_dma_len(sg) = PAGE_SIZE;
++		}
++	} else {
++		gen6_pte_t __iomem *gtt_entries =
++			(gen6_pte_t __iomem *)dev_priv->gtt.gsm +
++			(start >> PAGE_SHIFT);
++		for_each_sg(st->sgl, sg, num_pages, i) {
++			sg->offset = 0;
++			sg->length = PAGE_SIZE;
++			sg_dma_address(sg) =
++				GEN7_DECODE_PTE(readq(&gtt_entries[i]));
++			sg_dma_len(sg) = PAGE_SIZE;
++		}
++	}
++
++	return st;
++}
++
+ struct drm_i915_gem_object *
+ i915_gem_object_create_vgtbuffer(struct drm_device *dev,
+ 				 u32 start, u32 num_pages)
+@@ -54,10 +115,16 @@ i915_gem_object_create_vgtbuffer(struct drm_device *dev,
+ 		return NULL;
+ 
+ 	drm_gem_private_object_init(dev, &obj->base, num_pages << PAGE_SHIFT);
+-
+ 	i915_gem_object_init(obj, &i915_gem_vgtbuffer_ops);
++
++	obj->pages = i915_create_sg_pages_for_vgtbuffer(dev, start, num_pages);
++	if (obj->pages == NULL) {
++		i915_gem_object_free(obj);
++		return NULL;
++	}
++
++	i915_gem_object_pin_pages(obj);
+ 	obj->cache_level = I915_CACHE_L3_LLC;
+-	obj->pages = NULL;
+ 
+ 	DRM_DEBUG_DRIVER("VGT_GEM: backing store base = 0x%x pages = 0x%x\n",
+ 			 start, num_pages);
+-- 
+1.7.10.4
+

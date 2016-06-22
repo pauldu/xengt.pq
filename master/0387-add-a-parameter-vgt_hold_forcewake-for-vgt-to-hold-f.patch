@@ -1,0 +1,55 @@
+From 5d887d2cfa5dfda94373bdeb8f8301b70ab9b925 Mon Sep 17 00:00:00 2001
+From: Min He <min.he@intel.com>
+Date: Mon, 14 Mar 2016 18:13:13 +0800
+Subject: [PATCH 387/403] add a parameter vgt_hold_forcewake for vgt to hold
+ forcewake
+
+In this patch, a module parameter vgt_hold_forcewake is added. When enable
+it, VGT will always hold the forcewake. The default value of the parameter
+is false.
+This parameter can help to debug some forcewake related issues.
+
+Signed-off-by: Min He <min.he@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/vgt.c |   11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 5d47874..690bbd9 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -200,6 +200,11 @@ module_param_named(shadow_indirect_ctx_bb, shadow_indirect_ctx_bb, int, 0400);
+ int vgt_cmd_audit = 1;
+ module_param_named(vgt_cmd_audit, vgt_cmd_audit, int, 0400);
+ 
++bool vgt_hold_forcewake;
++module_param_named(vgt_hold_forcewake, vgt_hold_forcewake, bool, 0600);
++MODULE_PARM_DESC(vgt_hold_forcewake,
++		"VGT will hold the forcewake or not (default: false)");
++
+ static struct vgt_ops __vgt_ops = {
+ 	.emulate_read = vgt_emulate_read,
+ 	.emulate_write = vgt_emulate_write,
+@@ -835,6 +840,9 @@ void vgt_destroy(void)
+ 	int i;
+ 	unsigned long flags;
+ 
++	if (vgt_hold_forcewake)
++		vgt_force_wake_put();
++
+ 	vgt_cleanup_mmio_dev(pdev);
+ 
+ 	perf_pgt = NULL;
+@@ -990,6 +998,9 @@ static int vgt_initialize(struct pci_dev *dev)
+ 
+ 	vgt_init_fb_notify();
+ 
++	if (vgt_hold_forcewake)
++		vgt_force_wake_get();
++
+ 	printk("vgt_initialize succeeds.\n");
+ 
+ 	return 0;
+-- 
+1.7.10.4
+

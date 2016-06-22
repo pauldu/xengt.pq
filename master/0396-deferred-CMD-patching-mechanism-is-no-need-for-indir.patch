@@ -1,0 +1,113 @@
+From af2f83dfb8f03cd568ca6d6749f211df70c013da Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Thu, 31 Mar 2016 09:34:09 +0800
+Subject: [PATCH 396/403] deferred CMD patching mechanism is no need for
+ indirect ctx
+
+indirect ctx and per ctx bb are not true workload no need such
+deferred mechanism, and also share such mechanism with normal
+command buffer would make submission mess-up.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |   15 +++++++++++----
+ drivers/gpu/drm/i915/vgt/cmd_parser.h |    8 +++++++-
+ 2 files changed, 18 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index 07a30c3..8563b58 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -128,6 +128,8 @@ static inline int add_patch_entry(struct parser_exec_state *s,
+ 	struct cmd_patch_info *patch;
+ 	int next;
+ 
++	ASSERT(s->shadow != INDIRECT_CTX_SHADOW);
++
+ 	if (addr == NULL) {
+ 		vgt_err("VM(%d) CMD_SCAN: NULL address to be patched\n",
+ 				s->vgt->vgt_id);
+@@ -160,6 +162,8 @@ static inline int add_post_handle_entry(struct parser_exec_state *s,
+ 	struct cmd_handler_info *entry;
+ 	int next;
+ 
++	ASSERT(s->shadow != INDIRECT_CTX_SHADOW);
++
+ 	next = get_next_entry(list);
+ 	if (next == list->count) {
+ 		vgt_err("CMD_SCAN: no free post-handle entry\n");
+@@ -191,6 +195,8 @@ static int add_tail_entry(struct parser_exec_state *s,
+ 	struct cmd_tail_info *entry;
+ 	int next;
+ 
++	ASSERT(s->shadow != INDIRECT_CTX_SHADOW);
++
+ 	next = get_next_entry(list);
+ 	if (next == list->count) {
+ 		vgt_err("CMD_SCAN: no free tail entry\n");
+@@ -2783,7 +2789,7 @@ static inline bool gma_out_of_range(unsigned long gma, unsigned long gma_head, u
+ #define MAX_PARSER_ERROR_NUM	10
+ 
+ static int __vgt_scan_vring(struct vgt_device *vgt, int ring_id, vgt_reg_t head,
+-			vgt_reg_t tail, vgt_reg_t base, vgt_reg_t size, bool shadow)
++			vgt_reg_t tail, vgt_reg_t base, vgt_reg_t size, cmd_shadow_t shadow)
+ {
+ 	unsigned long gma_head, gma_tail, gma_bottom;
+ 	struct parser_exec_state s;
+@@ -2869,7 +2875,7 @@ static int __vgt_scan_vring(struct vgt_device *vgt, int ring_id, vgt_reg_t head,
+ 		}
+ 	}
+ 
+-	if (!rc) {
++	if (!rc && shadow != INDIRECT_CTX_SHADOW) {
+ 		/*
+ 		 * Set flag to indicate the command buffer is end with user interrupt,
+ 		 * and save the instruction's offset in ring buffer.
+@@ -3061,7 +3067,8 @@ int vgt_scan_vring(struct vgt_device *vgt, int ring_id)
+ 	if (ret == 0) {
+ 		ret = __vgt_scan_vring(vgt, ring_id, rs->last_scan_head,
+ 			vring->tail & RB_TAIL_OFF_MASK, rb_base,
+-			_RING_CTL_BUF_SIZE(vring->ctl), shadow_cmd_buffer);
++			_RING_CTL_BUF_SIZE(vring->ctl),
++			shadow_cmd_buffer ? NORMAL_CMD_SHADOW : NO_CMD_SHADOW);
+ 
+ 		rs->last_scan_head = vring->tail;
+ 	}
+@@ -3084,7 +3091,7 @@ int vgt_scan_vring(struct vgt_device *vgt, int ring_id)
+ 			if (ret)
+ 				goto err;
+ 			if (!__vgt_scan_vring(vgt, ring_id, 0, ctx_tail,
+-				ctx_base, dummy_ctx_size, true)) {
++				ctx_base, dummy_ctx_size, INDIRECT_CTX_SHADOW)) {
+ 				vgt_get_bb_per_ctx_shadow_base(vgt, rs->el_ctx);
+ 			} else {
+ 				ret = -1;
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.h b/drivers/gpu/drm/i915/vgt/cmd_parser.h
+index fa5edd8..3e08cb4 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.h
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.h
+@@ -439,6 +439,12 @@ typedef enum{
+ 	PPGTT_BUFFER
+ }gtt_addr_t;
+ 
++typedef enum {
++	NO_CMD_SHADOW = 0,
++	NORMAL_CMD_SHADOW = 1,
++	INDIRECT_CTX_SHADOW = 2,
++} cmd_shadow_t;
++
+ struct parser_exec_state {
+ 	struct vgt_device *vgt;
+ 	int ring_id;
+@@ -487,7 +493,7 @@ struct parser_exec_state {
+ 	void *ip_buf;
+ 
+ 	struct execlist_context *el_ctx;
+-	bool shadow;
++	cmd_shadow_t shadow;
+ };
+ 
+ #define CMD_TAIL_NUM	1024
+-- 
+1.7.10.4
+

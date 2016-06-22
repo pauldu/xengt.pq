@@ -1,0 +1,33 @@
+From 89f41ac25322f3085994a17eb2733e2be030046d Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Fri, 8 Jan 2016 00:37:51 +0800
+Subject: [PATCH 334/403] ring enable bit should always be set in context
+
+unexpected ring disable in context will make this guest VM been
+killed, as disable ring in context is an undefined behavior.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |    6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index 1886257..a313ae5 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -3089,7 +3089,11 @@ int vgt_scan_vring(struct vgt_device *vgt, int ring_id)
+ 		/* Ring is enabled */
+ 		vgt_dbg(VGT_DBG_CMD, "VGT-Parser.c vring is disabled. head %x tail %x ctl %x\n",
+ 			vring->head, vring->tail, vring->ctl);
+-		return 0;
++		if (IS_HSW(vgt->pdev))
++			return 0;
++		vgt_err("Unexpected ring %d disabled in context\n", ring_id);
++		ret = -1;
++		goto err;
+ 	}
+ 
+ 	stat->vring_scan_cnt++;
+-- 
+1.7.10.4
+

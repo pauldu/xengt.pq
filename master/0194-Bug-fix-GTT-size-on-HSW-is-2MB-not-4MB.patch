@@ -1,0 +1,29 @@
+From 5aa51250f906cb67bba620e61f6a62c3f2c4a663 Mon Sep 17 00:00:00 2001
+From: Yi Sun <yi.sun@intel.com>
+Date: Tue, 20 Oct 2015 16:47:31 +0800
+Subject: [PATCH 194/403] Bug fix: GTT size on HSW is 2MB, not 4MB.
+
+This doesn't affact driver's function, but dumps wrong information
+during initializion.
+
+Signed-off-by: Yi Sun <yi.sun@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/vgt.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 2e13662..836398d 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -576,7 +576,7 @@ static bool vgt_initialize_device_info(struct pgt_device *pdev)
+ 		 * GTT offset in BAR0 starts from 2MB to 4MB
+ 		 */
+ 		info->gtt_start_offset = (1UL << 21);
+-		info->max_gtt_size = (1UL << 22);
++		info->max_gtt_size = (1UL << 21);
+ 		info->gtt_entry_size = 4;
+ 		info->gtt_entry_size_shift = 2;
+ 		info->gmadr_bytes_in_cmd = 4;
+-- 
+1.7.10.4
+

@@ -1,0 +1,102 @@
+From d997734ddbb46ca8724fca902faa889d788b9881 Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Fri, 15 Apr 2016 16:54:30 +0800
+Subject: [PATCH 402/403] vgt debug: dump debug information for specific guest
+
+introduce cur_reset_vm to indicate the guest who trigger reset, dump
+the information related to this VM only.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/utility.c |   27 +++++++++++++++++++--------
+ drivers/gpu/drm/i915/vgt/vgt.h     |    1 +
+ 2 files changed, 20 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/utility.c b/drivers/gpu/drm/i915/vgt/utility.c
+index bf33feb..01b03dc 100644
+--- a/drivers/gpu/drm/i915/vgt/utility.c
++++ b/drivers/gpu/drm/i915/vgt/utility.c
+@@ -353,6 +353,9 @@ void common_show_ring_buffer(struct pgt_device *pdev, int ring_id, int bytes,
+ 	u64 ring_len, off;
+ 	u32 gpa;
+ 
++	if (pdev->cur_reset_vm)
++		vgt = pdev->cur_reset_vm;
++
+ 	printk("ring xxx:(%d), mi_mode idle:(%d)\n",
+ 		VGT_MMIO_READ(pdev, pdev->ring_xxx[ring_id]) & (1 << pdev->ring_xxx_bit[ring_id]),
+ 		VGT_MMIO_READ(pdev, pdev->ring_mi_mode[ring_id]) & MODE_IDLE);
+@@ -438,7 +441,8 @@ void common_show_ring_buffer(struct pgt_device *pdev, int ring_id, int bytes,
+ 			ppgtt);
+ 	}
+ 
+-	mmio_show_batchbuffer(pdev, ring_id, bytes);
++	if (pdev->cur_reset_vm == current_render_owner(pdev))
++		mmio_show_batchbuffer(pdev, ring_id, bytes);
+ 
+ }
+ 
+@@ -1277,11 +1281,9 @@ void dump_ctx_status_buf(struct vgt_device *vgt,
+ 		return;
+ 	}
+ 
+-	if (hw_status) {
+-		/* show all contents in hw buffer */
+-		read_idx = 0;
+-		write_idx = CTX_STATUS_BUF_NUM - 1;
+-	}
++	/* show all contents in hw/virtual buffer */
++	read_idx = 0;
++	write_idx = CTX_STATUS_BUF_NUM - 1;
+ 
+ 	if (read_idx > write_idx)
+ 		write_idx += CTX_STATUS_BUF_NUM;
+@@ -1360,6 +1362,13 @@ void dump_el_context_information(struct vgt_device *vgt,
+ 			(unsigned long long)guest_state);
+ 	dump_regstate_ctx_header(guest_state);
+ 
++	printk("-- Ring Buffer from guest context --\n");
++	common_show_ring_buffer(vgt->pdev, el_ctx->ring_id, 64 * 4,
++				guest_state->ring_tail.val,
++				guest_state->ring_header.val,
++				guest_state->rb_start.val,
++				guest_state->rb_ctrl.val,
++				0);
+ 	if (!has_shadow)
+ 		return;
+ 
+@@ -1383,7 +1392,8 @@ void dump_all_el_contexts(struct pgt_device *pdev)
+ 		int j;
+ 
+ 		vgt = pdev->device[i];
+-		if (!vgt)
++		if (!vgt || (pdev->cur_reset_vm &&
++					vgt != pdev->cur_reset_vm))
+ 			continue;
+ 		printk("-- VM(%d) --\n", vgt->vm_id);
+ 		hash_for_each_safe(vgt->gtt.el_ctx_hash_table, j, n, el_ctx, node) {
+@@ -1426,7 +1436,8 @@ void dump_el_status(struct pgt_device *pdev)
+ 		dump_ctx_status_buf(vgt_dom0, ring_id, true);
+ 		for (i = 0; i < VGT_MAX_VMS; ++ i) {
+ 			struct vgt_device *vgt = pdev->device[i];
+-			if (!vgt)
++			if (!vgt || (pdev->cur_reset_vm &&
++						vgt != pdev->cur_reset_vm))
+ 				continue;
+ 			dump_ctx_status_buf(vgt, ring_id, false);
+ 			dump_el_queue(vgt, ring_id);
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 0a1eaa9..da09abf 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -457,6 +457,7 @@ struct pgt_device {
+ 	struct vgt_device *foreground_vm;		/* current visible domain on display. */
+ 	struct vgt_device *next_sched_vgt;
+ 	struct vgt_device *next_foreground_vm;
++	struct vgt_device *cur_reset_vm;	/* the VM who trigger reset */
+ 	struct list_head rendering_runq_head; /* reuse this for context scheduler */
+ 	struct list_head rendering_idleq_head; /* reuse this for context scheduler */
+ 	spinlock_t lock;
+-- 
+1.7.10.4
+

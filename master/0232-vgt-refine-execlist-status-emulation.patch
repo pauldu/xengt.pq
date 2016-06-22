@@ -1,0 +1,25 @@
+From 8df57c2e73d1584db3d2b79ca2216131f4481fb1 Mon Sep 17 00:00:00 2001
+From: "Zheng, Xiao" <xiao.zheng@intel.com>
+Date: Wed, 25 Nov 2015 14:02:26 +0800
+Subject: [PATCH 232/403] vgt: refine execlist status emulation
+
+Signed-off-by: Zheng Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |    1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 29e2495..686f377 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -1059,6 +1059,7 @@ static void vgt_emulate_submit_execlist(struct vgt_device *vgt, int ring_id,
+ 		 * injected because of HW GPU status change. Meanwhile, the status register
+ 		 * is emulated to reflect the port submission operation.
+ 		 */
++		status.udw = ctx0->guest_context.context_id;
+ 		status.execlist_queue_full = 1;
+ 		vgt_dbg(VGT_DBG_EXECLIST,"VM-%d: ring(%d) EXECLISTS becomes "
+ 			"full due to workload submission!\n",
+-- 
+1.7.10.4
+

@@ -1,0 +1,27 @@
+From b787f5e70f40a4ffd2eea0e6729a94fa46f69290 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Thu, 3 Dec 2015 23:37:38 +0800
+Subject: [PATCH 238/403] vgt/skl: add two untracked registers after enabling
+ host PM
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |    2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 52304b8..b31dadc 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -3629,6 +3629,8 @@ reg_attr_t vgt_reg_info_skl[] = {
+ {HSW_PWR_WELL_DRIVER, 4, F_DOM0, 0, D_SKL, NULL, skl_power_well_ctl_write},
+ {GEN6_PCODE_MAILBOX, 4, F_DOM0, 0, D_SKL, NULL, mailbox_write},
+ {0xa210, 4, F_DOM0, 0, D_SKL_PLUS, NULL, NULL},
++{GEN9_MEDIA_PG_IDLE_HYSTERESIS, 4, F_DOM0, 0, D_SKL_PLUS, NULL, NULL},
++{GEN9_RENDER_PG_IDLE_HYSTERESIS, 4, F_DOM0, 0, D_SKL_PLUS, NULL, NULL},
+ {0x4ddc, 4, F_PT, 0, D_SKL, NULL, NULL},
+ {0x42080, 4, F_PT, 0, D_SKL_PLUS, NULL, NULL},
+ {0x45504, 4, F_DOM0, 0, D_SKL, NULL, NULL},
+-- 
+1.7.10.4
+

@@ -1,0 +1,85 @@
+From 2698006c1f1ace61d1d799cb30b2207cd775da58 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Thu, 5 Nov 2015 21:07:40 +0800
+Subject: [PATCH 231/403] vgt: reset virtual interrupt registers in
+ initialization path
+
+This patch can fix windows guest screen lag on SKL.
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/instance.c  |    2 ++
+ drivers/gpu/drm/i915/vgt/interrupt.c |   30 ++++++++++++++++++++++++++++++
+ drivers/gpu/drm/i915/vgt/vgt.h       |    2 +-
+ 3 files changed, 33 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/instance.c b/drivers/gpu/drm/i915/vgt/instance.c
+index af17632..aef29be 100644
+--- a/drivers/gpu/drm/i915/vgt/instance.c
++++ b/drivers/gpu/drm/i915/vgt/instance.c
+@@ -315,6 +315,8 @@ int create_vgt_instance(struct pgt_device *pdev, struct vgt_device **ptr_vgt, vg
+ 
+ 	vgt_init_i2c_edid(vgt);
+ 
++	vgt_reset_virtual_interrupt_registers(vgt);
++
+ 	*ptr_vgt = vgt;
+ 
+ 	/* initialize context scheduler infor */
+diff --git a/drivers/gpu/drm/i915/vgt/interrupt.c b/drivers/gpu/drm/i915/vgt/interrupt.c
+index 5fa0e96..56bfe3a 100644
+--- a/drivers/gpu/drm/i915/vgt/interrupt.c
++++ b/drivers/gpu/drm/i915/vgt/interrupt.c
+@@ -200,6 +200,36 @@ void reset_cached_interrupt_registers(struct pgt_device *pdev)
+ 	}
+ }
+ 
++void vgt_reset_virtual_interrupt_registers(struct vgt_device *vgt)
++{
++	struct pgt_device *pdev = vgt->pdev;
++	struct vgt_irq_host_state *hstate = pdev->irq_hstate;
++	struct vgt_irq_info *info;
++	u32 reg_base, ier, imr, iir, isr;
++	int i;
++
++	for_each_set_bit(i, hstate->irq_info_bitmap, IRQ_INFO_MAX) {
++		info = hstate->info[i];
++		if (!info)
++			continue;
++
++		reg_base = hstate->info[i]->reg_base;
++
++		imr = regbase_to_imr(reg_base);
++		ier = regbase_to_ier(reg_base);
++		iir = regbase_to_iir(reg_base);
++		isr = regbase_to_isr(reg_base);
++
++		__vreg(vgt, imr) = 0xffffffff;
++		__vreg(vgt, ier) = __vreg(vgt, iir) = __vreg(vgt, isr) = 0x0;
++	}
++
++	for (i = 0; i < pdev->max_engines; i++) {
++		imr = pdev->ring_mmio_base[i] - 0x30 + 0xa8;
++		__vreg(vgt, imr) = 0xffffffff;
++	}
++}
++
+ static inline u32 vgt_read_cached_interrupt_register(struct pgt_device *pdev,
+ 		vgt_reg_t reg)
+ {
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 7b11a51..0db7605 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -1616,7 +1616,7 @@ void vgt_emulate_dpy_events(struct pgt_device *pdev);
+ void *vgt_install_irq(struct pci_dev *pdev, struct drm_device *dev);
+ int vgt_irq_init(struct pgt_device *pgt);
+ void vgt_irq_exit(struct pgt_device *pgt);
+-
++void vgt_reset_virtual_interrupt_registers(struct vgt_device *vgt);
+ void vgt_inject_flip_done(struct vgt_device *vgt, enum pipe pipe);
+ 
+ bool vgt_rrmr_mmio_write(struct vgt_device *vgt, unsigned int offset,
+-- 
+1.7.10.4
+

@@ -1,0 +1,87 @@
+From 66c68528438b4090005e5cbfa8664f81ff0c38a6 Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Fri, 8 Jan 2016 00:15:19 +0800
+Subject: [PATCH 332/403] disallowed invalid command submit to HW
+
+to avoid invalid command submit to HW after error detected, as VM
+killing is not synchronous it cannot take effect immediately;
+also disable further mmio access timely by set force_remove, as
+further valid cmd submit may have dependence on the nooped command
+would make the HW hang.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |    4 +++-
+ drivers/gpu/drm/i915/vgt/execlists.c  |   26 +++++++++++++++-----------
+ 2 files changed, 18 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index a5a468e..1886257 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -3140,8 +3140,10 @@ int vgt_scan_vring(struct vgt_device *vgt, int ring_id)
+ 	stat->vring_scan_cycles += t1 - t0;
+ 
+ err:
+-	if (ret && vgt_cmd_audit)
++	if (ret && vgt_cmd_audit) {
++		vgt->force_removal = 1;
+ 		vgt_kill_vm(vgt);
++	}
+ 
+ 	return ret;
+ }
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 767d451..7546c17 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -1890,7 +1890,7 @@ static void vgt_release_shadow_cmdbuf(struct vgt_device *vgt,
+ }
+ 
+ /* perform command buffer scan and shadowing */
+-static void vgt_manipulate_cmd_buf(struct vgt_device *vgt,
++static int vgt_manipulate_cmd_buf(struct vgt_device *vgt,
+ 			struct execlist_context *el_ctx)
+ {
+ 	struct reg_state_ctx_header *guest_state;
+@@ -1967,14 +1967,16 @@ static void vgt_manipulate_cmd_buf(struct vgt_device *vgt,
+ 		vgt_create_shadow_indirect_ctx(vgt, el_ctx);
+ 	}
+ 
+-	vgt_scan_vring(vgt, ring_id);
+-
+-	/* the function is used to update ring/buffer only. No real submission inside */
+-	vgt_submit_commands(vgt, ring_id);
+-
+-	el_ctx->request_id = vgt->rb[ring_id].request_id;
+-	el_ctx->last_scan_head = vring->tail;
+-	vgt->rb[ring_id].active_ppgtt_mm = NULL;
++	if (!vgt_scan_vring(vgt, ring_id)) {
++		/* the function is used to update ring/buffer only. No real submission inside */
++		vgt_submit_commands(vgt, ring_id);
++		el_ctx->request_id = vgt->rb[ring_id].request_id;
++		el_ctx->last_scan_head = vring->tail;
++		vgt->rb[ring_id].active_ppgtt_mm = NULL;
++		return 0;
++	} else {
++		return -1;
++	}
+ }
+ 
+ void vgt_kick_off_execlists(struct vgt_device *vgt)
+@@ -2081,8 +2083,10 @@ void vgt_submit_execlist(struct vgt_device *vgt, enum vgt_ring_id ring_id)
+ 		memcpy(&context_descs[i], &ctx->guest_context,
+ 				sizeof(struct ctx_desc_format));
+ 
+-		if (vgt->vm_id)
+-			vgt_manipulate_cmd_buf(vgt, ctx);
++		if (vgt->vm_id) {
++			if (vgt_manipulate_cmd_buf(vgt, ctx))
++				return;
++		}
+ 
+ 		vgt_update_shadow_ctx_from_guest(vgt, ctx);
+ 
+-- 
+1.7.10.4
+

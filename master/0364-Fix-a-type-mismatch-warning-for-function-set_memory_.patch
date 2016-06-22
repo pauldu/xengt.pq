@@ -1,0 +1,32 @@
+From d30e245a5445247cae8f9eaf472e78cf91b42248 Mon Sep 17 00:00:00 2001
+From: Yi Sun <yi.sun@intel.com>
+Date: Mon, 22 Feb 2016 12:29:41 +0800
+Subject: [PATCH 364/403] Fix a type mismatch warning for function
+ set_memory_wc
+
+v2. Change (long unsigned int) to (unsigned long).
+
+Convert (void *) to (long unsigned int) to match the argument type of
+function set_memory_wc.
+
+Signed-off-by: Yi Sun <yi.sun@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/utility.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/utility.c b/drivers/gpu/drm/i915/vgt/utility.c
+index 61e22da..5d24eeb 100644
+--- a/drivers/gpu/drm/i915/vgt/utility.c
++++ b/drivers/gpu/drm/i915/vgt/utility.c
+@@ -908,7 +908,7 @@ int setup_gtt(struct pgt_device *pdev)
+ 		}
+ 
+ 		get_page(page);
+-		set_memory_wc(page_address(page), 1);
++		set_memory_wc((unsigned long)page_address(page), 1);
+ 
+ 		(*pages)[i] = page;
+ 
+-- 
+1.7.10.4
+

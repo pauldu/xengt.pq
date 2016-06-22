@@ -1,0 +1,37 @@
+From 983eb8ee66d6530c4b04d7c8c388f20a256b6200 Mon Sep 17 00:00:00 2001
+From: "Niu,Bing" <bing.niu@intel.com>
+Date: Thu, 2 Jul 2015 16:30:37 -0400
+Subject: [PATCH 114/403] vgt:set hotplug register properly
+
+DE_PORT_ISR register in BDW and DEIST in HSW are used
+to detect monitor plug.set vreg properly when update
+monitor status.so that guests can detect monitor
+successfully after reload module.
+
+Signed-off-by: Niu,Bing <bing.niu@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/display.c |    7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/display.c b/drivers/gpu/drm/i915/vgt/display.c
+index 0599c72..2801970 100644
+--- a/drivers/gpu/drm/i915/vgt/display.c
++++ b/drivers/gpu/drm/i915/vgt/display.c
+@@ -364,8 +364,13 @@ void vgt_update_monitor_status(struct vgt_device *vgt)
+ 		vgt_dbg(VGT_DBG_DPY, "enable D port monitor\n");
+ 		__vreg(vgt, _REG_SDEISR) |= _REGBIT_DP_D_HOTPLUG;
+ 	}
+-	if (dpy_has_monitor_on_port(vgt, PORT_A))
++	if (dpy_has_monitor_on_port(vgt, PORT_A)) {
+ 		__vreg(vgt, _REG_DDI_BUF_CTL_A) |= _DDI_BUFCTL_DETECT_MASK;
++		if (IS_PREBDW(vgt->pdev))
++			__vreg(vgt, _REG_DEISR) |= _REGBIT_DP_A_HOTPLUG;
++		else
++			__vreg(vgt, _REG_DE_PORT_ISR) |= _REGBIT_PORT_DP_A_HOTPLUG; 
++	}
+ }
+ 
+ enum vgt_pipe get_edp_input(uint32_t wr_data)
+-- 
+1.7.10.4
+

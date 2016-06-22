@@ -1,0 +1,32 @@
+From d084b089e7edc5eda5ee4f4461bcf964dc543b84 Mon Sep 17 00:00:00 2001
+From: Weinan Li <weinan.z.li@intel.com>
+Date: Thu, 3 Dec 2015 12:48:00 +0800
+Subject: [PATCH 240/403] Enable the initinalize of GPU rps & powersave in
+ Host.
+
+Host should have the powersave control,
+and init process of powersave and rps set, just need to disable it in VM.
+Otherwise the GPU will always run in low frequency with vgt enabled.
+Bug 925.
+
+Signed-off-by: Weinan Li <weinan.z.li@intel.com>
+---
+ drivers/gpu/drm/i915/intel_pm.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/intel_pm.c b/drivers/gpu/drm/i915/intel_pm.c
+index 5ed5a64..439ba29 100644
+--- a/drivers/gpu/drm/i915/intel_pm.c
++++ b/drivers/gpu/drm/i915/intel_pm.c
+@@ -6116,7 +6116,7 @@ void intel_enable_gt_powersave(struct drm_device *dev)
+ 	struct drm_i915_private *dev_priv = dev->dev_private;
+ 
+ 	/* Powersaving is controlled by the host when inside a VM */
+-	if (intel_vgpu_active(dev))
++	if (intel_vgpu_active(dev) && !i915_host_mediate)
+ 		return;
+ 
+ 	if (IS_IRONLAKE_M(dev)) {
+-- 
+1.7.10.4
+

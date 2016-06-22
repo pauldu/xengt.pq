@@ -1,0 +1,136 @@
+From bfbf7b7a9bdd2c33f60553455d2947df1fad28c2 Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Fri, 6 Nov 2015 10:09:42 +0800
+Subject: [PATCH 274/403] Cleanup context submission function
+
+a) Delete some not-that-useful debug functions to make code shorter
+b) Simplify the check of queued contexts, and simply return error if the first
+   context is NULL. The previous code will try to move the second context (if
+   there is) to be the first in such case, but that is actually not necessary.
+
+v2:
+ - Split the fix of empty submission from this commit into a separate patch (from Kevin)
+
+ Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |   51 +++++++++++-----------------------
+ 1 file changed, 16 insertions(+), 35 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index a7ed194..182276a 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -376,6 +376,11 @@ static inline bool vgt_validate_elsp_descs(struct vgt_device *vgt,
+ 				"valid lrca(0x%x)!", ctx1->lrca);
+ 			return false;
+ 		}
++		if ((ctx0->elm_low == ctx1->elm_low) &&
++		    (ctx0->elm_high == ctx1->elm_high)) {
++			/* warning only */
++			vgt_warn("duplicated context submission!\n");
++		}
+ 	}
+ 
+ 	return true;
+@@ -728,7 +733,6 @@ static void vgt_free_el_context(struct execlist_context *el_ctx)
+ 
+ static int vgt_create_shadow_pages(struct vgt_device *vgt, struct execlist_context *el_ctx)
+ {
+-	struct vgt_gtt_pte_ops *ops = vgt->pdev->gtt.pte_ops;
+ 	uint32_t ring_id = el_ctx->ring_id;
+ 	uint32_t ctx_pages = EXECLIST_CTX_PAGES(ring_id);
+ 	unsigned long hpa;
+@@ -775,10 +779,8 @@ static int vgt_create_shadow_pages(struct vgt_device *vgt, struct execlist_conte
+ static void vgt_destroy_shadow_pages(struct vgt_device *vgt, struct execlist_context *el_ctx)
+ {
+ 	unsigned long hpa;
+-	struct vgt_gtt_pte_ops *ops = vgt->pdev->gtt.pte_ops;
+ 	uint32_t ring_id = el_ctx->ring_id;
+ 	uint32_t ctx_pages = EXECLIST_CTX_PAGES(ring_id);
+-	int i;
+ 
+ 	if (el_ctx->shadow_lrca == 0)
+ 		return;
+@@ -1715,7 +1717,7 @@ bool vgt_idle_execlist(struct pgt_device *pdev, enum vgt_ring_id ring_id)
+ 
+ void vgt_submit_execlist(struct vgt_device *vgt, enum vgt_ring_id ring_id)
+ {
+-	int i, j = 0;
++	int i;
+ 	struct ctx_desc_format context_descs[2];
+ 	uint32_t elsp_reg;
+ 	int el_slot_idx;
+@@ -1738,21 +1740,22 @@ void vgt_submit_execlist(struct vgt_device *vgt, enum vgt_ring_id ring_id)
+ 		return;
+ 	}
+ 
+-	ASSERT (execlist->el_ctxs[0] != NULL);
+-
+-	memset(context_descs, 0, sizeof(context_descs));
+-
+ 	for (i = 0; i < 2; ++ i) {
+ 		struct execlist_context *ctx = execlist->el_ctxs[i];
+ 
+-		if (ctx == NULL)
++		if (ctx == NULL) {
++			if (i == 0) {
++				vgt_err ("Wrong workload with ctx_0 NULL!\n");
++				return;
++			}
++			memset(&context_descs[i], 0,
++			       sizeof(struct ctx_desc_format));
+ 			continue;
++		}
+ 
+-		memcpy(&context_descs[j++], &ctx->guest_context,
++		memcpy(&context_descs[i], &ctx->guest_context,
+ 				sizeof(struct ctx_desc_format));
+ 
+-		ASSERT_VM(ring_id == ctx->ring_id, vgt);
+-
+ 		if (vgt->vm_id)
+ 			vgt_manipulate_cmd_buf(vgt, ctx);
+ 
+@@ -1768,38 +1771,16 @@ void vgt_submit_execlist(struct vgt_device *vgt, enum vgt_ring_id ring_id)
+ 			vgt_patch_guest_context(ctx);
+ 		else
+ 			context_descs[i].lrca = ctx->shadow_lrca;
+-
+-#ifdef EL_SLOW_DEBUG
+-		dump_el_context_information(vgt, ctx);
+-#endif
+ 	}
+ 
+-	if (context_descs[0].elm_low == context_descs[1].elm_low &&
+-		context_descs[0].elm_high == context_descs[1].elm_high)
+-		memset(&context_descs[1], 0, sizeof(context_descs[1]));
+-
+ 	elsp_reg = el_ring_mmio(ring_id, _EL_OFFSET_SUBMITPORT);
+ 	/* mark it submitted even if it failed the validation */
+ 	execlist->status = EL_SUBMITTED;
+ 
+-	if (vgt_validate_elsp_descs(vgt, &context_descs[0], &context_descs[1]) && j) {
+-#ifdef EL_SLOW_DEBUG
+-		struct execlist_status_format status;
+-		uint32_t status_reg = el_ring_mmio(ring_id, _EL_OFFSET_STATUS);
+-		READ_STATUS_MMIO(vgt->pdev, status_reg, status);
+-		vgt_dbg(VGT_DBG_EXECLIST, "The EL status before ELSP submission!\n");
+-		dump_execlist_status((struct execlist_status_format *)&status,
+-					ring_id);
+-#endif
++	if (vgt_validate_elsp_descs(vgt, &context_descs[0], &context_descs[1])) {
+ 		execlist->el_ctxs[0]->ctx_running = true;
+ 		vgt_hw_ELSP_write(vgt, elsp_reg, &context_descs[0],
+ 					&context_descs[1]);
+-#ifdef EL_SLOW_DEBUG
+-		READ_STATUS_MMIO(vgt->pdev, status_reg, status);
+-		vgt_dbg(VGT_DBG_EXECLIST, "The EL status after ELSP submission:\n");
+-		dump_execlist_status((struct execlist_status_format *)&status,
+-					ring_id);
+-#endif
+ 	}
+ }
+ 
+-- 
+1.7.10.4
+

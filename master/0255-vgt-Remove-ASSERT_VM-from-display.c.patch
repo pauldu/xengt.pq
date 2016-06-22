@@ -1,0 +1,51 @@
+From 4e8b4c6cde18c1ee4c6cc11053d2089e5b5b57cf Mon Sep 17 00:00:00 2001
+From: Yi Sun <yi.sun@intel.com>
+Date: Mon, 12 Oct 2015 22:06:44 +0800
+Subject: [PATCH 255/403] vgt: Remove ASSERT_VM from display.c
+
+We should handle invalid plane's width/height, but not kill VM.
+
+Signed-off-by: Yi Sun <yi.sun@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/display.c |   17 +++++++++++++----
+ 1 file changed, 13 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/display.c b/drivers/gpu/drm/i915/vgt/display.c
+index 1faf185..75ac93f 100644
+--- a/drivers/gpu/drm/i915/vgt/display.c
++++ b/drivers/gpu/drm/i915/vgt/display.c
+@@ -694,8 +694,13 @@ bool set_panel_fitting(struct vgt_device *vgt, enum pipe pipe)
+ 	}
+ 	src_width = (__vreg(vgt, VGT_PIPESRC(pipe)) & 0xffff0000) >> 16;
+ 	src_height = __vreg(vgt, VGT_PIPESRC(pipe)) & 0xffff;
+-	ASSERT_VM(src_width != 0, vgt);
+-	ASSERT_VM(src_height != 0, vgt);
++	if (src_width == 0 || src_height == 0) {
++		vgt_err("vGT(%d) set_panel_fitting:"
++			       "Error source size width(%d) or height(%d)\n",
++				vgt->vgt_id, src_width, src_height);
++		return false;
++	}
++
+ 	src_width += 1;
+ 	src_height += 1;
+ 
+@@ -712,9 +717,13 @@ bool set_panel_fitting(struct vgt_device *vgt, enum pipe pipe)
+ 
+ 	target_width = VGT_MMIO_READ(vgt->pdev, h_total_reg) & 0xffff;
+ 	target_height = VGT_MMIO_READ(vgt->pdev, v_total_reg) & 0xffff;
++	if (target_width == 0 || target_width == 0) {
++		vgt_err("vGT(%d) set_panel_fitting:"
++				"Error target size width(%d) or height(%d)\n",
++				vgt->vgt_id, target_width, target_height);
++		return false;
++	}
+ 
+-	ASSERT_VM(target_width != 0, vgt);
+-	ASSERT_VM(target_height != 0, vgt);
+ 	target_width += 1;
+ 	target_height += 1;
+ 
+-- 
+1.7.10.4
+

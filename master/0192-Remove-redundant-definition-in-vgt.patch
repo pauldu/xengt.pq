@@ -1,0 +1,810 @@
+From 4afd07e8222d19945cc5e9b81e50ffb77fa7c8de Mon Sep 17 00:00:00 2001
+From: Yulei Zhang <yulei.zhang@intel.com>
+Date: Mon, 19 Oct 2015 14:11:03 +0800
+Subject: [PATCH 192/403] Remove redundant definition in vgt
+
+Replace the vgt_pipe/vgt_port/transcoder with the original
+definition pipe/port/transcoder in i915_drv.h.
+
+V2:
+Revert the change made for i915_trace.h.
+Remove the duplicated definition wait_for_atomic in vgt.h.
+
+Signed-off-by: Yulei Zhang <yulei.zhang@intel.com>
+---
+ drivers/gpu/drm/i915/i915_drv.h       |    4 ---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |   14 +++++------
+ drivers/gpu/drm/i915/vgt/debugfs.c    |    8 +++---
+ drivers/gpu/drm/i915/vgt/display.c    |   42 ++++++++++++++++----------------
+ drivers/gpu/drm/i915/vgt/display.h    |   43 +++++----------------------------
+ drivers/gpu/drm/i915/vgt/edid.c       |    8 +++---
+ drivers/gpu/drm/i915/vgt/edid.h       |    6 ++---
+ drivers/gpu/drm/i915/vgt/execlists.c  |    2 +-
+ drivers/gpu/drm/i915/vgt/handlers.c   |   36 +++++++++++++--------------
+ drivers/gpu/drm/i915/vgt/interrupt.c  |   12 ++++-----
+ drivers/gpu/drm/i915/vgt/sysfs.c      |    8 +++---
+ drivers/gpu/drm/i915/vgt/trace.h      |    4 +--
+ drivers/gpu/drm/i915/vgt/vbios.c      |    4 +--
+ drivers/gpu/drm/i915/vgt/vbios.h      |    2 +-
+ drivers/gpu/drm/i915/vgt/vgt.h        |   31 +++++++-----------------
+ 15 files changed, 88 insertions(+), 136 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/i915_drv.h b/drivers/gpu/drm/i915/i915_drv.h
+index 34426de..2a40dc8 100644
+--- a/drivers/gpu/drm/i915/i915_drv.h
++++ b/drivers/gpu/drm/i915/i915_drv.h
+@@ -58,10 +58,6 @@
+ #define DRM_I915_VGT_SUPPORT	1
+ #endif
+ 
+-#ifdef DRM_I915_VGT_SUPPORT
+-#include "fb_decoder.h"
+-#endif
+-
+ /* General customization:
+  */
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index 3ae85de..c4e6b7e 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -970,7 +970,7 @@ static int vgt_cmd_handler_mi_batch_buffer_end(struct parser_exec_state *s)
+ #define PLANE_INFO_SHIFT	8
+ #define PLANE_INFO_MASK		(0x7 << PLANE_INFO_SHIFT)
+ 
+-static bool display_flip_decode_plane_info(uint32_t  plane_code, enum vgt_pipe *pipe, enum vgt_plane_type *plane )
++static bool display_flip_decode_plane_info(uint32_t  plane_code, enum pipe *pipe, enum vgt_plane_type *plane )
+ {
+ 	switch (plane_code) {
+ 		case DISPLAY_FLIP_PLANE_A:
+@@ -1005,7 +1005,7 @@ static bool display_flip_decode_plane_info(uint32_t  plane_code, enum vgt_pipe *
+ 
+ }
+ 
+-static bool display_flip_encode_plane_info(enum vgt_pipe pipe, enum vgt_plane_type plane, uint32_t * plane_code)
++static bool display_flip_encode_plane_info(enum pipe pipe, enum vgt_plane_type plane, uint32_t * plane_code)
+ {
+ 
+ 	if (pipe == PIPE_A && plane == PRIMARY_PLANE)
+@@ -1050,7 +1050,7 @@ static bool vgt_flip_parameter_check(struct parser_exec_state *s,
+ 				uint32_t surf_val)
+ {
+ 	struct pgt_device *pdev = s->vgt->pdev;
+-	enum vgt_pipe pipe = I915_MAX_PIPES;
++	enum pipe pipe = I915_MAX_PIPES;
+ 	enum vgt_plane_type plane = MAX_PLANE;
+ 	uint32_t surf_reg, ctrl_reg;
+ 	uint32_t stride_reg, stride_mask, phys_stride;
+@@ -1104,8 +1104,8 @@ static int vgt_handle_mi_display_flip(struct parser_exec_state *s, bool resubmit
+ 	uint32_t stride_reg, stride_val, stride_mask;
+ 	uint32_t tile_para;
+ 	uint32_t opcode, plane_code, real_plane_code;
+-	enum vgt_pipe pipe;
+-	enum vgt_pipe real_pipe;
++	enum pipe pipe;
++	enum pipe real_pipe;
+ 	enum vgt_plane_type plane;
+ 	int i, length, rc = 0;
+ 	struct fb_notify_msg msg;
+@@ -1225,8 +1225,8 @@ static bool is_wait_for_flip_pending(uint32_t cmd)
+ static int vgt_handle_mi_wait_for_event(struct parser_exec_state *s)
+ {
+ 	int rc = 0;
+-	enum vgt_pipe virtual_pipe = I915_MAX_PIPES;
+-	enum vgt_pipe real_pipe = I915_MAX_PIPES;
++	enum pipe virtual_pipe = I915_MAX_PIPES;
++	enum pipe real_pipe = I915_MAX_PIPES;
+ 	uint32_t cmd = cmd_val(s, 0);
+ 	uint32_t new_cmd = cmd;
+ 	enum vgt_plane_type plane_type = MAX_PLANE;
+diff --git a/drivers/gpu/drm/i915/vgt/debugfs.c b/drivers/gpu/drm/i915/vgt/debugfs.c
+index cafa63d..c680405 100644
+--- a/drivers/gpu/drm/i915/vgt/debugfs.c
++++ b/drivers/gpu/drm/i915/vgt/debugfs.c
+@@ -475,8 +475,8 @@ static inline vgt_reg_t vgt_get_mmio_value(struct pgt_device *pdev,
+ static void vgt_dump_dpy_mmio(struct seq_file *m, struct pgt_device *pdev,
+ 		struct vgt_device *vgt)
+ {
+-	enum vgt_pipe pipe;
+-	enum vgt_port port;
++	enum pipe pipe;
++	enum port port;
+ 	const char *str;
+ 	unsigned int reg;
+ 	vgt_reg_t val;
+@@ -677,7 +677,7 @@ static int vgt_show_phys_dpyinfo(struct seq_file *m, void *data)
+ static int vgt_show_virt_dpyinfo(struct seq_file *m, void *data)
+ {
+ 	struct vgt_device *vgt =  (struct vgt_device *)m->private;
+-	enum vgt_pipe pipe;
++	enum pipe pipe;
+ 
+ 	seq_printf(m, "----------DPY info (VM-%d)----------\n", vgt->vm_id);
+ 	vgt_dump_dpy_mmio(m, NULL, vgt);
+@@ -685,7 +685,7 @@ static int vgt_show_virt_dpyinfo(struct seq_file *m, void *data)
+ 
+ 	seq_printf(m, "---- physical/virtual mapping:\n");
+ 	for (pipe = PIPE_A; pipe < I915_MAX_PIPES; ++ pipe) {
+-		enum vgt_pipe physical_pipe = vgt->pipe_mapping[pipe];
++		enum pipe physical_pipe = vgt->pipe_mapping[pipe];
+ 		if (physical_pipe == I915_MAX_PIPES) {
+ 			seq_printf(m, "\t virtual pipe %d no mapping available yet\n", pipe);
+ 		} else {
+diff --git a/drivers/gpu/drm/i915/vgt/display.c b/drivers/gpu/drm/i915/vgt/display.c
+index c5d03d6..4fd8817 100644
+--- a/drivers/gpu/drm/i915/vgt/display.c
++++ b/drivers/gpu/drm/i915/vgt/display.c
+@@ -40,7 +40,7 @@ static void vgt_restore_sreg(struct vgt_device *vgt,unsigned int reg)
+ 
+ }
+ 
+-static int vgt_restore_state(struct vgt_device *vgt, enum vgt_pipe pipe)
++static int vgt_restore_state(struct vgt_device *vgt, enum pipe pipe)
+ {
+ #if 0
+ 	unsigned int pipe_ctrl = VGT_MMIO_READ(vgt->pdev, VGT_PIPECONF(pipe));
+@@ -65,7 +65,7 @@ static int vgt_restore_state(struct vgt_device *vgt, enum vgt_pipe pipe)
+ 	return 0;
+ }
+ 
+-static int wait_for_vblank_atomic(struct pgt_device *pdev, enum vgt_pipe pipe)
++static int wait_for_vblank_atomic(struct pgt_device *pdev, enum pipe pipe)
+ {
+ 	int ret;
+ 	unsigned int frmcnt_mmio = VGT_PIPE_FRMCOUNT(pipe);
+@@ -82,7 +82,7 @@ static int wait_for_vblank_atomic(struct pgt_device *pdev, enum vgt_pipe pipe)
+ static int wait_for_vblanks_atomic(struct pgt_device *pdev)
+ {
+ 	int ret = 0;
+-	enum vgt_pipe pipe;
++	enum pipe pipe;
+ 
+ 	for (pipe = PIPE_A; (pipe < I915_MAX_PIPES) && !ret; ++ pipe) {
+ 		vgt_reg_t pipeconf = VGT_MMIO_READ(pdev, VGT_PIPECONF(pipe));
+@@ -119,7 +119,7 @@ int prepare_for_display_switch(struct pgt_device *pdev)
+ void do_vgt_fast_display_switch(struct pgt_device *pdev)
+ {
+ 	struct vgt_device *to_vgt = pdev->next_foreground_vm;
+-	enum vgt_pipe pipe;
++	enum pipe pipe;
+ 
+ 	vgt_dbg(VGT_DBG_DPY, "vGT: doing display switch: from %p to %p\n",
+ 			current_foreground_vm(pdev), to_vgt);
+@@ -373,9 +373,9 @@ void vgt_update_monitor_status(struct vgt_device *vgt)
+ 	}
+ }
+ 
+-enum vgt_pipe get_edp_input(uint32_t wr_data)
++enum pipe get_edp_input(uint32_t wr_data)
+ {
+-	enum vgt_pipe pipe = I915_MAX_PIPES;
++	enum pipe pipe = I915_MAX_PIPES;
+ 
+ 	if ((TRANS_DDI_FUNC_ENABLE & wr_data) == 0) {
+ 		return I915_MAX_PIPES;
+@@ -398,9 +398,9 @@ enum vgt_pipe get_edp_input(uint32_t wr_data)
+ 	return pipe;
+ }
+ 
+-enum vgt_pipe get_pipe(unsigned int reg, uint32_t wr_data)
++enum pipe get_pipe(unsigned int reg, uint32_t wr_data)
+ {
+-	enum vgt_pipe pipe = I915_MAX_PIPES;
++	enum pipe pipe = I915_MAX_PIPES;
+ 
+ 	if (reg == TRANS_DDI_FUNC_CTL_A)
+ 		pipe = PIPE_A;
+@@ -437,8 +437,8 @@ bool rebuild_pipe_mapping(struct vgt_device *vgt, unsigned int reg, uint32_t new
+ 	vgt_reg_t hw_value;
+ 	int i = 0;
+ 
+-	enum vgt_pipe virtual_pipe = I915_MAX_PIPES;
+-	enum vgt_pipe physical_pipe = I915_MAX_PIPES;
++	enum pipe virtual_pipe = I915_MAX_PIPES;
++	enum pipe physical_pipe = I915_MAX_PIPES;
+ 
+ 	if (vgt->vm_id == 0) {
+ 		return true;
+@@ -471,7 +471,7 @@ bool rebuild_pipe_mapping(struct vgt_device *vgt, unsigned int reg, uint32_t new
+ 		if (TRANS_DDI_FUNC_ENABLE & hw_value)
+ 			physical_pipe = get_edp_input(hw_value);
+ 	} else {
+-		enum vgt_port vport, vport_override;
++		enum port vport, vport_override;
+ 		vport = (new_data & TRANS_DDI_PORT_MASK) >> TRANS_DDI_PORT_SHIFT;
+ 		vport_override = vgt->ports[vport].port_override;
+ 		if (vport_override == I915_MAX_PORTS) {
+@@ -485,7 +485,7 @@ bool rebuild_pipe_mapping(struct vgt_device *vgt, unsigned int reg, uint32_t new
+ 								
+ 		} else {
+ 			for (i = 0; i <= TRANSCODER_C; i++) {
+-				enum vgt_port pport;
++				enum port pport;
+ 				hw_value = VGT_MMIO_READ(vgt->pdev, _VGT_TRANS_DDI_FUNC_CTL(i));
+ 				pport = (hw_value & TRANS_DDI_PORT_MASK) >>
+ 						TRANS_DDI_PORT_SHIFT;
+@@ -522,9 +522,9 @@ bool update_pipe_mapping(struct vgt_device *vgt, unsigned int physical_reg, uint
+ {
+ 	int i = 0;
+ 	uint32_t virtual_wr_data;
+-	enum vgt_pipe virtual_pipe = I915_MAX_PIPES;
+-	enum vgt_pipe physical_pipe = I915_MAX_PIPES;
+-	enum vgt_port pport;
++	enum pipe virtual_pipe = I915_MAX_PIPES;
++	enum pipe physical_pipe = I915_MAX_PIPES;
++	enum port pport;
+ 
+ 	physical_pipe = get_pipe(physical_reg, physical_wr_data);
+ 
+@@ -551,7 +551,7 @@ bool update_pipe_mapping(struct vgt_device *vgt, unsigned int physical_reg, uint
+ 	}
+ 
+ 	for (i = 0; i <= TRANSCODER_C; i++) {
+-		enum vgt_port vport, vport_override;
++		enum port vport, vport_override;
+ 		virtual_wr_data = __vreg(vgt, _VGT_TRANS_DDI_FUNC_CTL(i));
+ 		vport = (virtual_wr_data & TRANS_DDI_PORT_MASK) >>
+ 				TRANS_DDI_PORT_SHIFT;
+@@ -590,12 +590,12 @@ TODO: 1, program watermark in vgt. 2, make sure dom0 set the max timing for
+ each monitor in i915 driver
+ */
+ 
+-bool set_panel_fitting(struct vgt_device *vgt, enum vgt_pipe pipe)
++bool set_panel_fitting(struct vgt_device *vgt, enum pipe pipe)
+ {
+ 	unsigned int src_width, src_height;
+ 	unsigned int target_width, target_height;
+ 	unsigned int pf_ctl;
+-	enum vgt_pipe real_pipe;
++	enum pipe real_pipe;
+ 	unsigned int h_total_reg;
+ 	unsigned int v_total_reg;
+ 	uint32_t edp_trans_code;
+@@ -696,7 +696,7 @@ bool set_panel_fitting(struct vgt_device *vgt, enum vgt_pipe pipe)
+ bool vgt_manage_emul_dpy_events(struct pgt_device *pdev)
+ {
+ 	int i;
+-	enum vgt_pipe pipe;
++	enum pipe pipe;
+ 	struct vgt_irq_host_state *hstate = pdev->irq_hstate;
+ 	bool emul_enable = false;
+ 
+@@ -904,8 +904,8 @@ void vgt_detect_display(struct vgt_device *vgt, int index)
+  */
+ void vgt_dpy_init_modes(vgt_reg_t *mmio_array)
+ {
+-	enum vgt_port port;
+-	enum vgt_pipe pipe;
++	enum port port;
++	enum pipe pipe;
+ 	unsigned int offset;
+ 
+ 	mmio_array[REG_INDEX(DDI_BUF_CTL_A)] &=
+diff --git a/drivers/gpu/drm/i915/vgt/display.h b/drivers/gpu/drm/i915/vgt/display.h
+index a363d6f..d95bbf6 100644
+--- a/drivers/gpu/drm/i915/vgt/display.h
++++ b/drivers/gpu/drm/i915/vgt/display.h
+@@ -123,37 +123,6 @@ enum vgt_uevent_type;
+ 		    (vgt->ports[port].type == VGT_DP_C) ||			\
+ 		    (vgt->ports[port].type == VGT_DP_D)))
+ 
+-enum transcoder {
+-	TRANSCODER_A = 0,
+-	TRANSCODER_B,
+-	TRANSCODER_C,
+-	TRANSCODER_EDP = 0xF,
+-};
+-
+-enum dpcd_index {
+-	DPCD_DPA = 0,
+-	DPCD_DPB,
+-	DPCD_DPC,
+-	DPCD_DPD,
+-	DPCD_MAX
+-};
+-
+-enum vgt_pipe {
+-	PIPE_A = 0,
+-	PIPE_B,
+-	PIPE_C,
+-	I915_MAX_PIPES
+-};
+-
+-enum vgt_port {
+-	PORT_A = 0,
+-	PORT_B,
+-	PORT_C,
+-	PORT_D,
+-	PORT_E,
+-	I915_MAX_PORTS
+-};
+-
+ enum vgt_plane_type {
+ 	PRIMARY_PLANE = 0,
+ 	CURSOR_PLANE,
+@@ -255,7 +224,7 @@ struct sbi_registers {
+ struct port_cache {
+ 	bool valid;
+ 	struct vgt_edid_data_t	*edid;	/* per display EDID information */
+-	enum vgt_port		port_override;
++	enum port		port_override;
+ 	enum vgt_port_type	type;
+ };
+ 
+@@ -265,9 +234,9 @@ struct gt_port {
+ 	struct vgt_edid_data_t	*edid;	/* per display EDID information */
+ 	struct vgt_dpcd_data	*dpcd;	/* per display DPCD information */
+ 	enum vgt_port_type	type;
+-	enum vgt_port		port_override;
++	enum port		port_override;
+ 	struct port_cache	cache; /* the temporary updated information */
+-	enum vgt_port physcal_port;
++	enum port physcal_port;
+ };
+ 
+ struct vgt_port_output_struct {
+@@ -333,13 +302,13 @@ bool rebuild_pipe_mapping(struct vgt_device *vgt, unsigned int reg, uint32_t new
+ 
+ bool update_pipe_mapping(struct vgt_device *vgt, unsigned int physical_reg, uint32_t physical_wr_data);
+ 
+-bool set_panel_fitting(struct vgt_device *vgt, enum vgt_pipe pipe);
++bool set_panel_fitting(struct vgt_device *vgt, enum pipe pipe);
+ 
+ bool vgt_manage_emul_dpy_events(struct pgt_device *pdev);
+ 
+-void vgt_update_frmcount(struct vgt_device *vgt, enum vgt_pipe pipe);
++void vgt_update_frmcount(struct vgt_device *vgt, enum pipe pipe);
+ 
+-void vgt_calculate_frmcount_delta(struct vgt_device *vgt, enum vgt_pipe pipe);
++void vgt_calculate_frmcount_delta(struct vgt_device *vgt, enum pipe pipe);
+ 
+ void vgt_set_power_well(struct vgt_device *vgt, bool enable);
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/edid.c b/drivers/gpu/drm/i915/vgt/edid.c
+index d76bc3e..208ba06 100644
+--- a/drivers/gpu/drm/i915/vgt/edid.c
++++ b/drivers/gpu/drm/i915/vgt/edid.c
+@@ -133,9 +133,9 @@ static unsigned char edid_get_byte(struct vgt_device *vgt)
+  * GMBUS interface for I2C access
+  *
+  *************************************************************************/
+-static inline enum vgt_port vgt_get_port_from_gmbus0(vgt_reg_t gmbus0)
++static inline enum port vgt_get_port_from_gmbus0(vgt_reg_t gmbus0)
+ {
+-	enum vgt_port port = I915_MAX_PORTS;
++	enum port port = I915_MAX_PORTS;
+ 	int port_select = gmbus0 & _GMBUS_PIN_SEL_MASK;
+ 
+ 	if (port_select == 2)
+@@ -155,7 +155,7 @@ static bool vgt_gmbus0_mmio_write(struct vgt_device *vgt,
+ 			unsigned int offset, void *p_data, unsigned int bytes)
+ {
+ 	vgt_reg_t wvalue = *(vgt_reg_t *)p_data;
+-	enum vgt_port port = I915_MAX_PORTS;
++	enum port port = I915_MAX_PORTS;
+ 	int pin_select = wvalue & _GMBUS_PIN_SEL_MASK;
+ 
+ 	vgt_init_i2c_edid(vgt);
+@@ -481,7 +481,7 @@ static inline AUX_CH_REGISTERS vgt_get_aux_ch_reg(unsigned int offset)
+ 		_DP_AUX_CH_CTL_MESSAGE_SIZE_SHIFT)
+ 
+ void vgt_i2c_handle_aux_ch_write(struct vgt_device *vgt,
+-				enum vgt_port port_idx,
++				enum port port_idx,
+ 				unsigned int offset,
+ 				void *p_data)
+ {
+diff --git a/drivers/gpu/drm/i915/vgt/edid.h b/drivers/gpu/drm/i915/vgt/edid.h
+index c08dd19..b64bdc2 100644
+--- a/drivers/gpu/drm/i915/vgt/edid.h
++++ b/drivers/gpu/drm/i915/vgt/edid.h
+@@ -138,7 +138,7 @@ bool vgt_i2c_handle_gmbus_write(struct vgt_device *vgt, unsigned int offset,
+ 	void *p_data, unsigned int bytes);
+ 
+ void vgt_i2c_handle_aux_ch_write(struct vgt_device *vgt,
+-				enum vgt_port port_idx,
++				enum port port_idx,
+ 				unsigned int offset,
+ 				void *p_data);
+ 
+@@ -155,9 +155,9 @@ typedef enum {
+ 	AUX_CH_DATA5
+ }AUX_CH_REGISTERS;
+ 
+-static inline enum vgt_port vgt_get_dp_port_idx(unsigned int offset)
++static inline enum port vgt_get_dp_port_idx(unsigned int offset)
+ {
+-	enum vgt_port port_idx;
++	enum port port_idx;
+ 
+ 	if (offset >= DPA_AUX_CH_CTL
+ 		&& offset <= DPA_AUX_CH_CTL +
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index f70cd89..ae47d39 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -23,8 +23,8 @@
+  * SOFTWARE.
+  */
+ 
+-#include "trace.h"
+ #include "vgt.h"
++#include "trace.h"
+ 
+ //#define EL_SLOW_DEBUG
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 159dc25..ac64147 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -499,7 +499,7 @@ static bool lcpll_ctl_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ static bool pipe_frmcount_mmio_read(struct vgt_device *vgt, unsigned int offset,
+ 	void *p_data, unsigned int bytes)
+ {
+-	enum vgt_pipe pipe;
++	enum pipe pipe;
+ 
+ 	/* TODO
+ 	 *
+@@ -747,7 +747,7 @@ extern int vgt_decode_sprite_plane_format(struct vgt_device *vgt,
+ 	int pipe, struct vgt_sprite_plane_format *plane);
+ 
+ vgt_reg_t vgt_surf_base_range_check (struct vgt_device *vgt,
+-	enum vgt_pipe pipe, enum vgt_plane_type plane)
++	enum pipe pipe, enum vgt_plane_type plane)
+ {
+ 	uint32_t  reg = _REG_INVALID;
+ 	vgt_reg_t surf_base = 0;
+@@ -805,7 +805,7 @@ static bool pipe_conf_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ {
+ 	bool rc, orig_pipe_enabled, curr_pipe_enabled;
+ 	unsigned int reg;
+-	enum vgt_pipe pipe;
++	enum pipe pipe;
+ 	enum vgt_plane_type plane;
+ 	uint32_t wr_data;
+ 
+@@ -938,7 +938,7 @@ static bool fdi_auto_training_started(struct vgt_device *vgt)
+ 
+ /* FIXME: this function is highly platform-dependent (SNB + CPT) */
+ static bool check_fdi_rx_train_status(struct vgt_device *vgt,
+-		enum vgt_pipe pipe, unsigned int train_pattern)
++		enum pipe pipe, unsigned int train_pattern)
+ {
+ 	unsigned int fdi_rx_imr, fdi_tx_ctl, fdi_rx_ctl;
+ 	unsigned int fdi_rx_check_bits, fdi_tx_check_bits;
+@@ -978,7 +978,7 @@ static bool check_fdi_rx_train_status(struct vgt_device *vgt,
+ static bool update_fdi_rx_iir_status(struct vgt_device *vgt, unsigned int offset,
+ 	void *p_data, unsigned int bytes)
+ {
+-	enum vgt_pipe pipe;
++	enum pipe pipe;
+ 	unsigned int reg, fdi_rx_iir;
+ 	bool rc;
+ 
+@@ -1031,7 +1031,7 @@ static bool update_fdi_rx_iir_status(struct vgt_device *vgt, unsigned int offset
+ static bool dp_tp_ctl_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ 		void *p_data, unsigned int bytes)
+ {
+-	enum vgt_port port;
++	enum port port;
+ 	unsigned int dp_tp_status_reg, val;
+ 	vgt_reg_t ctl_val;
+ 	bool rc;
+@@ -1124,8 +1124,8 @@ static bool pch_adpa_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ 
+ bool vgt_map_plane_reg(struct vgt_device *vgt, unsigned int reg, unsigned int *p_real_reg)
+ {
+-	enum vgt_pipe virtual_pipe;
+-	enum vgt_pipe real_pipe ;
++	enum pipe virtual_pipe;
++	enum pipe real_pipe ;
+ 
+ 	switch (reg)
+ 	{
+@@ -1229,9 +1229,9 @@ static bool dpy_plane_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ static bool dpy_plane_ctl_write(struct vgt_device *vgt, unsigned int offset,
+ 	void *p_data, unsigned int bytes)
+ {
+-	enum vgt_pipe pipe = PIPE_A;
+-	enum vgt_pipe p_pipe = I915_MAX_PIPES;
+-	enum vgt_pipe v_pipe = I915_MAX_PIPES;
++	enum pipe pipe = PIPE_A;
++	enum pipe p_pipe = I915_MAX_PIPES;
++	enum pipe v_pipe = I915_MAX_PIPES;
+ 	vgt_reg_t new_plane_ctl;
+ 	bool enable_plane = false;
+ 	struct vgt_device *foreground_vgt;
+@@ -1271,7 +1271,7 @@ static bool pri_surf_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ 	void *p_data, unsigned int bytes)
+ {
+ 	struct fb_notify_msg msg;
+-	enum vgt_pipe pipe = VGT_DSPSURFPIPE(offset);
++	enum pipe pipe = VGT_DSPSURFPIPE(offset);
+ 	unsigned int real_offset;
+ 	vgt_reg_t ret_val;
+ 
+@@ -1299,7 +1299,7 @@ static bool pri_surf_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ static bool sprite_plane_ctl_write(struct vgt_device *vgt, unsigned int offset,
+ 	void *p_data, unsigned int bytes)
+ {
+-	enum vgt_pipe pipe = VGT_SPRCNTRPIPE(offset);
++	enum pipe pipe = VGT_SPRCNTRPIPE(offset);
+ 
+ 	dpy_plane_mmio_write(vgt, offset, p_data, bytes);
+ 	vgt_surf_base_range_check(vgt, pipe, SPRITE_PLANE);
+@@ -1311,7 +1311,7 @@ static bool spr_surf_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ 	void *p_data, unsigned int bytes)
+ {
+ 	struct fb_notify_msg msg;
+-	enum vgt_pipe pipe = VGT_SPRSURFPIPE(offset);
++	enum pipe pipe = VGT_SPRSURFPIPE(offset);
+ 	unsigned int real_offset;
+ 	vgt_reg_t ret_val;
+ 
+@@ -1335,7 +1335,7 @@ static bool spr_surf_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ static bool cur_plane_ctl_write(struct vgt_device *vgt, unsigned int offset,
+ 	void *p_data, unsigned int bytes)
+ {
+-	enum vgt_pipe pipe = VGT_CURCNTRPIPE(offset);
++	enum pipe pipe = VGT_CURCNTRPIPE(offset);
+ 
+ 	dpy_plane_mmio_write(vgt,offset, p_data, bytes);
+ 	vgt_surf_base_range_check(vgt, pipe, CURSOR_PLANE);
+@@ -1346,7 +1346,7 @@ static bool cur_plane_ctl_write(struct vgt_device *vgt, unsigned int offset,
+ static bool cur_surf_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ 	void *p_data, unsigned int bytes)
+ {
+-	enum vgt_pipe pipe = VGT_CURSURFPIPE(offset);
++	enum pipe pipe = VGT_CURSURFPIPE(offset);
+ 	unsigned int real_offset;
+ 	vgt_reg_t ret_val;
+ 
+@@ -1405,7 +1405,7 @@ static bool surflive_mmio_read(struct vgt_device *vgt, unsigned int offset,
+ {
+ 	vgt_reg_t surflive_val;
+ 	unsigned int surf_reg = 0;
+-	enum vgt_pipe pipe;
++	enum pipe pipe;
+ 
+ 	if (plane == PRIMARY_PLANE) {
+ 		pipe = VGT_DSPSURFLIVEPIPE(offset);
+@@ -1541,7 +1541,7 @@ static bool dp_aux_ch_ctl_mmio_write(struct vgt_device *vgt, unsigned int offset
+ 	vgt_reg_t value = *(vgt_reg_t *)p_data;
+ 	int msg, addr, ctrl, op, len;
+ 	struct vgt_dpcd_data *dpcd = NULL;
+-	enum vgt_port port_idx = vgt_get_dp_port_idx(offset);
++	enum port port_idx = vgt_get_dp_port_idx(offset);
+ 	struct gt_port *port = NULL;
+ 
+ 	ASSERT(bytes == 4);
+diff --git a/drivers/gpu/drm/i915/vgt/interrupt.c b/drivers/gpu/drm/i915/vgt/interrupt.c
+index db39792..77f9475 100644
+--- a/drivers/gpu/drm/i915/vgt/interrupt.c
++++ b/drivers/gpu/drm/i915/vgt/interrupt.c
+@@ -1147,8 +1147,8 @@ static void vgt_handle_ctx_switch_virt(struct vgt_irq_host_state *hstate,
+ static enum vgt_event_type translate_physical_event(struct vgt_device *vgt,
+ 	enum vgt_event_type event)
+ {
+-	enum vgt_pipe virtual_pipe = I915_MAX_PIPES;
+-	enum vgt_pipe physical_pipe = I915_MAX_PIPES;
++	enum pipe virtual_pipe = I915_MAX_PIPES;
++	enum pipe physical_pipe = I915_MAX_PIPES;
+ 	enum vgt_event_type virtual_event = event;
+ 	int i;
+ 
+@@ -1801,11 +1801,11 @@ void vgt_forward_events(struct pgt_device *pdev)
+ 	pdev->stat.virq_cycles += get_cycles() - pdev->stat.last_virq;
+ }
+ 
+-inline bool vgt_need_emulated_irq(struct vgt_device *vgt, enum vgt_pipe pipe)
++inline bool vgt_need_emulated_irq(struct vgt_device *vgt, enum pipe pipe)
+ {
+ 	bool rc = false;
+ 	if (vgt_has_pipe_enabled(vgt, pipe)) {
+-		enum vgt_pipe phys_pipe = vgt->pipe_mapping[pipe];
++		enum pipe phys_pipe = vgt->pipe_mapping[pipe];
+ 		if ((phys_pipe == I915_MAX_PIPES) ||
+ 			!pdev_has_pipe_enabled(vgt->pdev, phys_pipe))
+ 			rc = true;
+@@ -1814,7 +1814,7 @@ inline bool vgt_need_emulated_irq(struct vgt_device *vgt, enum vgt_pipe pipe)
+ }
+ 
+ static inline void vgt_emulate_vblank(struct vgt_device *vgt,
+-			enum vgt_pipe pipe)
++			enum pipe pipe)
+ {
+ 	enum vgt_event_type vblank;
+ 	switch (pipe) {
+@@ -2176,7 +2176,7 @@ void vgt_fini_irq(struct pci_dev *pdev)
+ 	hstate->installed = false;
+ }
+ 
+-void vgt_inject_flip_done(struct vgt_device *vgt, enum vgt_pipe pipe)
++void vgt_inject_flip_done(struct vgt_device *vgt, enum pipe pipe)
+ {
+ 	enum vgt_event_type event = EVENT_MAX;
+ 	if (current_display_owner(vgt->pdev) != vgt) {
+diff --git a/drivers/gpu/drm/i915/vgt/sysfs.c b/drivers/gpu/drm/i915/vgt/sysfs.c
+index 95a5aba..b044c6d 100644
+--- a/drivers/gpu/drm/i915/vgt/sysfs.c
++++ b/drivers/gpu/drm/i915/vgt/sysfs.c
+@@ -624,7 +624,7 @@ static ssize_t vgt_vport_connection_store(struct kobject *kobj, struct kobj_attr
+ 		vgt_flush_port_info(vgt, port);
+ 
+ 	if (hotplug_request) {
+-		enum vgt_port port_type = vgt_get_port(vgt, port);
++		enum port port_type = vgt_get_port(vgt, port);
+ 		switch (port_type) {
+ 		case PORT_A:
+ 			event = EVENT_MAX; break;
+@@ -700,7 +700,7 @@ static ssize_t vgt_vport_port_override_store(struct kobject *kobj, struct kobj_a
+                         const char *buf, size_t count)
+ {
+ 	struct gt_port *port = kobj_to_port(kobj);
+-	enum vgt_port override;
++	enum port override;
+ 
+ 	if (strncmp("PORT_A", buf, 6) == 0) {
+ 		override = PORT_A;
+@@ -731,7 +731,7 @@ static ssize_t vgt_vport_pipe_show(struct kobject *kobj, struct kobj_attribute *
+ {
+ 	struct gt_port *port_ptr = kobj_to_port(kobj);
+ 	struct vgt_device *vgt = kobj_to_vgt(kobj->parent);
+-	enum vgt_port port;
++	enum port port;
+ 	ssize_t buf_len;
+ 	int cpu;
+ 
+@@ -742,7 +742,7 @@ static ssize_t vgt_vport_pipe_show(struct kobject *kobj, struct kobj_attribute *
+ 	if (port == PORT_A)
+ 		buf_len = sprintf(buf, "PIPE_EDP\n");
+ 	else {
+-		enum vgt_pipe pipe = vgt_get_pipe_from_port(vgt, port);
++		enum pipe pipe = vgt_get_pipe_from_port(vgt, port);
+ 		buf_len = sprintf(buf, "%s\n", VGT_PIPE_NAME(pipe));
+ 	}
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/trace.h b/drivers/gpu/drm/i915/vgt/trace.h
+index f3b4cda..1320bd6 100644
+--- a/drivers/gpu/drm/i915/vgt/trace.h
++++ b/drivers/gpu/drm/i915/vgt/trace.h
+@@ -27,6 +27,8 @@
+ 
+ #undef TRACE_SYSTEM
+ #define TRACE_SYSTEM vgt
++#undef TRACE_INCLUDE_FILE
++#define TRACE_INCLUDE_FILE trace
+ 
+ TRACE_EVENT(vgt_mmio_rw,
+ 		TP_PROTO(bool write, u32 vm_id, u32 offset, void *pd,
+@@ -348,6 +350,4 @@ TRACE_EVENT(ctx_write_trap,
+ /* This part must be out of protection */
+ #undef TRACE_INCLUDE_PATH
+ #define TRACE_INCLUDE_PATH .
+-#undef TRACE_INCLUDE_FILE
+-#define TRACE_INCLUDE_FILE trace
+ #include <trace/define_trace.h>
+diff --git a/drivers/gpu/drm/i915/vgt/vbios.c b/drivers/gpu/drm/i915/vgt/vbios.c
+index b7083b1..f390b0f 100644
+--- a/drivers/gpu/drm/i915/vgt/vbios.c
++++ b/drivers/gpu/drm/i915/vgt/vbios.c
+@@ -189,7 +189,7 @@ child_dev_insert_fake_port(struct child_devices* dev, int max_num, int efp_port)
+ bool vgt_prepare_vbios_general_definition(struct vgt_device *vgt)
+ {
+ 	bool ret = true;
+-	struct vbt_header *header;
++	struct vgt_vbt_header *header;
+ 	struct bios_data_header *data_header;
+ 	struct vbios_general_definitions *gendef;
+ 	struct child_devices* child_dev;
+@@ -205,7 +205,7 @@ bool vgt_prepare_vbios_general_definition(struct vgt_device *vgt)
+ 		return false;
+ 	}
+ 
+-	header = (struct vbt_header*) (vgt->state.opregion_va + VBIOS_OFFSET);
++	header = (struct vgt_vbt_header*) (vgt->state.opregion_va + VBIOS_OFFSET);
+ 
+ 	data_header = (struct bios_data_header*)
+ 		(((u8*)header) + header->bios_data_offset);
+diff --git a/drivers/gpu/drm/i915/vgt/vbios.h b/drivers/gpu/drm/i915/vgt/vbios.h
+index 024233b..664c0b1 100644
+--- a/drivers/gpu/drm/i915/vgt/vbios.h
++++ b/drivers/gpu/drm/i915/vgt/vbios.h
+@@ -34,7 +34,7 @@
+ #define VBIOS_GENERAL_FEATURES  1
+ #define VBIOS_GENERAL_DEFINITIONS  2
+ 
+-struct vbt_header {
++struct vgt_vbt_header {
+ 	u8 product_string[20]; /* string of "$VBT HASWELL"*/
+ 	u16 version;
+ 	u16 header_size;
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 6c9c842..bd962e8 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -42,6 +42,7 @@ struct pgt_device;
+ struct vgt_device;
+ 
+ #include "../i915_vgpu.h"
++#include "../i915_drv.h"
+ #include "host.h"
+ #include "reg.h"
+ #include "devtable.h"
+@@ -234,7 +235,7 @@ struct vgt_tailq {
+ #define vgt_tailq_idx(idx) ((idx) & VGT_TAILQ_IDX_MASK)
+ 
+ struct vgt_device {
+-	enum vgt_pipe pipe_mapping[I915_MAX_PIPES];
++	enum pipe pipe_mapping[I915_MAX_PIPES];
+ 	int vgt_id;		/* 0 is always for dom0 */
+ 	int vm_id;		/* domain ID per hypervisor */
+ 	struct pgt_device *pdev;	/* the pgt device where the GT device registered. */
+@@ -770,9 +771,9 @@ static inline bool vgt_match_device_attr(struct pgt_device *pdev, reg_attr_t *at
+ 	return attr->device & vgt_gen_dev_type(pdev);
+ }
+ 
+-static inline enum vgt_port vgt_get_port(struct vgt_device *vgt, struct gt_port *port_ptr)
++static inline enum port vgt_get_port(struct vgt_device *vgt, struct gt_port *port_ptr)
+ {
+-	enum vgt_port port_type;
++	enum port port_type;
+ 
+ 	if (!vgt || !port_ptr)
+ 		return I915_MAX_PORTS;
+@@ -784,10 +785,10 @@ static inline enum vgt_port vgt_get_port(struct vgt_device *vgt, struct gt_port
+ 	return port_type;
+ }
+ 
+-static inline enum vgt_pipe vgt_get_pipe_from_port(struct vgt_device *vgt,
+-						enum vgt_port port)
++static inline enum pipe vgt_get_pipe_from_port(struct vgt_device *vgt,
++						enum port port)
+ {
+-	enum vgt_pipe pipe;
++	enum pipe pipe;
+ 
+ 	if (port == I915_MAX_PORTS)
+ 		return I915_MAX_PIPES;
+@@ -1597,14 +1598,14 @@ void vgt_reset_virtual_states(struct vgt_device *vgt, unsigned long ring_bitmap)
+ void vgt_reset_ppgtt(struct vgt_device *vgt, unsigned long ring_bitmap);
+ void vgt_reset_execlist(struct vgt_device *vgt, unsigned long ring_bitmap);
+ 
+-enum vgt_pipe get_edp_input(uint32_t wr_data);
++enum pipe get_edp_input(uint32_t wr_data);
+ void vgt_forward_events(struct pgt_device *pdev);
+ void vgt_emulate_dpy_events(struct pgt_device *pdev);
+ void *vgt_install_irq(struct pci_dev *pdev, struct drm_device *dev);
+ int vgt_irq_init(struct pgt_device *pgt);
+ void vgt_irq_exit(struct pgt_device *pgt);
+ 
+-void vgt_inject_flip_done(struct vgt_device *vgt, enum vgt_pipe pipe);
++void vgt_inject_flip_done(struct vgt_device *vgt, enum pipe pipe);
+ 
+ bool vgt_rrmr_mmio_write(struct vgt_device *vgt, unsigned int offset,
+         void *p_data, unsigned int bytes);
+@@ -1758,20 +1759,6 @@ void vgt_cleanup_mmio_dev(struct pgt_device *pdev);
+ int vgt_create_mmio_dev(struct vgt_device *vgt);
+ void vgt_destroy_mmio_dev(struct vgt_device *vgt);
+ 
+-/* invoked likely in irq disabled condition */
+-#define wait_for_atomic(COND, MS) ({					\
+-	unsigned long cnt = MS*100;					\
+-	int ret__ = 0;							\
+-	while (!(COND)) {						\
+-		if (!(--cnt)) {						\
+-			ret__ = -ETIMEDOUT;				\
+-			break;						\
+-		}							\
+-		udelay(10);						\
+-	}								\
+-	ret__;								\
+-})
+-
+ extern reg_attr_t vgt_reg_info_general[];
+ extern reg_attr_t vgt_reg_info_hsw[];
+ extern reg_attr_t vgt_reg_info_bdw[];
+-- 
+1.7.10.4
+

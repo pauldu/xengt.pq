@@ -1,0 +1,123 @@
+From 03d0fb133309bd96e3ceaeab232b0885874cd8e0 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Mon, 13 Apr 2015 00:32:45 +0800
+Subject: [PATCH 031/403] vgt: factor out vgt_init_gtt()/vgt_clean_gtt()
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/gtt.c |   30 ++++++++++++++++++++++++++++++
+ drivers/gpu/drm/i915/vgt/vgt.c |   21 +++++----------------
+ drivers/gpu/drm/i915/vgt/vgt.h |    3 +++
+ 3 files changed, 38 insertions(+), 16 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index 2c2bdc6..74b6850 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -1702,6 +1702,36 @@ void vgt_clean_vgtt(struct vgt_device *vgt)
+ 	return;
+ }
+ 
++bool vgt_gtt_init(struct pgt_device *pdev)
++{
++	if (IS_PREBDW(pdev)) {
++		pdev->gtt.pte_ops = &gen7_gtt_pte_ops;
++		pdev->gtt.gma_ops = &gen7_gtt_gma_ops;
++		pdev->gtt.mm_alloc_page_table = gen7_mm_alloc_page_table;
++		pdev->gtt.mm_free_page_table = gen7_mm_free_page_table;
++
++		if (preallocated_shadow_pages == -1)
++			preallocated_shadow_pages = 512;
++	} else if (IS_BDW(pdev)) {
++		pdev->gtt.pte_ops = &gen8_gtt_pte_ops;
++		pdev->gtt.gma_ops = &gen8_gtt_gma_ops;
++		pdev->gtt.mm_alloc_page_table = gen8_mm_alloc_page_table;
++		pdev->gtt.mm_free_page_table = gen8_mm_free_page_table;
++
++		if (preallocated_shadow_pages == -1)
++			preallocated_shadow_pages = 8192;
++	} else {
++		vgt_err("Unsupported platform.\n");
++		return false;
++	}
++
++	return true;
++}
++
++void vgt_gtt_clean(struct pgt_device *pdev)
++{
++}
++
+ int ring_ppgtt_mode(struct vgt_device *vgt, int ring_id, u32 off, u32 mode)
+ {
+ 	vgt_state_ring_t *rb = &vgt->rb[ring_id];
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 2625e59..7211279 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -585,11 +585,6 @@ static bool vgt_initialize_platform(struct pgt_device *pdev)
+ 	/* this check is broken on SNB */
+ 	pdev->ring_xxx_valid = 0;
+ 
+-	pdev->gtt.pte_ops = &gen7_gtt_pte_ops;
+-	pdev->gtt.gma_ops = &gen7_gtt_gma_ops;
+-	pdev->gtt.mm_alloc_page_table = gen7_mm_alloc_page_table;
+-	pdev->gtt.mm_free_page_table = gen7_mm_free_page_table;
+-
+ 	if (IS_HSW(pdev)) {
+ 		pdev->max_engines = 4;
+ 		pdev->ring_mmio_base[RING_BUFFER_VECS] = _REG_VECS_TAIL;
+@@ -603,9 +598,6 @@ static bool vgt_initialize_platform(struct pgt_device *pdev)
+ 		pdev->ring_xxx_bit[RING_BUFFER_BCS] = 2;
+ 		pdev->ring_xxx_bit[RING_BUFFER_VECS] = 10;
+ 		pdev->ring_xxx_valid = 1;
+-
+-		if (preallocated_shadow_pages == -1)
+-			preallocated_shadow_pages = 512;
+ 	} else if (IS_BDW(pdev)) {
+ 		pdev->max_engines = 4;
+ 		pdev->ring_mmio_base[RING_BUFFER_VECS] = _REG_VECS_TAIL;
+@@ -622,14 +614,6 @@ static bool vgt_initialize_platform(struct pgt_device *pdev)
+ 			pdev->ring_xxx[RING_BUFFER_VCS2] = 0x8008;
+ 			pdev->ring_xxx_bit[RING_BUFFER_VCS2] = 0;
+ 		}
+-
+-		pdev->gtt.pte_ops = &gen8_gtt_pte_ops;
+-		pdev->gtt.gma_ops = &gen8_gtt_gma_ops;
+-		pdev->gtt.mm_alloc_page_table = gen8_mm_alloc_page_table;
+-		pdev->gtt.mm_free_page_table = gen8_mm_free_page_table;
+-
+-		if (preallocated_shadow_pages == -1)
+-			preallocated_shadow_pages = 8192;
+ 	} else {
+ 		vgt_err("Unsupported platform.\n");
+ 		return false;
+@@ -689,6 +673,11 @@ static bool vgt_initialize_pgt_device(struct pci_dev *dev, struct pgt_device *pd
+ 		return false;
+ 	}
+ 
++	if (!vgt_gtt_init(pdev)) {
++		vgt_err("failed to initialize gtt\n");
++		return false;
++	}
++
+ 	vgt_init_reserved_aperture(pdev);
+ 
+ 	for (i = 0; i < pdev->max_engines; i++)
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 96c1efa..5810ffa 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -618,6 +618,9 @@ struct vgt_vgtt_info {
+ extern bool vgt_init_vgtt(struct vgt_device *vgt);
+ extern void vgt_clean_vgtt(struct vgt_device *vgt);
+ 
++extern bool vgt_gtt_init(struct pgt_device *pdev);
++extern void vgt_gtt_clean(struct pgt_device *pdev);
++
+ extern bool vgt_expand_shadow_page_mempool(struct vgt_device *vgt);
+ 
+ extern bool vgt_g2v_create_ppgtt_mm(struct vgt_device *vgt, int page_table_level);
+-- 
+1.7.10.4
+

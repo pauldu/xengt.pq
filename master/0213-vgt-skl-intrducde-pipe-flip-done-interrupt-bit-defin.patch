@@ -1,0 +1,76 @@
+From ec8ffb0f5dc85812a71469933f61aa7fac0a8ea4 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Wed, 5 Aug 2015 02:50:42 +0800
+Subject: [PATCH 213/403] vgt/skl: intrducde pipe flip done interrupt bit
+ definition
+
+Pipe flip done interrupt bit definition changes a bit on SKL.
+
+v2:
+
+- Take Kevin's comment:
+We only support flip done interrupt on primary plane.
+
+v3:
+
+- Take Kevin's comment:
+Add comment about GVT-g flip done interrupt on primary plane.
+
+Signed-off-by: Xiao Zheng <xiao.zheng@intel.com>
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/interrupt.c |   23 +++++++++++++++--------
+ 1 file changed, 15 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/interrupt.c b/drivers/gpu/drm/i915/vgt/interrupt.c
+index 7859ba3..5fa0e96 100644
+--- a/drivers/gpu/drm/i915/vgt/interrupt.c
++++ b/drivers/gpu/drm/i915/vgt/interrupt.c
+@@ -1655,16 +1655,8 @@ static void vgt_gen8_init_irq(
+ 	SET_BIT_INFO(hstate, 8, VECS_AS_CONTEXT_SWITCH, IRQ_INFO_GT3);
+ 
+ 	SET_BIT_INFO(hstate, 0, PIPE_A_VBLANK, IRQ_INFO_DE_PIPE_A);
+-	SET_BIT_INFO(hstate, 4, PRIMARY_A_FLIP_DONE, IRQ_INFO_DE_PIPE_A);
+-	SET_BIT_INFO(hstate, 5, SPRITE_A_FLIP_DONE, IRQ_INFO_DE_PIPE_A);
+-
+ 	SET_BIT_INFO(hstate, 0, PIPE_B_VBLANK, IRQ_INFO_DE_PIPE_B);
+-	SET_BIT_INFO(hstate, 4, PRIMARY_B_FLIP_DONE, IRQ_INFO_DE_PIPE_B);
+-	SET_BIT_INFO(hstate, 5, SPRITE_B_FLIP_DONE, IRQ_INFO_DE_PIPE_B);
+-
+ 	SET_BIT_INFO(hstate, 0, PIPE_C_VBLANK, IRQ_INFO_DE_PIPE_C);
+-	SET_BIT_INFO(hstate, 4, PRIMARY_C_FLIP_DONE, IRQ_INFO_DE_PIPE_C);
+-	SET_BIT_INFO(hstate, 5, SPRITE_C_FLIP_DONE, IRQ_INFO_DE_PIPE_C);
+ 
+ 	/* GEN8 interrupt DE PORT events */
+ 	SET_BIT_INFO(hstate, 0, AUX_CHANNEL_A, IRQ_INFO_DE_PORT);
+@@ -1688,12 +1680,27 @@ static void vgt_gen8_init_irq(
+ 		SET_BIT_INFO(hstate, 25, AUX_CHANNEL_B, IRQ_INFO_PCH);
+ 		SET_BIT_INFO(hstate, 26, AUX_CHANNEL_C, IRQ_INFO_PCH);
+ 		SET_BIT_INFO(hstate, 27, AUX_CHANNEL_D, IRQ_INFO_PCH);
++
++		SET_BIT_INFO(hstate, 4, PRIMARY_A_FLIP_DONE, IRQ_INFO_DE_PIPE_A);
++		SET_BIT_INFO(hstate, 5, SPRITE_A_FLIP_DONE, IRQ_INFO_DE_PIPE_A);
++
++		SET_BIT_INFO(hstate, 4, PRIMARY_B_FLIP_DONE, IRQ_INFO_DE_PIPE_B);
++		SET_BIT_INFO(hstate, 5, SPRITE_B_FLIP_DONE, IRQ_INFO_DE_PIPE_B);
++
++		SET_BIT_INFO(hstate, 4, PRIMARY_C_FLIP_DONE, IRQ_INFO_DE_PIPE_C);
++		SET_BIT_INFO(hstate, 5, SPRITE_C_FLIP_DONE, IRQ_INFO_DE_PIPE_C);
+ 	}
+ 
+ 	if (IS_SKL(pdev)) {
+ 		SET_BIT_INFO(hstate, 25, AUX_CHANNEL_B, IRQ_INFO_DE_PORT);
+ 		SET_BIT_INFO(hstate, 26, AUX_CHANNEL_C, IRQ_INFO_DE_PORT);
+ 		SET_BIT_INFO(hstate, 27, AUX_CHANNEL_D, IRQ_INFO_DE_PORT);
++		/*
++		 * Only support page flip interrupt on primary plane.
++		 */
++		SET_BIT_INFO(hstate, 3, PRIMARY_A_FLIP_DONE, IRQ_INFO_DE_PIPE_A);
++		SET_BIT_INFO(hstate, 3, PRIMARY_B_FLIP_DONE, IRQ_INFO_DE_PIPE_B);
++		SET_BIT_INFO(hstate, 3, PRIMARY_C_FLIP_DONE, IRQ_INFO_DE_PIPE_C);
+ 	}
+ 
+ 	irq_based_ctx_switch = false;
+-- 
+1.7.10.4
+

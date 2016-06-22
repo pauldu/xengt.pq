@@ -1,0 +1,107 @@
+From 9802d081a70aae54d7238f7219f9129088457723 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Thu, 19 Mar 2015 02:11:37 +0800
+Subject: [PATCH 014/403] vgt: context switch refinement
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/intel_pm.c     |    8 ++++++++
+ drivers/gpu/drm/i915/vgt/handlers.c |    5 ++++-
+ drivers/gpu/drm/i915/vgt/render.c   |   13 -------------
+ 3 files changed, 12 insertions(+), 14 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/intel_pm.c b/drivers/gpu/drm/i915/intel_pm.c
+index 0fb0459..8351ce5 100644
+--- a/drivers/gpu/drm/i915/intel_pm.c
++++ b/drivers/gpu/drm/i915/intel_pm.c
+@@ -6514,6 +6514,14 @@ static void broadwell_init_clock_gating(struct drm_device *dev)
+ 	 */
+ 	I915_WRITE(HSW_GTT_CACHE_EN, GTT_CACHE_EN_ALL);
+ 
++	I915_WRITE(GEN7_ROW_CHICKEN2,
++			_MASKED_BIT_ENABLE(DOP_CLOCK_GATING_DISABLE));
++
++	I915_WRITE(GEN6_UCGCTL1, I915_READ(GEN6_UCGCTL1) |
++			GEN6_EU_TCUNIT_CLOCK_GATE_DISABLE);
++
++	I915_WRITE(0x20e4, _MASKED_BIT_ENABLE(0x2));
++
+ 	lpt_init_clock_gating(dev);
+ }
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 53b5522..61f573a 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -3530,7 +3530,7 @@ reg_attr_t vgt_base_reg_info[] = {
+ {0x913c, 4, F_VIRT, 0, D_BDW, NULL, NULL},
+ 
+ /* WA */
+-{0xfdc, 4, F_RDR, 0, D_BDW, NULL, NULL},
++{0xfdc, 4, F_VIRT, 0, D_BDW, NULL, NULL},
+ {0xe4f0, 4, F_RDR, 0, D_BDW, NULL, NULL},
+ {0xe4f4, 4, F_RDR, 0, D_BDW, NULL, NULL},
+ {0x9430, 4, F_RDR, 0, D_BDW, NULL, NULL},
+@@ -3642,6 +3642,9 @@ bool vgt_post_setup_mmio_hooks(struct pgt_device *pdev)
+ 		reg_update_handlers(pdev, _REG_VCS2_MFX_MODE_BDW, 4,
+ 				ring_pp_mode_read,
+ 				ring_pp_mode_write);
++
++		VGT_MMIO_WRITE(pdev, 0xfdc,
++				(1 << 28) | (1 << 24) | (1 << 25) | (1 << 26));
+ 	}
+ 
+ 	return true;
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index 25c8578..4db5600 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -1684,21 +1684,15 @@ struct vgt_render_context_ops gen7_context_ops = {
+ static struct reg_mask_t gen8_rcs_reset_mmio[] = {
+ 	{0x2098, 0},
+ 	{0x229c, 1},
+-//	{0x209c, 1},
+ 	{0x20c0, 1},
+-//	{0x2050, 1},
+ 
+-	{0xfdc, 0},
+ 	{0x24d0, 0},
+ 	{0x24d4, 0},
+ 	{0x24d8, 0},
+ 	{0x24dc, 0},
+ 
+-//	{0x9008, 0},
+ 	{0xe4f0, 0},
+-
+ 	{0xe4f4, 0},
+-//	{0x9400, 0},
+ 
+ 	{0xe184, 0},
+ 	{0x7300, 0},
+@@ -1706,15 +1700,9 @@ static struct reg_mask_t gen8_rcs_reset_mmio[] = {
+ 	{0x7008, 1},
+ 
+ 	{0x7000, 1},
+-//	{0x2090, 1},
+-//	{0x4090, 0},
+-	{0x20a0, 0},
+ 	{0x20e4, 1},
+ 
+ 	{0x7010, 1},
+-//	{0x9424, 0},
+-
+-	{0x9030, 0},
+ 
+ 	{0xb118, 0},
+ 	{0xb100, 0},
+@@ -1722,7 +1710,6 @@ static struct reg_mask_t gen8_rcs_reset_mmio[] = {
+ 	{0xb10c, 0},
+ 
+ 	{0x83a4, 1},
+-	{0x23bc, 0},
+ };
+ 
+ static bool gen8_reset_engine(int ring_id,
+-- 
+1.7.10.4
+

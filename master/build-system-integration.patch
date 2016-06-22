@@ -1,0 +1,188 @@
+diff --git a/mk/Kbuild b/mk/Kbuild
+new file mode 100644
+index 0000000..5bf1347
+--- /dev/null
++++ b/mk/Kbuild
+@@ -0,0 +1,33 @@
++LINUXINCLUDE := -I $(KBUILD_EXTMOD)/include -I $(KBUILD_EXTMOD)/include/drm -I $(KBUILD_EXTMOD)/include/uapi $(LINUXINCLUDE)
++
++CONFIG_DRM := m
++CONFIG_DRM_MIPI_DSI := m
++CONFIG_DRM_KMS_HELPER := m
++CONFIG_DRM_KMS_FB_HELPER := y
++CONFIG_DRM_FBDEV_EMULATION := y
++CONFIG_DRM_LOAD_EDID_FIRMWARE := y
++CONFIG_DRM_PANEL := y
++CONFIG_DRM_I915 := m
++CONFIG_DRM_I915_PRELIMINARY_HW_SUPPORT := y
++
++export CONFIG_DRM
++export CONFIG_DRM_MIPI_DSI
++export CONFIG_DRM_KMS_HELPER
++export CONFIG_DRM_KMS_FB_HELPER
++export CONFIG_DRM_FBDEV_EMULATION
++export CONFIG_DRM_LOAD_EDID_FIRMWARE
++export CONFIG_DRM_PANEL
++export CONFIG_DRM_I915
++export CONFIG_DRM_I915_PRELIMINARY_HW_SUPPORT
++
++KBUILD_CFLAGS += -DCONFIG_DRM=1
++KBUILD_CFLAGS += -DCONFIG_DRM_MIPI_DSI=1
++KBUILD_CFLAGS += -DCONFIG_DRM_KMS_HELPER=1
++KBUILD_CFLAGS += -DCONFIG_DRM_KMS_FB_HELPER=1
++KBUILD_CFLAGS += -DCONFIG_DRM_FBDEV_EMULATION=1
++KBUILD_CFLAGS += -DCONFIG_DRM_LOAD_EDID_FIRMWARE=1
++KBUILD_CFLAGS += -DCONFIG_DRM_PANEL=1
++KBUILD_CFLAGS += -DCONFIG_DRM_I915=1
++KBUILD_CFLAGS += -DCONFIG_DRM_I915_PRELIMINARY_HW_SUPPORT=1
++
++obj-y := drivers/gpu/drm/
+\ No newline at end of file
+diff --git a/mk/Makefile b/mk/Makefile
+new file mode 100644
+index 0000000..0c605eb
+--- /dev/null
++++ b/mk/Makefile
+@@ -0,0 +1,46 @@
++USE_BRANDING := yes
++IMPORT_BRANDING := yes
++REPONAME=$(shell echo "$$PWD" | awk -F/ '{print $$3}')
++include $(B_BASE)/common.mk
++include $(B_BASE)/rpmbuild.mk
++
++$(eval $(shell $(call git_cset_number,$(REPONAME))))
++XS_RELEASE := $(CSET_NUMBER)
++
++PKG_NAME := xengt
++PKG_VERSION := 1.0
++PKG_RELEASE := $(XS_RELEASE)
++
++SOURCES := ../drivers
++SOURCES += ../include
++SOURCES += Kbuild
++
++include $(PROJECT_OUTPUTDIR)/kernel-dom0/kernel.inc
++
++SPEC_FILE := $(RPM_SPECSDIR)/$(PKG_NAME)-$(PKG_VERSION).spec
++SRC_TARBALL := $(RPM_SOURCESDIR)/$(PKG_NAME)-$(PKG_VERSION).tar.gz
++
++SRC_RPM := $(RPM_SRPMSDIR)/$(PKG_NAME)-$(PKG_VERSION)-$(PKG_RELEASE).src.rpm
++
++RPM_EXTRA_RPMBUILD_OPTIONS += --define "kernel_version $(LINUX_KABI_VERSION)"
++RPM_EXTRA_RPMBUILD_OPTIONS += --define "module_dir extra"
++
++MODULES_RPM := $(NAME)-$(LINUX_KABI_VERSION)-modules$(MODULES_SUFFIX)-$(PKG_VERSION)-$(PKG_RELEASE).$(DOMAIN0_ARCH_OPTIMIZED).rpm
++
++build: $(SRC_RPM) $(MY_INSTALLER_FILES)/.dirstamp 
++	mkdir -p $(MY_OUTPUT_DIR)/SOURCES
++	echo "$(COMPONENT) $(call rpm_license,$(SRC_RPM)) file $(SRC_RPM)" >>$(MY_OUTPUT_DIR)/SOURCES/MANIFEST
++
++clean:
++	rm -rf $(SPEC_FILE) $(SRC_TARBALL) $(MY_OBJ_DIR)/$(PKG_NAME)-$(PKG_VERSION)
++
++$(SRC_RPM): $(RPM_DIRECTORIES) $(SRC_TARBALL) $(SPEC_FILE)
++	$(RPMBUILD) -ba $(SPEC_FILE)
++
++$(SRC_TARBALL): $(RPM_DIRECTORIES)
++	mkdir -p $(MY_OBJ_DIR)/$(PKG_NAME)-$(PKG_VERSION)
++	cp -a $(SOURCES) $(MY_OBJ_DIR)/$(PKG_NAME)-$(PKG_VERSION)
++	tar cvf $@ -C $(MY_OBJ_DIR) $(PKG_NAME)-$(PKG_VERSION)
++
++$(SPEC_FILE): $(PKG_NAME).spec
++	sed -e 's/@VERSION@/$(PKG_VERSION)/g' -e 's/@RELEASE@/$(PKG_RELEASE)/g' $< >$@
+diff --git a/mk/xengt.spec b/mk/xengt.spec
+new file mode 100644
+index 0000000..091f775
+--- /dev/null
++++ b/mk/xengt.spec
+@@ -0,0 +1,90 @@
++%define vendor_name Intel Corporation
++%define driver_name xengt
++
++%if %undefined kernel_version
++%define kernel_version %(uname -r)
++%endif
++%if %undefined module_dir
++%define module_dir updates
++%endif
++%if %undefined modules_suffix
++%define modules_suffix modules
++%endif
++
++%define modules_package %{kernel_version}-%{modules_suffix}
++
++Summary: %{vendor_name} %{driver_name}
++Name: %{driver_name}
++Version: @VERSION@
++Release: @RELEASE@
++Vendor: %{vendor_name}
++License: GPLv2
++Group: System Environment/Kernel
++Source: %{name}-%{version}.tar.gz
++BuildRoot: %{_tmppath}/%{name}-%{version}-root
++
++%description
++%{vendor_name} %{driver_name} device drivers.
++
++%prep
++%setup
++
++%build
++%{?cov_wrap} %{__make} %{?_smp_mflags} -C /lib/modules/%{kernel_version}/build M=$(pwd) modules 
++
++%install
++rm -rf %{buildroot}
++%{?cov_wrap} %{__make} -C /lib/modules/%{kernel_version}/build M=$(pwd) INSTALL_MOD_PATH=%{buildroot} INSTALL_MOD_DIR=%{module_dir} DEPMOD=/bin/true modules_install
++
++# Flatten hierarchy
++mv %{buildroot}/lib/modules/%{kernel_version}/extra/drivers/gpu/drm/i915/*.ko %{buildroot}/lib/modules/%{kernel_version}/extra
++mv %{buildroot}/lib/modules/%{kernel_version}/extra/drivers/gpu/drm/*.ko %{buildroot}/lib/modules/%{kernel_version}/extra
++find %{buildroot}/lib/modules/%{kernel_version}/extra/ -mindepth 1 -type d -delete
++
++# mark modules executable so that strip-to-file can strip them
++find %{buildroot}/lib/modules/%{kernel_version} -name "*.ko" -type f | xargs chmod u+x
++
++%clean
++rm -rf %{buildroot}
++
++%package modules
++Summary: %{vendor_name} %{driver_name} drivers
++Group: System Environment/Kernel
++Requires: %{name}-%{modules_package} = %{version}-%{release}
++
++%description modules
++Meta-package for automatic upgrades to the latest %{vendor_name}
++%{driver_name} driver.
++
++%files modules
++
++%package %{modules_package}
++Summary: %{vendor_name} %{driver_name} device drivers
++Group: System Environment/Kernel
++Requires: kernel-uname-r = %{kernel_version}
++%if 0%{?fedora} >= 17 || 0%{?rhel} >= 7
++Requires(post): /usr/sbin/depmod
++Requires(postun): /usr/sbin/depmod
++%else
++Requires(post): /sbin/depmod
++Requires(postun): /sbin/depmod
++%endif
++
++%description %{modules_package}
++%{vendor_name} %{driver_name} device drivers for the Linux Kernel
++version %{kernel_version}.
++
++%post %{modules_package}
++/sbin/depmod %{kernel_version}
++mkinitrd -f /boot/initrd-%{kernel_version}.img %{kernel_version}
++
++%postun %{modules_package}
++/sbin/depmod %{kernel_version}
++mkinitrd -f /boot/initrd-%{kernel_version}.img %{kernel_version}
++
++%files %{modules_package}
++%defattr(-,root,root,-)
++/lib/modules/%{kernel_version}/*/*.ko
++%doc
++
++%changelog

@@ -1,0 +1,41 @@
+From 2a89a1d053552608628ea1a74dfb824ce7b0b133 Mon Sep 17 00:00:00 2001
+From: Jike Song <jike.song@intel.com>
+Date: Thu, 10 Sep 2015 13:04:10 +0800
+Subject: [PATCH 167/403] vgt: destroy sysfs/debugfs out of spinlock, since
+ they possibly sleep
+
+Signed-off-by: Jike Song <jike.song@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/vgt.c |    9 ++++-----
+ 1 file changed, 4 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 7089c64..c3bd438 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -765,11 +765,6 @@ void vgt_destroy(void)
+ 	list_for_each_entry_safe(vgt, tmp, &pdev->rendering_runq_head, list)
+ 		vgt_disable_render(vgt);
+ 
+-	/* Destruct all vgt_debugfs */
+-	vgt_release_debugfs();
+-
+-	vgt_destroy_sysfs();
+-
+ 	if (pdev->saved_gtt)
+ 		vfree(pdev->saved_gtt);
+ 	free_gtt(pdev);
+@@ -782,6 +777,10 @@ void vgt_destroy(void)
+ 
+ 	spin_unlock_irqrestore(&pdev->lock, flags);
+ 
++	/* destruct all vgt-related debugfs/sysfs */
++	vgt_release_debugfs();
++	vgt_destroy_sysfs();
++
+ 	list_for_each_entry_safe(vgt, tmp, &pdev->rendering_idleq_head, list)
+ 		vgt_release_instance(vgt);
+ 
+-- 
+1.7.10.4
+

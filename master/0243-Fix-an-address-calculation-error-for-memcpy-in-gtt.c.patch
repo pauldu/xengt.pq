@@ -1,0 +1,53 @@
+From c77444e62440d7b24b521addb82d656c88d59a95 Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Tue, 29 Sep 2015 20:42:35 +0800
+Subject: [PATCH 243/403] Fix an address calculation error for memcpy in gtt.c
+
+The offset added to val64 should be byte-wise, but the base pointer
+type is not char *. It will cause the wrong address calculation
+result.
+
+The memcpy()s are used to update guest page table. It will cause some
+guest entries to be cleared to 0 unexpectedly. So far its impact is
+limited. We do not have bug related to it and it was found in code
+review.
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/gtt.c |    6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index 0c9f5c4..9c4ea01 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -1183,7 +1183,7 @@ static bool ppgtt_handle_guest_write_page_table_bytes(void *gp,
+ 	index = (pa & (PAGE_SIZE - 1)) >> info->gtt_entry_size_shift;
+ 
+ 	ppgtt_get_guest_entry(spt, &we, index);
+-	memcpy(&we.val64 + (pa & (info->gtt_entry_size - 1)), p_data, bytes);
++	memcpy((char *)&we.val64 + (pa & (info->gtt_entry_size - 1)), p_data, bytes);
+ 
+ 	if (partial_access && !hi) {
+ 		trace_gpt_change(vgt->vm_id, "partial access - LOW",
+@@ -1632,7 +1632,7 @@ bool gtt_mmio_read(struct vgt_device *vgt,
+ 		return false;
+ 
+ 	ggtt_get_guest_entry(ggtt_mm, &e, index);
+-	memcpy(p_data, &e.val64 + (off & (info->gtt_entry_size - 1)), bytes);
++	memcpy(p_data, (char *)&e.val64 + (off & (info->gtt_entry_size - 1)), bytes);
+ 
+ 	return true;
+ }
+@@ -1741,7 +1741,7 @@ bool gtt_mmio_write(struct vgt_device *vgt, unsigned int off,
+ 
+ 	ggtt_get_guest_entry(ggtt_mm, &e, g_gtt_index);
+ 
+-	memcpy(&e.val64 + (off & (info->gtt_entry_size - 1)), p_data, bytes);
++	memcpy((char *)&e.val64 + (off & (info->gtt_entry_size - 1)), p_data, bytes);
+ 
+ 	if (partial_access && !hi)
+ 		goto out;
+-- 
+1.7.10.4
+

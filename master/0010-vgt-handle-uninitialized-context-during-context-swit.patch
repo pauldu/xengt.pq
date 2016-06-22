@@ -1,0 +1,161 @@
+From 17c457aa50bed2aecd2c1598cff3116314cc31bf Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Thu, 12 Mar 2015 01:26:06 +0800
+Subject: [PATCH 010/403] vgt: handle uninitialized context during context
+ switch
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |   95 ++++++++++++++++++++++++++++++++++
+ drivers/gpu/drm/i915/vgt/vgt.h       |    1 +
+ 2 files changed, 96 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 348c714..6002578 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -1095,6 +1095,40 @@ static inline void vgt_add_ctx_switch_status(struct vgt_device *vgt, enum vgt_ri
+ 	vgt->rb[ring_id].csb_write_ptr = write_idx;
+ }
+ 
++static bool vgt_save_last_execlist_context(struct vgt_device *vgt,
++	enum vgt_ring_id ring_id, struct execlist_context *ctx)
++{
++	struct vgt_mm *mm = vgt->gtt.ggtt_mm;
++	void *dst = v_aperture(vgt->pdev, vgt->rb[ring_id].context_save_area);
++	u32 lrca = ctx->guest_context.lrca;
++	int nr_page = EXECLIST_CTX_PAGES(ring_id);
++	u32 *ring_context;
++	void *src;
++	int i;
++
++	if (ring_id != RING_BUFFER_RCS)
++		return true;
++
++	ring_context = vgt_gma_to_va(mm, (lrca + 1) << GTT_PAGE_SHIFT);
++	if (!ring_context) {
++		vgt_err("Fail to find ring_context, lrca %x.\n", lrca);
++		return false;
++	}
++
++	if (ring_context[1] != 0x1100101b) {
++		vgt_err("Not a valid guest context?!\n");
++		return false;
++	}
++
++	for (i = 1; i < nr_page; i++, dst += SIZE_PAGE) {
++		src = vgt_gma_to_va(mm, (lrca + i) << GTT_PAGE_SHIFT);
++		memcpy(dst, src, SIZE_PAGE);
++	}
++
++	vgt->has_context = 1;
++	return true;
++}
++
+ static void vgt_emulate_context_status_change(struct vgt_device *vgt,
+ 				enum vgt_ring_id ring_id,
+ 				struct context_status_format *ctx_status)
+@@ -1143,6 +1177,9 @@ static void vgt_emulate_context_status_change(struct vgt_device *vgt,
+ 		goto emulation_done;
+ 	}
+ 
++	if (ctx_status->context_complete)
++		vgt_save_last_execlist_context(vgt, ring_id, el_ctx);
++
+ 	if (!vgt_require_shadow_context(vgt))
+ 		goto emulation_done;
+ 
+@@ -1418,6 +1455,9 @@ void vgt_kick_off_execlists(struct vgt_device *vgt)
+ 	for (i = 0; i < pdev->max_engines; i ++) {
+ 		int j;
+ 		int num = vgt_el_slots_number(&vgt->rb[i]);
++
++		vgt->rb[i].check_uninitialized_context = true;
++
+ 		if (num == 2)
+ 			vgt_dbg(VGT_DBG_EXECLIST,
+ 				"VM(%d) Ring-%d: Preemption is met while "
+@@ -1455,6 +1495,59 @@ bool vgt_idle_execlist(struct pgt_device *pdev, enum vgt_ring_id ring_id)
+ 	return true;
+ }
+ 
++static bool vgt_check_uninitialized_execlist_context(struct vgt_device *vgt,
++	enum vgt_ring_id ring_id, struct execlist_context *ctx)
++{
++	struct vgt_mm *mm = vgt->gtt.ggtt_mm;
++	void *src = v_aperture(vgt->pdev, vgt->rb[ring_id].context_save_area);
++	u32 lrca = ctx->guest_context.lrca;
++	int nr_page = EXECLIST_CTX_PAGES(ring_id);
++	u32 *ring_context;
++	u32 *ctx_sr_ctrl;
++	void *dst;
++	int i;
++
++	if (ring_id != RING_BUFFER_RCS
++			|| !vgt->rb[ring_id].check_uninitialized_context)
++		return true;
++
++	vgt->rb[ring_id].check_uninitialized_context = false;
++
++	if (!vgt->has_context)
++		return true;
++
++	ring_context = vgt_gma_to_va(mm, (lrca + 1) << GTT_PAGE_SHIFT);
++	if (!ring_context) {
++		vgt_err("Fail to find ring_context, lrca %x.\n", lrca);
++		return false;
++	}
++
++	if (ring_context[1] != 0x1100101b && ring_context[2] != 0x2244) {
++		vgt_err("Not a valid guest context?!\n");
++		return false;
++	}
++
++	ctx_sr_ctrl = ring_context + 3;
++	if ((*ctx_sr_ctrl & ((1 << 16) | (1 << 0))) != ((1 << 16) | (1 << 0)))
++		return false;
++
++	*ctx_sr_ctrl &= ~((1 << 16) | (1 << 0));
++
++	/* Fill the engine context in page 1. */
++	memcpy(ring_context + 0x50, src + 0x50 * 4, SIZE_PAGE - 0x50 * 4);
++
++	src += SIZE_PAGE;
++
++	for (i = 2; i < nr_page; i++, src += SIZE_PAGE) {
++		dst = vgt_gma_to_va(mm, (lrca + i) << GTT_PAGE_SHIFT);
++		memcpy(dst, src, SIZE_PAGE);
++	}
++
++	vgt_info("fill uninitialized guest context with last context, lrca: %x.\n", lrca);
++
++	return true;
++}
++
+ void vgt_submit_execlist(struct vgt_device *vgt, enum vgt_ring_id ring_id)
+ {
+ 	int i;
+@@ -1500,6 +1593,8 @@ void vgt_submit_execlist(struct vgt_device *vgt, enum vgt_ring_id ring_id)
+ 		trace_ctx_lifecycle(vgt->vm_id, ring_id,
+ 			ctx->guest_context.lrca, "schedule_to_run");
+ 
++		vgt_check_uninitialized_execlist_context(vgt, ring_id, ctx);
++
+ 		if (!vgt_require_shadow_context(vgt))
+ 			continue;
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index fe196c6..147b479 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -401,6 +401,7 @@ typedef struct {
+ 	struct vgt_exec_list execlist_slots[EL_QUEUE_SLOT_NUM];
+ 	struct vgt_elsp_store elsp_store;
+ 	int csb_write_ptr;
++	bool check_uninitialized_context;
+ } vgt_state_ring_t;
+ 
+ #define vgt_el_queue_head(vgt, ring_id) \
+-- 
+1.7.10.4
+

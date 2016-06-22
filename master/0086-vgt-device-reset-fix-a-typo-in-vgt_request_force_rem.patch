@@ -1,0 +1,26 @@
+From 27fb860915e8aca1644a1aa0703148846016da5a Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Mon, 1 Jun 2015 15:21:38 -0400
+Subject: [PATCH 086/403] vgt: device reset: fix a typo in
+ vgt_request_force_removal()
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/sched.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/sched.c b/drivers/gpu/drm/i915/vgt/sched.c
+index cc314ea..63762d8 100644
+--- a/drivers/gpu/drm/i915/vgt/sched.c
++++ b/drivers/gpu/drm/i915/vgt/sched.c
+@@ -872,6 +872,6 @@ void vgt_request_force_removal(struct vgt_device *vgt)
+ {
+ 	vgt->force_removal = 1;
+ 	vgt->pdev->next_sched_vgt = vgt_dom0;
+-	vgt_raise_request(vgt->pdev, VGT_REQUEST_SCHED);
++	vgt_raise_request(vgt->pdev, VGT_REQUEST_CTX_SWITCH);
+ 	wmb();
+ }
+-- 
+1.7.10.4
+

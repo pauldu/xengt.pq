@@ -1,0 +1,71 @@
+From 98242fbab943e0f09391949dbffcac38267d37d5 Mon Sep 17 00:00:00 2001
+From: Yi Sun <yi.sun@intel.com>
+Date: Wed, 9 Mar 2016 10:59:03 +0800
+Subject: [PATCH 384/403] Fix some compiling error when disabling GVT-g.
+
+v2. Make the conditional compilation 'IS_ENABLED(CONFIG_I915_VGT)'
+only scope GVT-g active code path, but not any other code path.
+
+Some GVT-g related variables or functions' defination is under a
+conditional compilation with enabling DRM_I915_VGT_SUPPORT or
+CONFIG_I915_VGT.
+
+Hence when disabling GVT-g option, we have to make sure all of them
+not to be compiled.
+
+Following variables and functions are involved in this patch:
+vgt_new_delay_event_timer
+vgt_can_process_timer
+vgt_gpu_perf_sample
+vgt_(high|low)_gm_size
+
+Signed-off-by: Yi Sun <yi.sun@intel.com>
+diff --git a/drivers/gpu/drm/i915/i915_dma.c b/drivers/gpu/drm/i915/i915_dma.c
+index aa984d5..c07e28c 100644
+--- a/drivers/gpu/drm/i915/i915_dma.c
++++ b/drivers/gpu/drm/i915/i915_dma.c
+@@ -951,6 +951,7 @@ int i915_driver_load(struct drm_device *dev, unsigned long flags)
+ 		i915_host_mediate = true;
+ 	printk("i915_start_vgt: %s\n", i915_host_mediate ? "success" : "fail");
+ 
++#if IS_ENABLED(CONFIG_I915_VGT)
+ 	if (i915_host_mediate) {
+ 		extern bool (*tmp_vgt_can_process_timer)(void *timer);
+ 		extern void (*tmp_vgt_new_delay_event_timer)(void *timer);
+@@ -958,6 +959,7 @@ int i915_driver_load(struct drm_device *dev, unsigned long flags)
+ 		tmp_vgt_new_delay_event_timer = vgt_new_delay_event_timer;
+ 		tmp_vgt_can_process_timer = vgt_can_process_timer;
+ 	}
++#endif
+ 
+ 	i915_check_vgpu(dev);
+ 
+diff --git a/drivers/gpu/drm/i915/i915_gem.c b/drivers/gpu/drm/i915/i915_gem.c
+index d0d6db2..c0880cb 100644
+--- a/drivers/gpu/drm/i915/i915_gem.c
++++ b/drivers/gpu/drm/i915/i915_gem.c
+@@ -156,9 +156,11 @@ i915_gem_get_aperture_ioctl(struct drm_device *dev, void *data,
+ 	if (!intel_vgpu_active(dev)) {
+ 		args->aper_size = dev_priv->gtt.base.total;
+ 		args->aper_available_size = args->aper_size - pinned;
++#if IS_ENABLED(CONFIG_I915_VGT)
+ 	} else {
+ 		args->aper_size = dev_priv->mm.vgt_low_gm_size + dev_priv->mm.vgt_high_gm_size;
+ 		args->aper_available_size = dev_priv->mm.vgt_low_gm_size + dev_priv->mm.vgt_high_gm_size - pinned;
++#endif
+ 	}
+ 
+ 	return 0;
+diff --git a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
+index 7a30e71..b272718 100644
+--- a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
++++ b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
+@@ -32,7 +32,7 @@ module_param_named(enable_vgtbuffer, enable_vgtbuffer, bool, 0600);
+ MODULE_PARM_DESC(enable_vgtbuffer, "Control the vgtbuffer ioctl available or not (default: false)");
+ 
+ struct vgt_device;
+-#include "fb_decoder.h"
++#include "vgt/fb_decoder.h"
+ 
+ static int i915_gem_vgtbuffer_get_pages(struct drm_i915_gem_object *obj)
+ {

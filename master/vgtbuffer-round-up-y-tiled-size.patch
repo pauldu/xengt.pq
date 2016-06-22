@@ -1,0 +1,15 @@
+diff --git a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
+index 365e91e..ecda74a 100644
+--- a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
++++ b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
+@@ -172,8 +172,8 @@ static int vgt_decode_information(struct drm_device *dev,
+ 		args->hw_format = p->hw_format;
+ 		args->drm_format = p->drm_format;
+ 		args->tiled = vgt_get_tiling_mode(dev, p->tiled);
+-		args->size = ((p->stride * roundup(p->height, 8)) +
+-			      (PAGE_SIZE - 1)) >> PAGE_SHIFT;
++		args->size = ((p->stride * roundup(p->height, (args->tiled > I915_TILING_X) ? 32 : 8) +
++			      (PAGE_SIZE - 1)) >> PAGE_SHIFT);
+ 	} else if ((args->plane_id) == I915_VGT_PLANE_CURSOR) {
+ 		c = &pipe->cursor;
+ 		args->enabled = c->enabled;

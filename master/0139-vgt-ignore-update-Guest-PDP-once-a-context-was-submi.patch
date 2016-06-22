@@ -1,0 +1,42 @@
+From 463e0940c37c21df49ad37ca44858cc82545a11f Mon Sep 17 00:00:00 2001
+From: "Zheng, Xiao" <xiao.zheng@intel.com>
+Date: Tue, 4 Aug 2015 17:39:20 +0800
+Subject: [PATCH 139/403] vgt: ignore update Guest PDP once a context was
+ submit to HW
+
+It is not necessary to swith back to guest PDP, since Guest  will not touch it
+anymore after submission.
+
+Signed-off-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |    7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 717f436..f70cd89 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -658,6 +658,12 @@ static void vgt_update_guest_ctx_from_shadow(struct vgt_device *vgt,
+ 	int ctx_pages = EXECLIST_CTX_PAGES(ring_id);
+ 
+ 	if (shadow_execlist_context == PATCH_WITHOUT_SHADOW) {
++#if 0
++	/* For some unkonw reason, switch back to guest PDP will cause
++	 * strange ring hangup after > ~20hours 3D testing.
++	 * It is not necessary to swith back to guest PDP, since Guest
++	 * will not touch it anymore after submission*/
++
+ 		struct reg_state_ctx_header *reg_state;
+ 		uint32_t *g_rootp;
+ 		g_rootp = (uint32_t *)el_ctx->ppgtt_mm->virtual_page_table;
+@@ -667,6 +673,7 @@ static void vgt_update_guest_ctx_from_shadow(struct vgt_device *vgt,
+ 		ROOT_POINTER_2_CTX_STATE(reg_state, g_rootp, 1);
+ 		ROOT_POINTER_2_CTX_STATE(reg_state, g_rootp, 2);
+ 		ROOT_POINTER_2_CTX_STATE(reg_state, g_rootp, 3);
++#endif
+ 	} else {
+ 		int i;
+ 		for (i = 0; i < ctx_pages; ++ i) {
+-- 
+1.7.10.4
+

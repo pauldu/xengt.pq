@@ -1,0 +1,34 @@
+From 83e30f99d1f7d2d592a6f497363b63e7e6c5cf90 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Tue, 10 Mar 2015 23:54:18 +0800
+Subject: [PATCH 004/403] i915/vgt: re-enable i915 golden context
+
+It looks that the issue: mis-used dispatch flags in render context
+initialization has been fixed in i915, which once dispatched a PPGTT
+execbuffer before PPGTT was enabled incorrectly and caused a GPU
+hang at the time of system boot.
+
+So we re-enable it at this time.
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/i915_gem_render_state.c |    3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/i915_gem_render_state.c b/drivers/gpu/drm/i915/i915_gem_render_state.c
+index 85a3e12..5026a62 100644
+--- a/drivers/gpu/drm/i915/i915_gem_render_state.c
++++ b/drivers/gpu/drm/i915/i915_gem_render_state.c
+@@ -31,9 +31,6 @@
+ static const struct intel_renderstate_rodata *
+ render_state_get_rodata(struct drm_device *dev, const int gen)
+ {
+-	if (intel_vgpu_active(dev))
+-		return NULL;
+-
+ 	switch (gen) {
+ 	case 6:
+ 		return &gen6_null_state;
+-- 
+1.7.10.4
+

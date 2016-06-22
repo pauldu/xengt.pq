@@ -1,0 +1,109 @@
+From d43f0bf84d90767347ab62f719ad1f1ef6631514 Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Thu, 8 Oct 2015 21:51:42 +0800
+Subject: [PATCH 260/403] vgt: security: add render registers to audit
+
+below registers added:
+
+_REG_OACONTROL, corresponding definition in i915 is OACONTROL
+add _REG_OACTXCONTROL, _REG_OACONTROL_GEN8 as there are public also
+0x2290
+0x5200
+0x5240
+0x5280
+0x1c178
+0x1c17c
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |   23 +++++------------------
+ drivers/gpu/drm/i915/vgt/handlers.c   |    9 +++++++++
+ drivers/gpu/drm/i915/vgt/reg.h        |    3 +++
+ 3 files changed, 17 insertions(+), 18 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index 71a7948..15f7ddf 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -774,39 +774,26 @@ static int cmd_reg_handler(struct parser_exec_state *s,
+ 	struct pgt_device *pdev = vgt->pdev;
+ 	int rc = -1;
+ 
+-	/*Enabled for HSW at this moment to test,  disabled for BDW*/
+-	if (!IS_HSW(pdev)) {
+-		rc = 0;
+-		goto reg_handle;
+-	}
+-
+-	if (!reg_is_mmio(pdev, offset + 4)){
++	if (!reg_is_mmio(pdev, offset + 3)) {
+ 		rc = -1;
+ 		goto reg_handle;
+ 	}
+ 
+-	if ( reg_is_render(pdev, offset) ||
++	if ((reg_is_render(pdev, offset) && !reg_addr_fix(pdev, offset)) ||
+ 	     reg_passthrough(pdev, offset) ||
+ 	     (!vgt->vm_id && reg_is_config(pdev, offset)) ) {
+ 		rc = 0;
+-	}
+-	else if (offset == _REG_DE_RRMR || offset == FORCEWAKE_MT) {
+-		rc = 0;
+-	}/*TODO: for registers like rmrr or other tricky registers, continue using current
+-		temporary exception before developing full solution for them.*/
+-	else if ((offset == 0x138064) || (offset == 0x42008)) {
++	} else if (offset == _REG_DE_RRMR || offset == FORCEWAKE_MT) {
+ 		rc = 0;
+ 	}
+ 
+ reg_handle:
+ 	if (!rc)
+ 		reg_set_cmd_access(pdev, offset);
+-	else {
++	else
+ 		vgt_err("%s access to non-render register (%x)\n", cmd, offset);
+-		//ASSERT_VM(0,vgt);
+-	}
+ 
+-	return 0;
++	return rc;
+ }
+ 
+ static int vgt_cmd_handler_lri(struct parser_exec_state *s)
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index c39d333..81b5db8 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -3379,6 +3379,15 @@ reg_attr_t vgt_reg_info_general[] = {
+ {0x217c, 4, F_RDR, 0, D_ALL, NULL, NULL},
+ {0x12178, 4, F_RDR, 0, D_ALL, NULL, NULL},
+ {0x1217c, 4, F_RDR, 0, D_ALL, NULL, NULL},
++{0x2290, 8, F_RDR, 0, D_HSW_PLUS, NULL, NULL},
++{OACONTROL, 4, F_DOM0, 0, D_HSW, NULL, NULL},
++{_REG_OACTXCONTROL, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++{_REG_OACONTROL_GEN8, 4, F_DOM0, 0, D_BDW_PLUS, NULL, NULL},
++{0x5200, 32, F_RDR, 0, D_ALL, NULL, NULL},
++{0x5240, 32, F_RDR, 0, D_ALL, NULL, NULL},
++{0x5280, 16, F_RDR, 0, D_ALL, NULL, NULL},
++{0x1c178, 4, F_RDR, 0, D_BDW, NULL, NULL},
++{0x1c17c, 4, F_RDR, 0, D_BDW, NULL, NULL},
+ {BCS_SWCTRL, 4, F_RDR, 0, D_ALL, NULL, NULL},
+ {HS_INVOCATION_COUNT, 8, F_RDR, 0, D_ALL, NULL, NULL},
+ {DS_INVOCATION_COUNT, 8, F_RDR, 0, D_ALL, NULL, NULL},
+diff --git a/drivers/gpu/drm/i915/vgt/reg.h b/drivers/gpu/drm/i915/vgt/reg.h
+index 859c4af..8c5a3f8 100644
+--- a/drivers/gpu/drm/i915/vgt/reg.h
++++ b/drivers/gpu/drm/i915/vgt/reg.h
+@@ -50,6 +50,9 @@ static inline uint32_t __RING_REG(int32_t ring_id, uint32_t rcs_reg)
+ /*
+  * Registers used only by the command parser
+  */
++#define _REG_OACONTROL_GEN8      0x2B00
++#define _REG_OACTXCONTROL        0x2360
++
+ /* PRB0, RCS */
+ #define _REG_RCS_TAIL	0x02030
+ #define _REG_RCS_HEAD	0x02034
+-- 
+1.7.10.4
+

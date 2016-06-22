@@ -1,0 +1,45 @@
+From 6f124fbec727cf9da4e75decdce94ded28ec9026 Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Tue, 12 Jan 2016 08:44:25 +0800
+Subject: [PATCH 312/403] Fix a crash during freeing vgtbuffer objects
+
+The put_pages() are called after clearing the pin_count of the
+backing storage when to free the gem object. That caused the BUG()
+was met.
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/i915_gem_vgtbuffer.c |   10 +++-------
+ 1 file changed, 3 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
+index 934374f..33c3d4b 100644
+--- a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
++++ b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
+@@ -38,12 +38,9 @@ static int i915_gem_vgtbuffer_get_pages(struct drm_i915_gem_object *obj)
+ 
+ static void i915_gem_vgtbuffer_put_pages(struct drm_i915_gem_object *obj)
+ {
+-	/* backing storage is pinned */
+-	BUG();
+-}
+-
+-static void i915_gem_vgtbuffer_release(struct drm_i915_gem_object *obj)
+-{
++	/* like stolen memory, this should only be called during free
++	 * after clearing pin count.
++	 */
+ 	sg_free_table(obj->pages);
+ 	kfree(obj->pages);
+ }
+@@ -51,7 +48,6 @@ static void i915_gem_vgtbuffer_release(struct drm_i915_gem_object *obj)
+ static const struct drm_i915_gem_object_ops i915_gem_vgtbuffer_ops = {
+ 	.get_pages = i915_gem_vgtbuffer_get_pages,
+ 	.put_pages = i915_gem_vgtbuffer_put_pages,
+-	.release = i915_gem_vgtbuffer_release,
+ };
+ 
+ #define GEN8_DECODE_PTE(pte) \
+-- 
+1.7.10.4
+

@@ -1,0 +1,26 @@
+From f8cd58c7830e2612ae3ff260e935f94eb5486bba Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Wed, 25 Mar 2015 00:25:21 +0800
+Subject: [PATCH 024/403] vgt: remove 0x20e4 from register switch list as we
+ have set the correct value in i915.
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/render.c |    1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index 11396be..5668e2a 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -1319,7 +1319,6 @@ static struct reg_mask_t rcs_reset_mmio[] = {
+ 	{0x2044, 0},
+ 
+ 	{0x20a0, 0},
+-	{0x20e4, 1},
+ 	{0x7004, 1},
+ 	{0x20dc, 1},
+ 
+-- 
+1.7.10.4
+

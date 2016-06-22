@@ -1,0 +1,47 @@
+From 12d5fa346260c985afd4b0716bf155bc138b4592 Mon Sep 17 00:00:00 2001
+From: Rodrigo Vivi <rodrigo.vivi@intel.com>
+Date: Wed, 1 Apr 2015 13:05:01 -0700
+Subject: [PATCH 035/403] drm/i915/bdw: WaOCLCoherentLineFlush:bdw
+
+In case of OCL buffers with back-to-back walkers with one using binding table
+index 255 (Coherent) and other using BTI 253 (Non-coherent) using same surface
+we need flush coherent lines in between these walkers. So the WA requirement
+is to set bit 21 of 0xb118 MMIO at boot. With this bit set pipeline flush
+treat as invalidating even coherent lines along with non coherent lines.
+
+Signed-off-by: Rodrigo Vivi <rodrigo.vivi@intel.com>
+---
+ drivers/gpu/drm/i915/i915_reg.h |    1 +
+ drivers/gpu/drm/i915/intel_pm.c |    4 ++++
+ 2 files changed, 5 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/i915_reg.h b/drivers/gpu/drm/i915/i915_reg.h
+index 9ebf032..5bd6c43 100644
+--- a/drivers/gpu/drm/i915/i915_reg.h
++++ b/drivers/gpu/drm/i915/i915_reg.h
+@@ -5947,6 +5947,7 @@ enum skl_disp_power_wells {
+ #define GEN8_L3SQCREG4				0xb118
+ #define  GEN8_LQSC_RO_PERF_DIS			(1<<27)
+ #define  GEN8_LQSC_FLUSH_COHERENT_LINES		(1<<21)
++#define  GEN8_PIPELINE_FLUSH_COHERENT_LINES	(1<<21)
+ 
+ /* GEN8 chicken */
+ #define HDC_CHICKEN0				0x7300
+diff --git a/drivers/gpu/drm/i915/intel_pm.c b/drivers/gpu/drm/i915/intel_pm.c
+index 8a62143..d578841 100644
+--- a/drivers/gpu/drm/i915/intel_pm.c
++++ b/drivers/gpu/drm/i915/intel_pm.c
+@@ -6579,6 +6579,10 @@ static void haswell_init_clock_gating(struct drm_device *dev)
+ 	I915_WRITE(CHICKEN_PAR1_1,
+ 		   I915_READ(CHICKEN_PAR1_1) | FORCE_ARB_IDLE_PLANES);
+ 
++	/* WaOCLCoherentLineFlush:bdw */
++	I915_WRITE(GEN8_L3SQCREG4, I915_READ(GEN8_L3SQCREG4) |
++		   GEN8_PIPELINE_FLUSH_COHERENT_LINES);
++
+ 	lpt_init_clock_gating(dev);
+ }
+ 
+-- 
+1.7.10.4
+

@@ -1,0 +1,38 @@
+From 21860709131e43f987f3ab6dd55d59bd9645cec0 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Fri, 8 May 2015 00:09:35 +0800
+Subject: [PATCH 068/403] vgt: perf: adjust the size of oos page pool to 4096
+
+According to the result of one VM running 3D mark 2011,
+we adjust the size of oos page pool to 4096. Need to check
+other types of workloads.
+
+oos page statistics in one VM running 3D mark 2011:
+
+current avail oos page count: 498.
+minimum avail oos page count: 429.
+oos page steal count: 0.
+oos page attach count: 6569.
+oos page detach count: 6043.
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/gtt.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index 90e6fc3..f28bb5f 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -2001,7 +2001,7 @@ bool vgt_gtt_init(struct pgt_device *pdev)
+ 		if (preallocated_shadow_pages == -1)
+ 			preallocated_shadow_pages = 8192;
+ 		if (preallocated_oos_pages == -1)
+-			preallocated_oos_pages = 1024;
++			preallocated_oos_pages = 4096;
+ 	} else {
+ 		vgt_err("Unsupported platform.\n");
+ 		return false;
+-- 
+1.7.10.4
+

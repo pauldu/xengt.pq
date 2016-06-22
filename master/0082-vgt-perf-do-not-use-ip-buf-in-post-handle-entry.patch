@@ -1,0 +1,30 @@
+From 91561aae2848a887b4bd7058b69b3cd4e734b2bb Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Sun, 17 May 2015 17:45:45 +0800
+Subject: [PATCH 082/403] vgt: perf: do not use ip buf in post handle entry
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |    6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index d565a47..5a4287a 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -165,6 +165,12 @@ static inline int add_post_handle_entry(struct parser_exec_state *s,
+ 	}
+ 
+ 	entry = &list->handler[next];
++	/*
++	 * Do not use ip buf in post handle entry,
++	 * as ip buf has been freed at that time.
++	 * Switch back to guest memory write/read method
++	 */
++	entry->exec_state.ip_buf = entry->exec_state.ip_buf_va = NULL;
+ 	/* two pages mapping are always valid */
+ 	memcpy(&entry->exec_state, s, sizeof(struct parser_exec_state));
+ 	entry->handler = handler;
+-- 
+1.7.10.4
+

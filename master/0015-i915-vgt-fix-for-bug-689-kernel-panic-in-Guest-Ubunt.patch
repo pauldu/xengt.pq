@@ -1,0 +1,35 @@
+From fe833b279ac336402d26cd3331bd9b4e59eed9c4 Mon Sep 17 00:00:00 2001
+From: "Zheng, Xiao" <xiao.zheng@intel.com>
+Date: Fri, 20 Mar 2015 14:09:13 +0800
+Subject: [PATCH 015/403] i915/vgt: fix for bug#689 kernel panic in Guest
+ Ubuntue
+
+bug#689: Ubuntu 14.04 guest kernel panic while booting up three ubuntu guests.
+DE_IIR (pipe0 flip) interrupt was sent during guest i915 driver load stage.
+intel_modeset_init() has not yet initialized at that time.
+The fix will check the structure before use it.
+
+Signed-off-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/intel_display.c |    5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/intel_display.c b/drivers/gpu/drm/i915/intel_display.c
+index 8da7042..1ada556 100644
+--- a/drivers/gpu/drm/i915/intel_display.c
++++ b/drivers/gpu/drm/i915/intel_display.c
+@@ -10846,7 +10846,10 @@ void intel_prepare_page_flip(struct drm_device *dev, int plane)
+ 	 * is also accompanied by a spurious intel_prepare_page_flip().
+ 	 */
+ 	spin_lock_irqsave(&dev->event_lock, flags);
+-	if (intel_crtc->unpin_work && page_flip_finished(intel_crtc))
++	/* There is case that flip interrupts come early before intel_crtc
++	 * is initalized. Add a sanity check before use it.
++	 */
++	if (intel_crtc && intel_crtc->unpin_work && page_flip_finished(intel_crtc))
+ 		atomic_inc_not_zero(&intel_crtc->unpin_work->pending);
+ 	spin_unlock_irqrestore(&dev->event_lock, flags);
+ }
+-- 
+1.7.10.4
+

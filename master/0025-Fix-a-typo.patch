@@ -1,0 +1,26 @@
+From 76fb24c3bc50079798ce1b06badfcff24dccca15 Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Wed, 25 Mar 2015 17:36:20 +0800
+Subject: [PATCH 025/403] Fix a typo
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/xen/xengt.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/xen/xengt.c b/drivers/xen/xengt.c
+index 3c4c8b2..bfa4184 100644
+--- a/drivers/xen/xengt.c
++++ b/drivers/xen/xengt.c
+@@ -516,7 +516,7 @@ static int vgt_hvm_vmem_init(struct vgt_device *vgt)
+ 		info->vmem_vma_low_1mb[i] =
+ 			xen_remap_domain_mfn_range_in_kernel(i, 1, vgt->vm_id);
+ 
+-		if (info->vmem_vma[i] != NULL)
++		if (info->vmem_vma_low_1mb[i] != NULL)
+ 			continue;
+ 
+ 		/* Don't warn on [0xa0000, 0x100000): a known non-RAM hole */
+-- 
+1.7.10.4
+

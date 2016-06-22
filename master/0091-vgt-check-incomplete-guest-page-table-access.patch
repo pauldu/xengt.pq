@@ -1,0 +1,141 @@
+From d887b7b7f754fda5932b6753b933830448d908cd Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Wed, 3 Jun 2015 20:41:27 -0400
+Subject: [PATCH 091/403] vgt: check incomplete guest page table access
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |    1 +
+ drivers/gpu/drm/i915/vgt/gtt.c       |   35 +++++++++++++++++++++++++++++++++-
+ drivers/gpu/drm/i915/vgt/vgt.h       |    7 +++++++
+ 3 files changed, 42 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 4c065a4..b000350 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -1342,6 +1342,7 @@ static inline bool vgt_hw_ELSP_write(struct vgt_device *vgt,
+ 
+ 	ASSERT(ctx0 && ctx1);
+ 
++	ppgtt_check_partial_access(vgt);
+ 	ppgtt_sync_oos_pages(vgt);
+ 
+ 	vgt_dbg(VGT_DBG_EXECLIST, "EXECLIST is submitted into hardware! "
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index 0e92d0c..e39cc6c 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -531,6 +531,9 @@ void vgt_clean_guest_page(struct vgt_device *vgt, guest_page_t *guest_page)
+ 
+ 	if (guest_page->writeprotection)
+ 		hypervisor_unset_wp_pages(vgt, guest_page);
++
++	if (guest_page == vgt->gtt.last_partial_access_gpt)
++		vgt->gtt.last_partial_access_index = -1;
+ }
+ 
+ guest_page_t *vgt_find_guest_page(struct vgt_device *vgt, unsigned long gfn)
+@@ -1140,6 +1143,25 @@ static inline bool can_do_out_of_sync(guest_page_t *gpt)
+ 		&& gpt->write_cnt >= 2;
+ }
+ 
++bool ppgtt_check_partial_access(struct vgt_device *vgt)
++{
++	struct vgt_vgtt_info *gtt = &vgt->gtt;
++
++	if (gtt->last_partial_access_index == -1)
++		return true;
++
++	vgt_err("Incomplete page table access sequence.\n");
++
++	if (!ppgtt_handle_guest_write_page_table(
++			gtt->last_partial_access_gpt,
++			&gtt->last_partial_access_entry,
++			gtt->last_partial_access_index))
++		return false;
++
++	gtt->last_partial_access_index = -1;
++	return true;
++}
++
+ static bool ppgtt_handle_guest_write_page_table_bytes(void *gp,
+ 		uint64_t pa, void *p_data, int bytes)
+ {
+@@ -1148,6 +1170,7 @@ static bool ppgtt_handle_guest_write_page_table_bytes(void *gp,
+ 	struct vgt_device *vgt = spt->vgt;
+ 	struct vgt_gtt_pte_ops *ops = vgt->pdev->gtt.pte_ops;
+ 	struct vgt_device_info *info = &vgt->pdev->device_info;
++	struct vgt_vgtt_info *gtt = &vgt->gtt;
+ 	gtt_entry_t we, se;
+ 	unsigned long index;
+ 
+@@ -1163,6 +1186,8 @@ static bool ppgtt_handle_guest_write_page_table_bytes(void *gp,
+ 		trace_gpt_change(vgt->vm_id, "partial access - LOW",
+ 				NULL, we.type, *(u32 *)(p_data), index);
+ 
++		ppgtt_check_partial_access(vgt);
++
+ 		ppgtt_set_guest_entry(spt, &we, index);
+ 		ppgtt_get_shadow_entry(spt, &se, index);
+ 
+@@ -1175,8 +1200,14 @@ static bool ppgtt_handle_guest_write_page_table_bytes(void *gp,
+ 
+ 		se.val64 = 0;
+ 		ppgtt_set_shadow_entry(spt, &se, index);
++
++		gtt->last_partial_access_index = index;
++		gtt->last_partial_access_gpt = gpt;
++		gtt->last_partial_access_entry = we;
++
+ 		return true;
+-	}
++	} else
++		gtt->last_partial_access_index = -1;
+ 
+ 	if (hi)
+ 		trace_gpt_change(vgt->vm_id, "partial access - HIGH",
+@@ -1919,6 +1950,8 @@ bool vgt_init_vgtt(struct vgt_device *vgt)
+ 	INIT_LIST_HEAD(&gtt->mm_list_head);
+ 	INIT_LIST_HEAD(&gtt->oos_page_list_head);
+ 
++	gtt->last_partial_access_index = -1;
++
+ 	if (!vgt_expand_shadow_page_mempool(vgt->pdev)) {
+ 		vgt_err("fail to expand the shadow page mempool.");
+ 		return false;
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 5a5dc3c..4d628c4 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -607,6 +607,8 @@ extern void gen7_mm_free_page_table(struct vgt_mm *mm);
+ extern bool gen8_mm_alloc_page_table(struct vgt_mm *mm);
+ extern void gen8_mm_free_page_table(struct vgt_mm *mm);
+ 
++struct guest_page;
++
+ struct vgt_vgtt_info {
+ 	struct vgt_mm *ggtt_mm;
+ 	unsigned long active_ppgtt_mm_bitmap;
+@@ -616,6 +618,9 @@ struct vgt_vgtt_info {
+ 	DECLARE_HASHTABLE(el_ctx_hash_table, VGT_HASH_BITS);
+ 	atomic_t n_write_protected_guest_page;
+ 	struct list_head oos_page_list_head;
++	int last_partial_access_index;
++	gtt_entry_t last_partial_access_entry;
++	struct guest_page *last_partial_access_gpt;
+ };
+ 
+ extern bool vgt_init_vgtt(struct vgt_device *vgt);
+@@ -632,6 +637,8 @@ extern bool vgt_g2v_destroy_ppgtt_mm(struct vgt_device *vgt, int page_table_leve
+ extern struct vgt_mm *gen8_find_ppgtt_mm(struct vgt_device *vgt,
+                 int page_table_level, void *root_entry);
+ 
++extern bool ppgtt_check_partial_access(struct vgt_device *vgt);
++
+ typedef bool guest_page_handler_t(void *gp, uint64_t pa, void *p_data, int bytes);
+ 
+ struct oos_page;
+-- 
+1.7.10.4
+

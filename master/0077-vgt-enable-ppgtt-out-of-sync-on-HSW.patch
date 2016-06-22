@@ -1,0 +1,41 @@
+From 04c332d442738dc30d237c28d98b7a54627c298e Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Thu, 14 May 2015 23:57:16 +0800
+Subject: [PATCH 077/403] vgt: enable ppgtt out-of-sync on HSW
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |    1 +
+ drivers/gpu/drm/i915/vgt/gtt.c        |    4 ++--
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index f6c5acf..b1384da 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -300,6 +300,7 @@ void apply_tail_list(struct vgt_device *vgt, int ring_id,
+ 				rs->uhptr &= ~_REGBIT_UHPTR_VALID;
+ 				VGT_MMIO_WRITE(pdev, VGT_UHPTR(ring_id), rs->uhptr);
+ 			}
++			ppgtt_sync_oos_pages(vgt);
+ 			VGT_WRITE_TAIL(pdev, ring_id, entry->tail);
+ 		}
+ 		list->head = next;
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index c800ae0..0e92d0c 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -2014,8 +2014,8 @@ bool vgt_gtt_init(struct pgt_device *pdev)
+ 
+ 		if (preallocated_shadow_pages == -1)
+ 			preallocated_shadow_pages = 512;
+-		if (spt_out_of_sync)
+-			spt_out_of_sync = false;
++		if (preallocated_oos_pages == -1)
++			preallocated_oos_pages = 2048;
+ 	} else if (IS_BDW(pdev)) {
+ 		pdev->gtt.pte_ops = &gen8_gtt_pte_ops;
+ 		pdev->gtt.gma_ops = &gen8_gtt_gma_ops;
+-- 
+1.7.10.4
+

@@ -1,0 +1,62 @@
+From 39f15c2274662cd26f0068d50a548a716c6af9f6 Mon Sep 17 00:00:00 2001
+From: Xiaoguang Chen <xiaoguang.chen@intel.com>
+Date: Fri, 26 Feb 2016 10:36:32 +0800
+Subject: [PATCH 358/403] add a kernel parameter enable_vgtbuffer
+
+QEMU will check this parameter to decide whether enable composite
+display or not.
+The default is false.
+
+v2: do not use plane's enabled field, return 0 if enable_vgtbuffer is true;
+otherwise return -INVALID
+
+Signed-off-by: xiaoguang chen <xiaoguang.chen@intel.com>
+---
+ drivers/gpu/drm/i915/i915_gem_vgtbuffer.c |   11 +++++++++++
+ include/uapi/drm/i915_drm.h               |    1 +
+ 2 files changed, 12 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
+index 33c3d4b..37e7296 100644
+--- a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
++++ b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
+@@ -27,6 +27,10 @@
+ #include "intel_drv.h"
+ #include <linux/swap.h>
+ 
++bool enable_vgtbuffer = false;
++module_param_named(enable_vgtbuffer, enable_vgtbuffer, bool, 0600);
++MODULE_PARM_DESC(enable_vgtbuffer, "Control the vgtbuffer ioctl available or not (default: false)");
++
+ struct vgt_device;
+ #include "fb_decoder.h"
+ 
+@@ -210,6 +214,13 @@ i915_gem_vgtbuffer_ioctl(struct drm_device *dev, void *data,
+ 	u32 handle;
+ 	int ret;
+ 
++	if (args->flags & I915_VGTBUFFER_CHECK_CAPABILITY) {
++		if (enable_vgtbuffer)
++			return 0;
++		else
++			return -EINVAL;
++	}
++
+ 	if (INTEL_INFO(dev)->gen < 7)
+ 		return -EPERM;
+ 
+diff --git a/include/uapi/drm/i915_drm.h b/include/uapi/drm/i915_drm.h
+index 9d97c8a..a2f04b3 100644
+--- a/include/uapi/drm/i915_drm.h
++++ b/include/uapi/drm/i915_drm.h
+@@ -1160,6 +1160,7 @@ struct drm_i915_gem_vgtbuffer {
+ 	__u32 flags;
+ #define I915_VGTBUFFER_READ_ONLY (1<<0)
+ #define I915_VGTBUFFER_QUERY_ONLY (1<<1)
++#define I915_VGTBUFFER_CHECK_CAPABILITY (1<<2)
+ #define I915_VGTBUFFER_UNSYNCHRONIZED 0x80000000
+ 	/**
+ 	 * Returned handle for the object.
+-- 
+1.7.10.4
+

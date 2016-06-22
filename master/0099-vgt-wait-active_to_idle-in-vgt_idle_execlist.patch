@@ -1,0 +1,43 @@
+From 8a0b534c2617119415ab02f741a0c12132f83193 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Thu, 11 Jun 2015 20:58:15 +0800
+Subject: [PATCH 099/403] vgt: wait active_to_idle in vgt_idle_execlist()
+
+Add a new idle condition check "active_to_idle" like what the native
+driver does.
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |    9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 64bc5ba..1ac14a9 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -1469,6 +1469,9 @@ bool vgt_idle_execlist(struct pgt_device *pdev, enum vgt_ring_id ring_id)
+ 	struct execlist_status_format el_status;
+ 	uint32_t ctx_ptr_reg;
+ 	struct ctx_st_ptr_format ctx_st_ptr;
++	struct context_status_format ctx_status;
++	uint32_t ctx_status_reg = el_ring_mmio(ring_id, _EL_OFFSET_STATUS_BUF);
++	unsigned long last_csb_reg_offset;
+ 
+ 	el_ring_base = vgt_ring_id_to_EL_base(ring_id);
+ 	el_status_reg = el_ring_base + _EL_OFFSET_STATUS;
+@@ -1487,6 +1490,12 @@ bool vgt_idle_execlist(struct pgt_device *pdev, enum vgt_ring_id ring_id)
+ 	if (ctx_st_ptr.status_buf_read_ptr != ctx_st_ptr.status_buf_write_ptr)
+ 		return false;
+ 
++	last_csb_reg_offset = ctx_status_reg + ctx_st_ptr.status_buf_write_ptr * 8;
++	READ_STATUS_MMIO(pdev, last_csb_reg_offset, ctx_status);
++
++	if (!ctx_status.active_to_idle)
++		return false;
++
+ 	return true;
+ }
+ 
+-- 
+1.7.10.4
+

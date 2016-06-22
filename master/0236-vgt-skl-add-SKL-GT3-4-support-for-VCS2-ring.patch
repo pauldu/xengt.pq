@@ -1,0 +1,87 @@
+From ae91889e1fe53b3d7e72a23994ff87c487d76f96 Mon Sep 17 00:00:00 2001
+From: Min He <min.he@intel.com>
+Date: Mon, 30 Nov 2015 23:08:41 +0800
+Subject: [PATCH 236/403] vgt/skl: add SKL GT3/4 support for VCS2 ring
+
+This patch added code to enable VCS2 ring on SKL GT3 and GT4 systems.
+
+Signed-off-by: Min He <min.he@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c  |    2 +-
+ drivers/gpu/drm/i915/vgt/interrupt.c |    2 +-
+ drivers/gpu/drm/i915/vgt/utility.c   |    2 +-
+ drivers/gpu/drm/i915/vgt/vgt.c       |    4 ++--
+ drivers/gpu/drm/i915/vgt/vgt.h       |    2 ++
+ 5 files changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index c972eb3..52304b8 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -3882,7 +3882,7 @@ bool vgt_post_setup_mmio_hooks(struct pgt_device *pdev)
+ 				ring_pp_mode_read,
+ 				ring_pp_mode_write);
+ 
+-	if (IS_BDWGT3(pdev)) {
++	if (IS_BDWGT3(pdev) || IS_SKLGT3(pdev) || IS_SKLGT4(pdev)) {
+ 		reg_update_handlers(pdev, _REG_VCS2_MFX_MODE_BDW, 4,
+ 				ring_pp_mode_read,
+ 				ring_pp_mode_write);
+diff --git a/drivers/gpu/drm/i915/vgt/interrupt.c b/drivers/gpu/drm/i915/vgt/interrupt.c
+index 56bfe3a..f00d84f 100644
+--- a/drivers/gpu/drm/i915/vgt/interrupt.c
++++ b/drivers/gpu/drm/i915/vgt/interrupt.c
+@@ -1666,7 +1666,7 @@ static void vgt_gen8_init_irq(
+ 	SET_BIT_INFO(hstate, 4, VCS_MI_FLUSH_DW, IRQ_INFO_GT1);
+ 	SET_BIT_INFO(hstate, 8, VCS_AS_CONTEXT_SWITCH, IRQ_INFO_GT1);
+ 
+-	if (IS_BDWGT3(pdev)) {
++	if (IS_BDWGT3(pdev) || IS_SKLGT3(pdev) || IS_SKLGT4(pdev)) {
+ 		SET_BIT_INFO(hstate, 16, VCS2_MI_USER_INTERRUPT, IRQ_INFO_GT1);
+ 		SET_BIT_INFO(hstate, 20, VCS2_MI_FLUSH_DW, IRQ_INFO_GT1);
+ 		SET_BIT_INFO(hstate, 24, VCS2_AS_CONTEXT_SWITCH, IRQ_INFO_GT1);
+diff --git a/drivers/gpu/drm/i915/vgt/utility.c b/drivers/gpu/drm/i915/vgt/utility.c
+index 45fbc77..e01bc00 100644
+--- a/drivers/gpu/drm/i915/vgt/utility.c
++++ b/drivers/gpu/drm/i915/vgt/utility.c
+@@ -184,7 +184,7 @@ void show_mode_settings(struct pgt_device *pdev)
+ 		SHOW_MODE(CACHE_MODE_0_GEN7);
+ 		SHOW_MODE(CACHE_MODE_1);
+ 		SHOW_MODE(GEN7_GT_MODE);
+-	} else if (IS_BDWGT3(pdev)) {
++	} else if (IS_BDWGT3(pdev) || IS_SKLGT3(pdev) || IS_SKLGT4(pdev)) {
+ 		SHOW_MODE(_REG_VCS2_MI_MODE);
+ 		SHOW_MODE(_REG_VCS2_MFX_MODE_BDW);
+ 		SHOW_MODE(_REG_VCS2_INSTPM);
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 0563d56..071b234 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -706,9 +706,9 @@ static bool vgt_initialize_platform(struct pgt_device *pdev)
+ 		pdev->ring_xxx_valid = 0;
+ 
+ 		/*
+-		 * Add GT3 VCS2 ring for BDW GT3
++		 * Add GT3 VCS2 ring for BDW and SKL GT3/4
+ 		 */
+-		if (IS_BDWGT3(pdev)) {
++		if (IS_BDWGT3(pdev) || IS_SKLGT3(pdev) || IS_SKLGT4(pdev)) {
+ 			pdev->max_engines = 5;
+ 			pdev->ring_mmio_base[RING_BUFFER_VCS2] = _REG_VCS2_TAIL;
+ 			pdev->ring_mi_mode[RING_BUFFER_VCS2] = _REG_VCS2_MI_MODE;
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 0db7605..34817ae 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -724,6 +724,8 @@ static inline bool reg_hw_access(struct vgt_device *vgt, unsigned int reg)
+ #define IS_PRESKL(pdev) (IS_BDW(pdev) || IS_HSW(pdev) || IS_IVB(pdev) || IS_SNB(pdev))
+ #define IS_SKLPLUS(pdev) (IS_SKL(pdev))
+ #define IS_BDWGT3(pdev) (IS_BDW(pdev) && (GEN_REV(pdev->device_info.gen) == 3))
++#define IS_SKLGT3(pdev) (IS_SKL(pdev) && (GEN_REV(pdev->device_info.gen) == 3))
++#define IS_SKLGT4(pdev) (IS_SKL(pdev) && (GEN_REV(pdev->device_info.gen) == 4))
+ 
+ #define D_SNB	(1 << 0)
+ #define D_IVB	(1 << 1)
+-- 
+1.7.10.4
+

@@ -1,0 +1,38 @@
+From 3b1cd6b6360b4b3d769e2cd4dc7ac4436edf89af Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Thu, 28 Jan 2016 08:46:27 +0800
+Subject: [PATCH 327/403] vgt/skl: enable cmd audit for skl
+
+after review the bspec the cmd audit could enable for skl now.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |    5 +----
+ 1 file changed, 1 insertion(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index fea9f1d..abe1a4f 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -813,7 +813,7 @@ static int cmd_reg_handler(struct parser_exec_state *s,
+ 	struct pgt_device *pdev = vgt->pdev;
+ 	int rc = -1;
+ 
+-	if (!IS_BDW(s->vgt->pdev))
++	if (IS_HSW(s->vgt->pdev))
+ 		return 0;
+ 
+ 	if (!reg_is_mmio(pdev, offset + 3)) {
+@@ -1567,9 +1567,6 @@ static inline int cmd_address_audit(struct parser_exec_state *s, unsigned long g
+ 	int i;
+ 	int rc = 0;
+ 
+-	if (!IS_BDW(s->vgt->pdev))
+-		return 0;
+-
+ 	if (op_size > max_surface_size) {
+ 		vgt_err("cmd_parser: misusage of the address audit or malicious %s detected!\n", s->info->name);
+ 		return -1;
+-- 
+1.7.10.4
+

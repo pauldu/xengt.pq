@@ -1,0 +1,73 @@
+From 15eef612f238ef85a5e91b08ae9af10eb6e0519b Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Tue, 24 Nov 2015 09:18:15 +0800
+Subject: [PATCH 284/403] be able to get va for reserved aperture
+
+We use reserved aperture for shadow command buffers and contexts, and
+need to get the va in some debugging functions. So one more check is
+needed in gma to va function call.
+
+Changed two printk to vgt_dbg, which are display related.
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/display.c |    6 +++---
+ drivers/gpu/drm/i915/vgt/gtt.c     |   10 +++++++---
+ 2 files changed, 10 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/display.c b/drivers/gpu/drm/i915/vgt/display.c
+index 75ac93f..18e6f3b 100644
+--- a/drivers/gpu/drm/i915/vgt/display.c
++++ b/drivers/gpu/drm/i915/vgt/display.c
+@@ -556,9 +556,9 @@ bool rebuild_pipe_mapping(struct vgt_device *vgt, unsigned int reg, uint32_t new
+ 				pport = (hw_value & TRANS_DDI_PORT_MASK) >>
+ 						TRANS_DDI_PORT_SHIFT;
+ 
+-				printk("%s: Enable. pport = %d, vport = %d, "
++				vgt_dbg(VGT_DBG_DPY, "Enable. pport = %d, vport = %d, "
+ 					"hw_value = 0x%08x, new_data = 0x%08x\n",
+-			       		__FUNCTION__, pport, vport, hw_value, new_data);
++					pport, vport, hw_value, new_data);
+ 
+ 				if (!(TRANS_DDI_FUNC_ENABLE & hw_value)) {
+ 					continue;
+@@ -629,7 +629,7 @@ bool update_pipe_mapping(struct vgt_device *vgt, unsigned int physical_reg, uint
+ 				TRANS_DDI_PORT_SHIFT;
+ 		vport_override = vgt->ports[vport].port_override;
+ 
+-		printk("%s: Enable. pport = %d, vport = %d\n", __FUNCTION__, pport, vport);
++		vgt_dbg(VGT_DBG_DPY, "Enable. pport = %d, vport = %d\n", pport, vport);
+ 
+ 		if (!(TRANS_DDI_FUNC_ENABLE & virtual_wr_data) ||
+ 			(vport_override == I915_MAX_PORTS)) {
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index 9861c1f..bf054c0 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -1576,7 +1576,6 @@ static inline unsigned long vgt_gma_to_gpa(struct vgt_mm *mm, unsigned long gma)
+ 
+ 	return gpa;
+ err:
+-	vgt_err("invalid mm type: %d, gma %lx\n", mm->type, gma);
+ 	return INVALID_ADDR;
+ }
+ 
+@@ -1587,8 +1586,13 @@ void *vgt_gma_to_va(struct vgt_mm *mm, unsigned long gma)
+ 
+ 	gpa = vgt_gma_to_gpa(mm, gma);
+ 	if (gpa == INVALID_ADDR) {
+-		vgt_warn("invalid gpa! gma 0x%lx, mm type %d\n", gma, mm->type);
+-		return NULL;
++		if (g_gm_is_reserved(vgt, gma)) {
++			return v_aperture(vgt->pdev, gma);
++		} else {
++			vgt_warn("invalid gpa! gma 0x%lx, mm type %d\n",
++				 gma, mm->type);
++			return NULL;
++		}
+ 	}
+ 
+ 	return hypervisor_gpa_to_va(vgt, gpa);
+-- 
+1.7.10.4
+

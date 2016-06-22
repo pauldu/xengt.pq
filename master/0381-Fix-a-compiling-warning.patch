@@ -1,0 +1,45 @@
+From fb3dfa540a9ca65bda77e1b77b7c9e8c043c0466 Mon Sep 17 00:00:00 2001
+From: Chao Zhou <chao.zhou@intel.com>
+Date: Wed, 9 Mar 2016 14:25:24 +0800
+Subject: [PATCH 381/403] Fix a compiling warning.
+
+In some special case if cmd_len <= 1, the offset will not be initialized.
+This issue is from 0-day.
+
+Signed-off-by: Chao Zhou <chao.zhou@intel.com>
+Signed-off-by: Yi Sun <yi.sun@intel.com>
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |    7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index e163f38..07a30c3 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -738,18 +738,19 @@ static int vgt_cmd_handler_mi_set_context(struct parser_exec_state* s)
+ 	((1UL << ((a) + 1)) - (1UL << (b)))
+ static int vgt_cmd_handler_lri_emulate(struct parser_exec_state *s)
+ {
+-	int i;
++	int i = 1;
+ 	int cmd_len = cmd_length(s);
+ 	unsigned int offset;
+ 	uint32_t val;
+ 
+-	for (i = 1; i < cmd_len; i += 2) {
++	do {
+ 		offset = cmd_val(s, i) & BIT_RANGE_MASK(22, 2);
+ 		val = cmd_val(s, i + 1);
+ 
+ 		if (offset == _REG_DE_RRMR || offset == FORCEWAKE_MT)
+ 			break;
+-	}
++		i += 2;
++	} while (i < cmd_len);
+ 
+ 	if (i == cmd_len) {
+ 		vgt_err("No DE_RRMR or MUL_FORCEWAKE in LRI?\n");
+-- 
+1.7.10.4
+

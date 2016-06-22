@@ -1,0 +1,31 @@
+From deda352526a3079788fb89b668f03aded31968df Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Tue, 11 Aug 2015 20:49:08 +0800
+Subject: [PATCH 210/403] vgt/skl: extend DERRMR patch handler to gen8+
+
+v2:
+
+- Take Kevin's comments: Use specific platform definitions
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index 99900d5..58e8559 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -818,7 +818,8 @@ static int vgt_cmd_handler_lri(struct parser_exec_state *s)
+ 		offset = cmd_val(s, i) & BIT_RANGE_MASK(22, 2);
+ 		rc |= cmd_reg_handler(s, offset, i, "lri");
+ 
+-		if (IS_BDW(s->vgt->pdev) && offset == _REG_DE_RRMR) {
++		if ((IS_BDW(s->vgt->pdev) || IS_SKL(s->vgt->pdev))
++			&& offset == _REG_DE_RRMR) {
+ 			rc = add_post_handle_entry(s, vgt_cmd_handler_lri_de_rrmr);
+ 			if (rc) {
+ 				vgt_err("fail to allocate post handle");
+-- 
+1.7.10.4
+

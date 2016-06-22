@@ -1,0 +1,84 @@
+From 50a56860ddab6d469b0bb253cce2f55da4f83c0f Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Sun, 1 Nov 2015 05:03:52 +0800
+Subject: [PATCH 229/403] vgt/skl: save/restore mocs registers
+
+Save/restore mocs registers when doing context switch between
+different VMs.
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/render.c |   37 ++++++++++++++++++++++++++++++++++---
+ 1 file changed, 34 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index 2282f63..6fe7482 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -274,6 +274,34 @@ static void __vgt_rendering_save(struct vgt_device *vgt, int num, vgt_reg_t *reg
+ 	}
+ }
+ 
++static void gen9_save_mocs(struct vgt_device *vgt)
++{
++	struct pgt_device *pdev = vgt->pdev;
++	u32 reg;
++
++	for (reg = 0xc800; reg < 0xcff8; reg += 4)
++		__vreg(vgt, reg) = VGT_MMIO_READ(pdev, reg);
++
++	for (reg = 0xb020; reg < 0xb09c; reg += 4)
++		__vreg(vgt, reg) = VGT_MMIO_READ(pdev, reg);
++}
++
++static void gen9_restore_mocs(struct vgt_device *vgt)
++{
++	struct pgt_device *pdev = vgt->pdev;
++	u32 reg;
++
++	for (reg = 0xc800; reg < 0xcff8; reg += 4) {
++		VGT_MMIO_WRITE(pdev, reg, __vreg(vgt, reg));
++		VGT_POST_READ(pdev, reg);
++	}
++
++	for (reg = 0xb020; reg < 0xb09c; reg += 4) {
++		VGT_MMIO_WRITE(pdev, reg, __vreg(vgt, reg));
++		VGT_POST_READ(pdev, reg);
++	}
++}
++
+ /* For save/restore global states difference between VMs.
+  * Other context states should be covered by normal context switch later. */
+ static void vgt_rendering_save_mmio(struct vgt_device *vgt)
+@@ -294,11 +322,12 @@ static void vgt_rendering_save_mmio(struct vgt_device *vgt)
+ 		__vgt_rendering_save(vgt,
+ 				vgt_get_extra_ctx_regs_num(),
+ 				vgt_get_extra_ctx_regs());
+-	else if (IS_SKL(pdev))
++	else if (IS_SKL(pdev)) {
++		gen9_save_mocs(vgt);
+ 		__vgt_rendering_save(vgt,
+ 				ARRAY_NUM(vgt_gen9_render_regs),
+ 				&vgt_gen9_render_regs[0]);
+-
++	}
+ 	pdev->in_ctx_switch = 0;
+ }
+ 
+@@ -357,10 +386,12 @@ static void vgt_rendering_restore_mmio(struct vgt_device *vgt)
+ 		__vgt_rendering_restore(vgt,
+ 				vgt_get_extra_ctx_regs_num(),
+ 				vgt_get_extra_ctx_regs());
+-	else if (IS_SKL(pdev))
++	else if (IS_SKL(pdev)) {
++		gen9_restore_mocs(vgt);
+ 		__vgt_rendering_restore(vgt,
+ 				ARRAY_NUM(vgt_gen9_render_regs),
+ 				&vgt_gen9_render_regs[0]);
++	}
+ }
+ 
+ void vgt_ring_init(struct pgt_device *pdev, int id)
+-- 
+1.7.10.4
+

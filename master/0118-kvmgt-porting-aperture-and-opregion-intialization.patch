@@ -1,0 +1,179 @@
+From 61fa02c0b5bb8e3f3f42da32afe6d392a6fc0247 Mon Sep 17 00:00:00 2001
+From: Xiaoguang Chen <xiaoguang.chen@intel.com>
+Date: Thu, 9 Jul 2015 17:14:01 +0800
+Subject: [PATCH 118/403] kvmgt porting aperture and opregion intialization
+
+alloc/free,map/unmap the aperture and opregion in kvmgt
+
+Signed-off-by: Jike Song <jike.song@intel.com>
+Signed-off-by: XiaoGuang Chen <xiaoguang.chen@intel.com>
+diff --git a/drivers/gpu/drm/i915/vgt/hypercall.h b/drivers/gpu/drm/i915/vgt/hypercall.h
+index edd8bd6..3d3403f 100644
+--- a/drivers/gpu/drm/i915/vgt/hypercall.h
++++ b/drivers/gpu/drm/i915/vgt/hypercall.h
+@@ -28,12 +28,13 @@
+ 
+ struct guest_page;
+ struct vgt_device;
++enum map_type;
+ struct kernel_dm {
+ 	unsigned long (*g2m_pfn)(int vm_id, unsigned long g_pfn);
+ 	int (*pause_domain)(int vm_id);
+ 	int (*shutdown_domain)(int vm_id);
+ 	int (*map_mfn_to_gpfn)(int vm_id, unsigned long gpfn,
+-		unsigned long mfn, int nr, int map);
++		unsigned long mfn, int nr, int map, enum map_type type);
+ 	int (*set_trap_area)(struct vgt_device *vgt, uint64_t start, uint64_t end, bool map);
+ 	bool (*set_wp_pages)(struct vgt_device *vgt, struct guest_page *p);
+ 	bool (*unset_wp_pages)(struct vgt_device *vgt, struct guest_page *p);
+diff --git a/drivers/gpu/drm/i915/vgt/instance.c b/drivers/gpu/drm/i915/vgt/instance.c
+index 8a22870..ea4d7e7 100644
+--- a/drivers/gpu/drm/i915/vgt/instance.c
++++ b/drivers/gpu/drm/i915/vgt/instance.c
+@@ -289,6 +289,11 @@ int create_vgt_instance(struct pgt_device *pdev, struct vgt_device **ptr_vgt, vg
+ 			current_foreground_vm(pdev) = vgt;
+ 		}
+ 	}
++	if (!vgt_in_xen) {
++		vgt_info("kvmgt:emulating a writing 0xfc opregion for VM%d\n",
++					vgt->vm_id);
++		vgt_hvm_opregion_init(vgt, 0);
++	}
+ 	bitmap_zero(vgt->enabled_rings, MAX_ENGINES);
+ 	bitmap_zero(vgt->started_rings, MAX_ENGINES);
+ 
+@@ -398,9 +403,15 @@ void vgt_release_instance(struct vgt_device *vgt)
+ 	vgt_clean_vgtt(vgt);
+ 
+ 	if (vgt->state.opregion_va) {
+-		vgt_hvm_opregion_map(vgt, 0);
+-		free_pages((unsigned long)vgt->state.opregion_va,
+-				VGT_OPREGION_PORDER);
++		if (!vgt_in_xen) {
++			vunmap(vgt->state.opregion_va - vgt->state.opregion_offset);
++			for (i = 0; i < VGT_OPREGION_PAGES; i++)
++				put_page(vgt->state.opregion_pages[i]);
++		} else {
++			vgt_hvm_opregion_map(vgt, 0);
++			free_pages((unsigned long)vgt->state.opregion_va,
++						VGT_OPREGION_PORDER);
++		}
+ 	}
+ 
+ 	hypervisor_hvm_exit(vgt);
+diff --git a/drivers/gpu/drm/i915/vgt/mmio.c b/drivers/gpu/drm/i915/vgt/mmio.c
+index 6cb94b3..282c299 100644
+--- a/drivers/gpu/drm/i915/vgt/mmio.c
++++ b/drivers/gpu/drm/i915/vgt/mmio.c
+@@ -557,7 +557,8 @@ int vgt_hvm_opregion_map(struct vgt_device *vgt, int map)
+ 			vgt->state.opregion_gfn[i],
+ 			hypervisor_virt_to_mfn(opregion + i*PAGE_SIZE),
+ 			1,
+-			map);
++			map,
++			VGT_MAP_OPREGION);
+ 		if (rc != 0)
+ 			vgt_err("hypervisor_map_mfn_to_gpfn fail with %d!\n", rc);
+ 	}
+@@ -567,7 +568,7 @@ int vgt_hvm_opregion_map(struct vgt_device *vgt, int map)
+ 
+ int vgt_hvm_opregion_init(struct vgt_device *vgt, uint32_t gpa)
+ {
+-	if (vgt_hvm_opregion_resinit(vgt, gpa)) {
++	if (!vgt_in_xen || vgt_hvm_opregion_resinit(vgt, gpa)) {
+ 
+ 		/* modify the vbios parameters for PORTs,
+ 		 * Let guest see full port capability.
+diff --git a/drivers/gpu/drm/i915/vgt/utility.c b/drivers/gpu/drm/i915/vgt/utility.c
+index b5232eb..685579f 100644
+--- a/drivers/gpu/drm/i915/vgt/utility.c
++++ b/drivers/gpu/drm/i915/vgt/utility.c
+@@ -970,7 +970,7 @@ int vgt_hvm_map_aperture (struct vgt_device *vgt, int map)
+ 		vgt->vm_id, first_gfn, first_mfn, nr_mfns);
+ 
+ 	r = hypervisor_map_mfn_to_gpfn(vgt, first_gfn, first_mfn,
+-		nr_mfns, map);
++		nr_mfns, map, VGT_MAP_APERTURE);
+ 
+ 	if (r != 0)
+ 		printk(KERN_ERR "vgt_hvm_map_aperture fail with %d!\n", r);
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index f329698..b845d98 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -38,6 +38,7 @@ MODULE_VERSION("0.1");
+ extern struct kernel_dm xengt_kdm;
+ extern struct kernel_dm kvmgt_kdm;
+ struct kernel_dm *vgt_pkdm = NULL;
++bool vgt_in_xen __read_mostly = true;
+ 
+ bool hvm_render_owner = false;
+ module_param_named(hvm_render_owner, hvm_render_owner, bool, 0600);
+@@ -1247,6 +1248,7 @@ bool i915_start_vgt(struct pci_dev *pdev)
+ 
+ 	vgt_pkdm = try_then_request_module(symbol_get(xengt_kdm), "xengt");
+ 	if (vgt_pkdm == NULL || !hypervisor_check_host()) {
++		vgt_in_xen = false;
+ 		printk("vgt: Could not load xengt MPT service\n");
+ 		vgt_pkdm = try_then_request_module(symbol_get(kvmgt_kdm), "kvm");
+ 		if (vgt_pkdm == NULL) {
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index a420a91..7c08ee1 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -96,6 +96,7 @@ extern bool spt_out_of_sync;
+ extern bool cmd_parser_ip_buf;
+ extern bool timer_based_qos;
+ extern int tbs_period_ms;
++extern bool vgt_in_xen;
+ 
+ enum vgt_event_type {
+ 	// GT
+@@ -229,6 +230,11 @@ enum transcoder {
+ 	TRANSCODER_EDP = 0xF,
+ };
+ 
++enum map_type {
++	VGT_MAP_APERTURE,
++	VGT_MAP_OPREGION,
++};
++
+ #define vgt_dbg(component, fmt, s...)	\
+ 	do { if (vgt_debug & component) printk(KERN_DEBUG "vGT debug:(%s:%d) " fmt, __FUNCTION__, __LINE__, ##s); } while (0)
+ 
+@@ -333,7 +339,9 @@ typedef struct {
+ 
+ 	/* OpRegion state */
+ 	void		*opregion_va;
++	uint64_t    opregion_offset;
+ 	uint64_t	opregion_gfn[VGT_OPREGION_PAGES];
++	struct page *opregion_pages[VGT_OPREGION_PAGES];
+ } vgt_state_t;
+ 
+ typedef struct {
+@@ -2997,10 +3005,10 @@ static inline int hypervisor_shutdown_domain(struct vgt_device *vgt)
+ }
+ 
+ static inline int hypervisor_map_mfn_to_gpfn(struct vgt_device *vgt,
+-	unsigned long gpfn, unsigned long mfn, int nr, int map)
++	unsigned long gpfn, unsigned long mfn, int nr, int map, enum map_type type)
+ {
+ 	if (vgt_pkdm && vgt_pkdm->map_mfn_to_gpfn)
+-		return vgt_pkdm->map_mfn_to_gpfn(vgt->vm_id, gpfn, mfn, nr, map);
++		return vgt_pkdm->map_mfn_to_gpfn(vgt->vm_id, gpfn, mfn, nr, map, type);
+ 
+ 	return 0;
+ }
+diff --git a/drivers/xen/xengt.c b/drivers/xen/xengt.c
+index 33c07c3..4ce5467 100644
+--- a/drivers/xen/xengt.c
++++ b/drivers/xen/xengt.c
+@@ -216,7 +216,7 @@ static int xen_hvm_memory_mapping(int vm_id, uint64_t first_gfn, uint64_t first_
+ }
+ 
+ static int xen_map_mfn_to_gpfn(int vm_id, unsigned long gpfn,
+-	unsigned long mfn, int nr, int map)
++	unsigned long mfn, int nr, int map, enum map_type type)
+ {
+ 	int rc;
+ 	rc = xen_hvm_memory_mapping(vm_id, gpfn, mfn, nr,

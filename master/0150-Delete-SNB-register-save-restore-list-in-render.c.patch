@@ -1,0 +1,98 @@
+From 6eae270e117abc5d6a6a54f5f1f654c142da3645 Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Sun, 9 Aug 2015 13:38:02 +0800
+Subject: [PATCH 150/403] Delete SNB register save/restore list in render.c
+
+SNB support has been removed long time ago.
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/render.c |   58 ++-----------------------------------
+ 1 file changed, 2 insertions(+), 56 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index 19555eb..d0b8c8e 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -424,52 +424,6 @@ void vgt_kick_off_execution(struct vgt_device *vgt)
+ }
+ 
+ /* FIXME: need audit all render resources carefully */
+-vgt_reg_t vgt_render_regs[] = {
+-	/* mode ctl regs. sync with vgt_mode_ctl_regs */
+-	_REG_ARB_MODE,
+-
+-	_REG_CACHE_MODE_0,
+-	_REG_RCS_MI_MODE,
+-	_REG_GFX_MODE,
+-
+-	_REG_VCS_MI_MODE,
+-	_REG_BCS_MI_MODE,
+-
+-	_REG_RCS_INSTPM,
+-	_REG_VCS_INSTPM,
+-	_REG_BCS_INSTPM,
+-
+-	_REG_GT_MODE,
+-	_REG_CACHE_MODE_1,
+-
+-	/* other regs */
+-
+-	_REG_RCS_HWSTAM,
+-	_REG_BCS_HWSTAM,
+-	_REG_VCS_HWSTAM,
+-
+-	_REG_RCS_HWS_PGA,
+-	_REG_BCS_HWS_PGA,
+-	_REG_VCS_HWS_PGA,
+-
+-	_REG_RCS_EXCC,
+-	_REG_BCS_EXCC,
+-	_REG_VCS_EXCC,
+-
+-	_REG_RCS_UHPTR,
+-	_REG_BCS_UHPTR,
+-	_REG_VCS_UHPTR,
+-
+-	_REG_TILECTL,
+-
+-	_REG_BRSYNC,
+-	_REG_BVSYNC,
+-	_REG_RBSYNC,
+-	_REG_RVSYNC,
+-	_REG_VBSYNC,
+-	_REG_VRSYNC,
+-};
+-
+ vgt_reg_t vgt_gen7_render_regs[] = {
+ 	/* Add IVB register, so they all got pass-through */
+ 
+@@ -619,11 +573,7 @@ static void vgt_rendering_save_mmio(struct vgt_device *vgt)
+ 	 * enough to track only save part
+ 	 */
+ 	pdev->in_ctx_switch = 1;
+-	if (IS_SNB(pdev))
+-		__vgt_rendering_save(vgt,
+-				ARRAY_NUM(vgt_render_regs),
+-				&vgt_render_regs[0]);
+-	else if (IS_IVB(pdev) || IS_HSW(pdev))
++	if (IS_HSW(pdev))
+ 		__vgt_rendering_save(vgt,
+ 				ARRAY_NUM(vgt_gen7_render_regs),
+ 				&vgt_gen7_render_regs[0]);
+@@ -682,11 +632,7 @@ static void vgt_rendering_restore_mmio(struct vgt_device *vgt)
+ {
+ 	struct pgt_device *pdev = vgt->pdev;
+ 
+-	if (IS_SNB(pdev))
+-		__vgt_rendering_restore(vgt,
+-				ARRAY_NUM(vgt_render_regs),
+-				&vgt_render_regs[0]);
+-	else if (IS_IVB(pdev) || IS_HSW(pdev))
++	if (IS_HSW(pdev))
+ 		__vgt_rendering_restore(vgt,
+ 				ARRAY_NUM(vgt_gen7_render_regs),
+ 				&vgt_gen7_render_regs[0]);
+-- 
+1.7.10.4
+

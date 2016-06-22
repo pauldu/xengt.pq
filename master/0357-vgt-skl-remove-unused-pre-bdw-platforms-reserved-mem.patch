@@ -1,0 +1,116 @@
+From 55da60c1d6d04d7e18f8850eab59c8002411d3ad Mon Sep 17 00:00:00 2001
+From: fred gao <fred.gao@intel.com>
+Date: Thu, 4 Feb 2016 11:02:55 +0800
+Subject: [PATCH 357/403] vgt/skl: remove unused pre-bdw platforms' reserved
+ memory
+
+With the introduction of execlist mode since BDW, the
+traditional hw save/restore ctx in ring mode is no longer
+applied. This patch can save nearly 1.3M rsvd memory per VM
+in BDW+ for shadow contex/cmd buffer use.
+
+v2: more description advised by Ping.
+
+v3: update some code suggested by zhiyuan:
+    1> change printk() to vgt_info();
+    2> same  control logic in free_vm_rsvd_aperture();
+    3> add assert in vgt_reset_ringbuffer() if it is not prebdw platform.
+
+This will fix bug# 987.
+
+Signed-off-by: fred gao <fred.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/aperture_gm.c |   24 +++++++++++++++---------
+ drivers/gpu/drm/i915/vgt/instance.c    |    2 ++
+ drivers/gpu/drm/i915/vgt/render.c      |   12 +++++++++---
+ 3 files changed, 26 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/aperture_gm.c b/drivers/gpu/drm/i915/vgt/aperture_gm.c
+index ed2e7d2..9d47cc0 100644
+--- a/drivers/gpu/drm/i915/vgt/aperture_gm.c
++++ b/drivers/gpu/drm/i915/vgt/aperture_gm.c
+@@ -293,11 +293,15 @@ int alloc_vm_rsvd_aperture(struct vgt_device *vgt)
+ 		struct vgt_rsvd_ring *ring = &pdev->ring_buffer[i];
+ 
+ 		rb = &vgt->rb[i];
+-		rb->context_save_area = aperture_2_gm(pdev,
+-				rsvd_aperture_alloc(pdev, SZ_CONTEXT_AREA_PER_RING) );
++		if (IS_PREBDW(pdev)) {
++			rb->context_save_area = aperture_2_gm(pdev,
++					rsvd_aperture_alloc(pdev, SZ_CONTEXT_AREA_PER_RING));
++			vgt_info("VM%d Ring%d context_save_area is allocated at gm(%llx)\n",
++					vgt->vm_id, i, rb->context_save_area);
++		} else {
++			rb->context_save_area = 0;
++		}
+ 
+-		printk("VM%d Ring%d context_save_area is allocated at gm(%llx)\n", vgt->vm_id, i,
+-				rb->context_save_area);
+ 		rb->active_vm_context = 0;
+ 
+ 		/*
+@@ -305,7 +309,7 @@ int alloc_vm_rsvd_aperture(struct vgt_device *vgt)
+ 		 * only for non-dom0 instance. Dom0's context is updated when
+ 		 * NULL context is created
+ 		 */
+-		if (vgt->vgt_id && (i == RING_BUFFER_RCS)) {
++		if (IS_PREBDW(pdev) && vgt->vgt_id && (i == RING_BUFFER_RCS)) {
+ 			memcpy((char *)v_aperture(pdev, rb->context_save_area),
+ 			       (char *)v_aperture(pdev, ring->null_context),
+ 			       SZ_CONTEXT_AREA_PER_RING);
+@@ -323,10 +327,12 @@ void free_vm_rsvd_aperture(struct vgt_device *vgt)
+ 	vgt_state_ring_t *rb;
+ 	int i;
+ 
+-	for (i=0; i< pdev->max_engines; i++) {
+-		rb = &vgt->rb[i];
+-		rsvd_aperture_free(pdev, rb->context_save_area + phys_aperture_base(pdev),
+-				SZ_CONTEXT_AREA_PER_RING);
++	if (IS_PREBDW(pdev)) {
++		for (i = 0; i < pdev->max_engines; i++) {
++			rb = &vgt->rb[i];
++			rsvd_aperture_free(pdev, rb->context_save_area + phys_aperture_base(pdev),
++					SZ_CONTEXT_AREA_PER_RING);
++		}
+ 	}
+ }
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/instance.c b/drivers/gpu/drm/i915/vgt/instance.c
+index 345ff57..a95f45a 100644
+--- a/drivers/gpu/drm/i915/vgt/instance.c
++++ b/drivers/gpu/drm/i915/vgt/instance.c
+@@ -504,6 +504,8 @@ static void vgt_reset_ringbuffer(struct vgt_device *vgt, unsigned long ring_bitm
+ 	vgt_state_ring_t *rb;
+ 	int bit;
+ 
++	ASSERT((IS_PREBDW(vgt->pdev)));
++
+ 	for_each_set_bit(bit, &ring_bitmap, sizeof(ring_bitmap)) {
+ 		if (bit >= vgt->pdev->max_engines)
+ 			break;
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index b57d098..ad21f74 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -409,9 +409,15 @@ void vgt_ring_init(struct pgt_device *pdev, int id)
+ 	ring->pdev = pdev;
+ 	ring->id = id;
+ 	ring->size = VGT_RSVD_RING_SIZE;
+-	ring->start = aperture_2_gm(pdev,
+-			rsvd_aperture_alloc(pdev, ring->size));
+-	ring->virtual_start = v_aperture(pdev, ring->start);
++
++	if (IS_PREBDW(pdev)) {
++		ring->start = aperture_2_gm(pdev,
++				rsvd_aperture_alloc(pdev, ring->size));
++		ring->virtual_start = v_aperture(pdev, ring->start);
++	} else {
++		ring->start = 0;
++		ring->virtual_start = NULL;
++	}
+ 	ring->head = 0;
+ 	ring->tail = 0;
+ 
+-- 
+1.7.10.4
+

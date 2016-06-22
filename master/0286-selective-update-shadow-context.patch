@@ -1,0 +1,351 @@
+From a61b7a5ea3c661393e894ff17316cceb982c0277 Mon Sep 17 00:00:00 2001
+From: Zhiyuan Lv <zhiyuan.lv@intel.com>
+Date: Wed, 25 Nov 2015 10:11:12 +0800
+Subject: [PATCH 286/403] selective update shadow context
+
+Two changes are in this commit:
+
+1, Only update the shadow context with the guest updated context
+2, Add an option to check the shadow context changes from last idle to the new
+submission, and the guest context changes overwritten by context sync-up from
+shadow.
+
+Signed-off-by: Zhiyuan Lv <zhiyuan.lv@intel.com>
+
+Conflicts:
+	drivers/gpu/drm/i915/vgt/vgt.h
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |  184 ++++++++++++++++++++++++++--------
+ drivers/gpu/drm/i915/vgt/execlists.h |    3 +
+ drivers/gpu/drm/i915/vgt/vgt.c       |    3 +
+ drivers/gpu/drm/i915/vgt/vgt.h       |    1 +
+ 4 files changed, 151 insertions(+), 40 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index ea57d4e..9c0c48f 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -608,8 +608,37 @@ static inline bool ppgtt_update_shadow_ppgtt_for_ctx(struct vgt_device *vgt,
+ 	return rc;
+ }
+ 
++#define CHECK_CTX_VAL(MMIO, GUEST, REF, SRC)				\
++do {									\
++	if(GUEST->MMIO.val != REF->MMIO.val)				\
++		trace_printk("CTX_SYNC_CHECK: "				\
++			"guest "#MMIO"<0x%x> overwritten "		\
++			"by shadow update with 0x%x\n",			\
++			GUEST->MMIO.val, SRC->MMIO.val);\
++}while(0);
++
++static void check_guest_ctx_changes(struct reg_state_ctx_header *guest,
++				    struct reg_state_ctx_header *ref,
++				    struct reg_state_ctx_header *src)
++{
++	if (!shadow_ctx_check)
++		return;
++
++	CHECK_CTX_VAL(ctx_ctrl, guest, ref, src);
++	CHECK_CTX_VAL(ring_header, guest, ref, src);
++	CHECK_CTX_VAL(bb_cur_head_UDW, guest, ref, src);
++	CHECK_CTX_VAL(bb_state, guest, ref, src);
++	CHECK_CTX_VAL(second_bb_addr_UDW, guest, ref, src);
++	CHECK_CTX_VAL(second_bb_addr_LDW, guest, ref, src);
++	CHECK_CTX_VAL(second_bb_state, guest, ref, src);
++	CHECK_CTX_VAL(bb_per_ctx_ptr, guest, ref, src);
++	CHECK_CTX_VAL(rcs_indirect_ctx, guest, ref, src);
++	CHECK_CTX_VAL(rcs_indirect_ctx_offset, guest, ref, src);
++}
++
+ /* not to copy PDP root pointers */
+-static void update_guest_regstate_from_shadow(void *dest_page, void *src_page)
++static void update_guest_regstate_from_shadow(void *dest_page, void *src_page,
++					      struct reg_state_ctx_header *g_ref)
+ {
+ 	struct reg_state_ctx_header *dest_ctx;
+ 	struct reg_state_ctx_header *src_ctx;
+@@ -620,6 +649,8 @@ static void update_guest_regstate_from_shadow(void *dest_page, void *src_page)
+ 	dest_ctx = (struct reg_state_ctx_header *)(dest_page);
+ 	src_ctx = (struct reg_state_ctx_header *)(src_page);
+ 
++	check_guest_ctx_changes(dest_ctx, g_ref, src_ctx);
++
+ 	dest_ctx->lri_cmd_1 = src_ctx->lri_cmd_1;
+ 	dest_ctx->ctx_ctrl.addr = src_ctx->ctx_ctrl.addr;
+ 	dest_ctx->ctx_ctrl.val = src_ctx->ctx_ctrl.val;
+@@ -642,53 +673,85 @@ static void update_guest_regstate_from_shadow(void *dest_page, void *src_page)
+ 
+ 	memcpy(dest_page + regstate_size, src_page + regstate_size,
+ 	       SIZE_PAGE - regstate_size);
++	memcpy(g_ref, src_ctx, sizeof(struct reg_state_ctx_header));
+ }
+ 
+-static void update_shadow_regstate_from_guest(void *dest_page, void *src_page, bool tail_only)
++#define ASSIGN_CHANGED_CTX_VAL(MMIO, SHADOW, REF, SRC)	\
++do {							\
++	if(SRC->MMIO.val != REF->MMIO.val)		\
++		SHADOW->MMIO.val = SRC->MMIO.val;	\
++}while(0);
++
++/* perform check between src_page and ref_page, and only update the changed
++ * fields from src to dest.
++ */
++static void update_shadow_regstate_from_guest(struct vgt_device *vgt,
++					      struct execlist_context *el_ctx)
+ {
++	bool tail_only = el_ctx->ctx_running;
++	void *dest, *src;
++
+ 	struct reg_state_ctx_header *dest_ctx;
+ 	struct reg_state_ctx_header *src_ctx;
++	struct reg_state_ctx_header *ref_ctx;
+ 	int regstate_size = sizeof(struct reg_state_ctx_header);
+ 	int pdp_offset = offsetof(struct reg_state_ctx_header, pdp3_UDW);
+ 
+-	dest_ctx = (struct reg_state_ctx_header *)(dest_page);
+-	src_ctx = (struct reg_state_ctx_header *)(src_page);
++	dest = el_ctx->ctx_pages[1].shadow_page.vaddr;
++	src = el_ctx->ctx_pages[1].guest_page.vaddr;
++
++	dest_ctx = (struct reg_state_ctx_header *)dest;
++	src_ctx = (struct reg_state_ctx_header *)src;
++	ref_ctx = el_ctx->g_ctx_buf;
+ 
+ 	if (tail_only) {
+ 		dest_ctx->ring_tail.val = src_ctx->ring_tail.val;
+ 		return;
+ 	}
+ 
+-	memcpy(dest_page, src_page, pdp_offset);
+-	dest_ctx->pdp0_LDW.addr = src_ctx->pdp0_LDW.addr;
+-	dest_ctx->pdp0_UDW.addr = src_ctx->pdp0_UDW.addr;
+-	dest_ctx->pdp1_LDW.addr = src_ctx->pdp1_LDW.addr;
+-	dest_ctx->pdp1_UDW.addr = src_ctx->pdp1_UDW.addr;
+-	dest_ctx->pdp2_LDW.addr = src_ctx->pdp2_LDW.addr;
+-	dest_ctx->pdp2_UDW.addr = src_ctx->pdp2_UDW.addr;
+-	dest_ctx->pdp3_LDW.addr = src_ctx->pdp3_LDW.addr;
+-	dest_ctx->pdp3_UDW.addr = src_ctx->pdp3_UDW.addr;
++	if (!el_ctx->initialized || (ref_ctx == NULL)) {
++		/* in the first submission, populate shadow context */
++		memcpy(dest, src, pdp_offset);
+ 
+-	memcpy(dest_page + regstate_size, src_page + regstate_size,
+-	       SIZE_PAGE - regstate_size);
+-}
+-
+-static void update_shadow_cmdbuf_info(struct execlist_context *el_ctx)
+-{
+-	void *dest;
+-	struct reg_state_ctx_header *dest_ctx;
+-
+-	dest = el_ctx->ctx_pages[1].shadow_page.vaddr;
+-	dest_ctx = (struct reg_state_ctx_header *)(dest);
++		dest_ctx->pdp0_LDW.addr = src_ctx->pdp0_LDW.addr;
++		dest_ctx->pdp0_UDW.addr = src_ctx->pdp0_UDW.addr;
++		dest_ctx->pdp1_LDW.addr = src_ctx->pdp1_LDW.addr;
++		dest_ctx->pdp1_UDW.addr = src_ctx->pdp1_UDW.addr;
++		dest_ctx->pdp2_LDW.addr = src_ctx->pdp2_LDW.addr;
++		dest_ctx->pdp2_UDW.addr = src_ctx->pdp2_UDW.addr;
++		dest_ctx->pdp3_LDW.addr = src_ctx->pdp3_LDW.addr;
++		dest_ctx->pdp3_UDW.addr = src_ctx->pdp3_UDW.addr;
+ 
++		memcpy(dest + regstate_size, src + regstate_size,
++			SIZE_PAGE - regstate_size);
++		el_ctx->initialized = true;
++	} else {
++		/* only update changed value from guest context */
++		ASSIGN_CHANGED_CTX_VAL(ctx_ctrl, dest_ctx, ref_ctx, src_ctx);
++		ASSIGN_CHANGED_CTX_VAL(ring_header, dest_ctx, ref_ctx, src_ctx);
++		ASSIGN_CHANGED_CTX_VAL(ring_tail, dest_ctx, ref_ctx, src_ctx);
++		ASSIGN_CHANGED_CTX_VAL(rb_ctrl, dest_ctx, ref_ctx, src_ctx);
++		ASSIGN_CHANGED_CTX_VAL(bb_cur_head_UDW, dest_ctx, ref_ctx, src_ctx);
++		ASSIGN_CHANGED_CTX_VAL(bb_cur_head_LDW, dest_ctx, ref_ctx, src_ctx);
++		ASSIGN_CHANGED_CTX_VAL(bb_state, dest_ctx, ref_ctx, src_ctx);
++		ASSIGN_CHANGED_CTX_VAL(second_bb_addr_UDW, dest_ctx, ref_ctx, src_ctx);
++		ASSIGN_CHANGED_CTX_VAL(second_bb_addr_LDW, dest_ctx, ref_ctx, src_ctx);
++		ASSIGN_CHANGED_CTX_VAL(second_bb_state, dest_ctx, ref_ctx, src_ctx);
++		ASSIGN_CHANGED_CTX_VAL(bb_per_ctx_ptr, dest_ctx, ref_ctx, src_ctx);
++		ASSIGN_CHANGED_CTX_VAL(rcs_indirect_ctx, dest_ctx, ref_ctx, src_ctx);
++		ASSIGN_CHANGED_CTX_VAL(rcs_indirect_ctx_offset, dest_ctx, ref_ctx, src_ctx);
++	}
++
++	memcpy(ref_ctx, src_ctx, sizeof(struct reg_state_ctx_header));
++
++	/* update the shadow fields */
+ 	dest_ctx->rb_start.val = el_ctx->shadow_rb.shadow_rb_base;
++	ppgtt_update_shadow_ppgtt_for_ctx(vgt, el_ctx);
+ }
+ 
+ static void vgt_update_shadow_ctx_from_guest(struct vgt_device *vgt,
+ 			struct execlist_context *el_ctx)
+ {
+-	bool tail_only = el_ctx->ctx_running;
+-	void *dest, *src;
+ 
+ 	if (!vgt_require_shadow_context(vgt))
+ 		return;
+@@ -700,17 +763,19 @@ static void vgt_update_shadow_ctx_from_guest(struct vgt_device *vgt,
+ 	    (shadow_execlist_context != OPT_LAZY_CTX_SHADOW))
+ 		return;
+ 
++	if (shadow_ctx_check && el_ctx->s_ctx_buf && el_ctx->initialized) {
++		if (!el_ctx->ctx_running &&
++			(memcmp(el_ctx->s_ctx_buf,
++				el_ctx->ctx_pages[1].shadow_page.vaddr,
++				PAGE_SIZE) != 0))
++			trace_printk("CTX_SYNC_CHECK: "
++			     "shadow ctx changed from the last ctx save!\n");
++	}
++
+ 	/* only update the ring status shadow page. Other pages are not
+ 	 * expected to be updated by guest driver.
+ 	 */
+-	dest = el_ctx->ctx_pages[1].shadow_page.vaddr;
+-	src = el_ctx->ctx_pages[1].guest_page.vaddr;
+-
+-	update_shadow_regstate_from_guest(dest, src, tail_only);
+-	update_shadow_cmdbuf_info(el_ctx);
+-
+-	if (!tail_only)
+-		ppgtt_update_shadow_ppgtt_for_ctx(vgt, el_ctx);
++	update_shadow_regstate_from_guest(vgt, el_ctx);
+ }
+ 
+ static void update_guest_hws_from_shadow(void *dest, void *src)
+@@ -732,7 +797,9 @@ static void vgt_update_guest_ctx_from_shadow(struct vgt_device *vgt,
+ 		void *src = el_ctx->ctx_pages[1].shadow_page.vaddr;
+ 
+ 		ASSERT(dst && src);
+-		update_guest_regstate_from_shadow(dst, src);
++		if (shadow_ctx_check && el_ctx->s_ctx_buf)
++			memcpy(el_ctx->s_ctx_buf, src, PAGE_SIZE);
++		update_guest_regstate_from_shadow(dst, src, el_ctx->g_ctx_buf);
+ 	} else if (shadow_execlist_context == PATCH_WITHOUT_SHADOW) {
+ 		/* Leave patched guest driver as it is since it is just
+ 		 * a hack solution. It is working because normally guest
+@@ -750,14 +817,19 @@ static void vgt_update_guest_ctx_from_shadow(struct vgt_device *vgt,
+ 			void *src = el_ctx->ctx_pages[i].shadow_page.vaddr;
+ 
+ 			ASSERT(dst && src);
+-			if (i == 0)
++			if (i == 0) {
+ 				update_guest_hws_from_shadow(dst, src);
+-			else if (i == 1)
+-				update_guest_regstate_from_shadow(dst, src);
+-			else
++			} else if (i == 1) {
++				if (shadow_ctx_check && el_ctx->s_ctx_buf)
++					memcpy(el_ctx->s_ctx_buf, src, PAGE_SIZE);
++				update_guest_regstate_from_shadow(dst, src,
++					el_ctx->g_ctx_buf);
++			} else {
+ 				memcpy(dst, src, SIZE_PAGE);
++			}
+ 		}
+ 	}
++
+ 	trace_ctx_lifecycle(vgt->vm_id, ring_id, el_ctx->guest_context.lrca, "sync to guest");
+ }
+ 
+@@ -941,7 +1013,27 @@ static int vgt_el_create_shadow_context(struct vgt_device *vgt,
+ 	if (ret)
+ 		goto cleanup_guest_pages;
+ 
++	el_ctx->s_ctx_buf = kmalloc(PAGE_SIZE, GFP_ATOMIC);
++	if (el_ctx->s_ctx_buf == NULL) {
++		vgt_err("VM-%d: Failed to allocate memory for "
++			"shadow context buffer!\n", vgt->vm_id);
++		ret = -1;
++		goto cleanup_guest_pages;
++	}
++
++	el_ctx->g_ctx_buf = kmalloc(sizeof(struct reg_state_ctx_header),
++				    GFP_ATOMIC);
++	if (el_ctx->g_ctx_buf == NULL) {
++		vgt_err("VM-%d: Failed to allocate memory for "
++			"guest context buffer!\n", vgt->vm_id);
++		ret = -1;
++		goto cleanup_guest_pages;
++	}
++	memcpy(el_ctx->g_ctx_buf,
++		el_ctx->ctx_pages[1].guest_page.vaddr,
++		sizeof(struct reg_state_ctx_header));
+ 	return ret;
++
+ cleanup_guest_pages:
+ 	for (i = 0; i < EXECLIST_CTX_PAGES(ring_id); ++ i) {
+ 		guest_page_t *p_guest;
+@@ -950,7 +1042,14 @@ cleanup_guest_pages:
+ 			vgt_clear_wp_guest_ctx(vgt, el_ctx, i);
+ 		vgt_clean_guest_page(vgt, p_guest);
+ 	}
+-
++	if (el_ctx->s_ctx_buf) {
++		kfree(el_ctx->s_ctx_buf);
++		el_ctx->s_ctx_buf = NULL;
++	}
++	if (el_ctx->g_ctx_buf) {
++		kfree(el_ctx->g_ctx_buf);
++		el_ctx->g_ctx_buf = NULL;
++	}
+ 	return ret;
+ }
+ 
+@@ -975,6 +1074,11 @@ static int vgt_el_destroy_shadow_context(struct vgt_device *vgt,
+ 
+ 	vgt_destroy_shadow_pages(vgt, el_ctx);
+ 
++	kfree(el_ctx->s_ctx_buf);
++	el_ctx->s_ctx_buf = NULL;
++	kfree(el_ctx->g_ctx_buf);
++	el_ctx->g_ctx_buf = NULL;
++
+ 	return 0;
+ }
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.h b/drivers/gpu/drm/i915/vgt/execlists.h
+index 65c91e9..73f79fe 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.h
++++ b/drivers/gpu/drm/i915/vgt/execlists.h
+@@ -230,9 +230,12 @@ struct execlist_context {
+ 
+ 	struct vgt_mm *ppgtt_mm;
+ 	struct shadow_ctx_page ctx_pages[MAX_EXECLIST_CTX_PAGES];
++	struct reg_state_ctx_header *g_ctx_buf;
++	unsigned char *s_ctx_buf;
+ 	/* used for lazy context shadowing optimization */
+ 	gtt_entry_t shadow_entry_backup[MAX_EXECLIST_CTX_PAGES];
+ 
++	bool initialized;
+ 	bool ctx_running;
+ 	bool sync_needed;
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 4126161..cecb73f 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -191,6 +191,9 @@ module_param_named(shadow_execlist_context, shadow_execlist_context, int, 0400);
+ int shadow_cmd_buffer = 1;
+ module_param_named(shadow_cmd_buffer, shadow_cmd_buffer, int, 0400);
+ 
++int shadow_ctx_check = 0;
++module_param_named(shadow_ctx_check, shadow_ctx_check, int, 0600);
++
+ static struct vgt_ops __vgt_ops = {
+ 	.emulate_read = vgt_emulate_read,
+ 	.emulate_write = vgt_emulate_write,
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 3b32b1d..57f87fe 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -98,6 +98,7 @@ extern int reset_max_threshold;
+ extern bool vgt_lock_irq;
+ extern int shadow_execlist_context;
+ extern int shadow_cmd_buffer;
++extern int shadow_ctx_check;
+ extern bool propagate_monitor_to_guest;
+ extern bool irq_based_ctx_switch;
+ extern int preallocated_shadow_pages;
+-- 
+1.7.10.4
+

@@ -1,0 +1,109 @@
+From e4cf5215ad51c991ec4f1892b41a37d145dd5e26 Mon Sep 17 00:00:00 2001
+From: fred gao <fred.gao@intel.com>
+Date: Mon, 11 Apr 2016 10:22:40 +0800
+Subject: [PATCH 400/403] vgt/skl: fix windows guest driver upgrade issue
+
+since the shadow ppgtt is not well cleaned up during the
+emulation of device reset, qemu will be crashed for the
+bad address access or dom0 kernel panic when the unremoved
+write protection page is accessed.
+
+this patch will fix bug 1045 1047
+-- "Win Gfx driver install/upgrade in Normal Mode fail"
+
+V2:  1. update the commit message advised by Kevin.
+     2. call vgt_clean_vgtt and then vgt_init_vgtt for
+	a full reset by Kevin.
+     3. change code to real HW reset emulation instead
+        of emulation based on driver by Kevin.
+     4. some code change under multi-VMs by Zheng,Xiao
+        A: release lock before calling vfree.
+        B: do the clean up even it is not render owner.
+
+V3:  1. add comments in caller to reminder of the nested
+        spin_lock by Xiao.
+     2. replace the conditional variable with lock pair
+        by Xiao.
+
+currently win7 32/64, win8, win10 BDW/SKL supported.
+
+Signed-off-by: fred gao <fred.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/gtt.c      |    2 +-
+ drivers/gpu/drm/i915/vgt/handlers.c |   41 ++++++++++++++++++++++++++++++++++-
+ 2 files changed, 41 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index 2ca6bb2..1e038e5 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -2361,7 +2361,7 @@ bool vgt_g2v_destroy_ppgtt_mm(struct vgt_device *vgt, int page_table_level)
+ 	mm = gen8_find_ppgtt_mm(vgt, page_table_level, pdp);
+ 	if (!mm) {
+ 		vgt_err("fail to find ppgtt instance.\n");
+-		return false;
++		return true;
+ 	}
+ 
+ 	vgt_destroy_mm(mm);
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 7105df4..289742e 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -314,13 +314,52 @@ static bool handle_device_reset(struct vgt_device *vgt, unsigned int offset,
+ 		if (device_is_reseting(vgt->pdev))
+ 			return default_mmio_write(vgt, offset, p_data, bytes);
+ 	} else {
+-		if (current_render_owner(vgt->pdev) == vgt)
++		if (current_render_owner(vgt->pdev) == vgt) {
+ 			vgt_request_force_removal(vgt);
++
++			vgt_info("VM %d: unlock before wait for force removal event\n",
++					vgt->vm_id);
++
++			spin_unlock(&vgt->pdev->lock);
++			if (vgt->force_removal)
++				wait_event_killable(vgt->pdev->destroy_wq, !vgt->force_removal);
++
++			vgt_info("VM %d: force removal event... wake up\n",
++					vgt->vm_id);
++
++			spin_lock(&vgt->pdev->lock);
++
++			vgt_info("VM %d: lock again afterforce removal event\n",
++					vgt->vm_id);
++
++
++		}
++
++		/*clean up during reset */
++		if (test_and_clear_bit(RESET_INPROGRESS, &vgt->reset_flags)) {
++
++			vgt_info("VM %d: vgt_clean_up begin.\n", vgt->vm_id);
++
++			/*unlock first, may sleep @ vfree in vgt_clean_vgtt*/
++			spin_unlock(&vgt->pdev->lock);
++			vgt_clean_vgtt(vgt);
++			vgt_clear_gtt(vgt);
++			state_sreg_init(vgt);
++			state_vreg_init(vgt);
++			vgt_init_vgtt(vgt);
++
++			vgt_info("VM %d: vgt_clean_up end.\n", vgt->vm_id);
++
++			spin_lock(&vgt->pdev->lock);
++
++			vgt_info("VM %d: lock.again\n", vgt->vm_id);
++		}
+ 	}
+ 
+ 	return true;
+ }
+ 
++/*be noted that big lock is called inside handle_device_reset*/
+ static bool gen6_gdrst_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ 		void *p_data, unsigned int bytes)
+ {
+-- 
+1.7.10.4
+

@@ -1,0 +1,30 @@
+From 3c84f1af768ba2dbaf1ac0cae34240cea1549345 Mon Sep 17 00:00:00 2001
+From: Yi Sun <yi.sun@intel.com>
+Date: Tue, 15 Sep 2015 15:17:59 +0800
+Subject: [PATCH 164/403] vgt: Fix a typo %*pd -> %*pb
+
+%*pb is for bitmap formatting.
+This commit can resolve bug 838 [4.1.0-rc4-vgt+][HSW/BDW][XenGT API]Access "available_resource" API occurs dom0 crash
+https://cnrail.intel.com/,DanaInfo=cnrailbz01.jfrail.intel.com,Port=43200/show_bug.cgi?id=838
+
+Signed-off-by: Yi Sun <yi.sun@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/aperture_gm.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/aperture_gm.c b/drivers/gpu/drm/i915/vgt/aperture_gm.c
+index 7eac5f1..2f44938 100644
+--- a/drivers/gpu/drm/i915/vgt/aperture_gm.c
++++ b/drivers/gpu/drm/i915/vgt/aperture_gm.c
+@@ -189,7 +189,7 @@ ssize_t get_avl_vm_aperture_gm_and_fence(struct pgt_device *pdev, char *buf,
+ 
+ 	for (i = 0; i < MAX_NR_RES; i++) {
+ 		buf_len += snprintf(buf + buf_len, buf_sz - buf_len,
+-					"%*pd\n", bitmap_sz[i], bitmap[i]);
++					"%*pb\n", bitmap_sz[i], bitmap[i]);
+ 	}
+ 
+ 	return buf_len;
+-- 
+1.7.10.4
+

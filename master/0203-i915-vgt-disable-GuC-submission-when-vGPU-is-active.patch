@@ -1,0 +1,40 @@
+From 2ae7f4309b9d6700e49f1605f3ef478fd7854ca8 Mon Sep 17 00:00:00 2001
+From: Zhi Wang <zhi.a.wang@intel.com>
+Date: Tue, 24 Nov 2015 17:39:09 +0800
+Subject: [PATCH 203/403] i915/vgt: disable GuC submission when vGPU is active
+
+v3:
+- Take Kevin's comment:
+Split linux guest enabling patches into 3 patches.
+
+Signed-off-by: Zhi Wang <zhi.a.wang@intel.com>
+---
+ drivers/gpu/drm/i915/i915_gem.c |    5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/i915_gem.c b/drivers/gpu/drm/i915/i915_gem.c
+index 4c3c283..c6d8a89 100644
+--- a/drivers/gpu/drm/i915/i915_gem.c
++++ b/drivers/gpu/drm/i915/i915_gem.c
+@@ -4788,7 +4788,7 @@ i915_gem_init_hw(struct drm_device *dev)
+ 	}
+ 
+ 	/* We can't enable contexts until all firmware is loaded */
+-	if (HAS_GUC_UCODE(dev)) {
++	if (HAS_GUC_UCODE(dev) && !intel_vgpu_active(dev)) {
+ 		ret = intel_guc_ucode_load(dev);
+ 		if (ret) {
+ 			/*
+@@ -4804,7 +4804,8 @@ i915_gem_init_hw(struct drm_device *dev)
+ 			if (ret)
+ 				goto out;
+ 		}
+-	}
++	} else
++		i915.enable_guc_submission = false;
+ 
+ 	/*
+ 	 * Increment the next seqno by 0x100 so we have a visible break
+-- 
+1.7.10.4
+
