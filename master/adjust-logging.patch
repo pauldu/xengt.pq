@@ -1,0 +1,105 @@
+diff --git a/drivers/gpu/drm/i915/i915_params.c b/drivers/gpu/drm/i915/i915_params.c
+index 1bffe0e..d5e2508 100644
+--- a/drivers/gpu/drm/i915/i915_params.c
++++ b/drivers/gpu/drm/i915/i915_params.c
+@@ -50,7 +50,7 @@ struct i915_params i915 __read_mostly = {
+ 	.disable_vtd_wa = 0,
+ 	.use_mmio_flip = 0,
+ 	.mmio_debug = 0,
+-	.verbose_state_checks = 1,
++	.verbose_state_checks = 0,
+ 	.nuclear_pageflip = 0,
+ 	.edp_vswing = 0,
+ 	.enable_guc_submission = false,
+diff --git a/drivers/gpu/drm/i915/vgt/cfg_space.c b/drivers/gpu/drm/i915/vgt/cfg_space.c
+index 7e62375..592577d 100644
+--- a/drivers/gpu/drm/i915/vgt/cfg_space.c
++++ b/drivers/gpu/drm/i915/vgt/cfg_space.c
+@@ -300,7 +300,9 @@ bool vgt_emulate_cfg_write(struct vgt_device *vgt, unsigned int off,
+ 				return false;
+ 			}
+ 			new = *(uint32_t *)p_data;
+-			printk("Programming bar 0x%x with 0x%x\n", off, new);
++			vgt_dbg(VGT_DBG_GENERIC,
++				"Programming bar 0x%x with 0x%x\n",
++				off, new);
+ 			size = vgt->state.bar_size[(off - VGT_REG_CFG_SPACE_BAR0)/8];
+ 			if (new == 0xFFFFFFFF) {
+ 				/*
+@@ -364,7 +366,9 @@ bool vgt_emulate_cfg_write(struct vgt_device *vgt, unsigned int off,
+ 				return false;
+ 			}
+ 			new = *(uint32_t *)p_data;
+-			printk("Programming bar 0x%x with 0x%x\n", off, new);
++			vgt_dbg(VGT_DBG_GENERIC,
++				"Programming bar 0x%x with 0x%x\n",
++				off, new);
+ 			size = vgt->state.bar_size[(off - (VGT_REG_CFG_SPACE_BAR0 + 4))/8];
+ 			/* for 32bit mode bar it returns all-0 in upper 32 bit, for 64bit
+ 			 * mode bar it will calculate the size with lower 32bit and return
+@@ -396,7 +400,7 @@ bool vgt_emulate_cfg_write(struct vgt_device *vgt, unsigned int off,
+ 		case 0xAC:
+ 		case 0xB0:
+ 		case 0xB4:
+-			printk("vGT: write to MSI capa(%x) with val (%x)\n", off, *(uint32_t *)p_data);
++			vgt_info("vGT: write to MSI capa(%x) with val (%x)\n", off, *(uint32_t *)p_data);
+ 		default:
+ 			memcpy (&vgt->state.cfg_space[off], p_data, bytes);
+ 			break;
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 6971a19..b528f63 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -265,7 +265,7 @@ static bool rc_state_ctrl_1_mmio_write(struct vgt_device *vgt, unsigned int offs
+ 	uint32_t data;
+ 
+ 	data = *(uint32_t*)p_data;
+-	printk("VM%d write register RC_STATE_CTRL_1 with 0x%x\n", vgt->vm_id, data);
++	vgt_info("VM%d write register RC_STATE_CTRL_1 with 0x%x\n", vgt->vm_id, data);
+ 
+ 	if ( (data & _REGBIT_RC_HW_CTRL_ENABLE) && (data & (_REGBIT_RC_RC6_ENABLE
+ 					| _REGBIT_RC_DEEPEST_RC6_ENABLE	| _REGBIT_RC_DEEP_RC6_ENABLE) ) )
+@@ -2667,7 +2667,9 @@ static bool mailbox_write(struct vgt_device *vgt, unsigned int offset,
+ 			break;
+ 	}
+ 
+-	vgt_info("VM %d write %x to mailbox, return data0 %x\n", vgt->vm_id,
++	vgt_dbg(VGT_DBG_GENERIC,
++		"VM %d write %x to mailbox, return data0 %x\n",
++		vgt->vm_id,
+ 		v, *data0);
+ 
+ 	v &= ~(1 << 31);
+@@ -4223,7 +4225,7 @@ static void vgt_passthrough_execlist(struct pgt_device *pdev)
+ 
+ bool vgt_post_setup_mmio_hooks(struct pgt_device *pdev)
+ {
+-	printk("post mmio hooks initialized\n");
++	vgt_dbg(VGT_DBG_MEM,"post mmio hooks initialized\n");
+ 
+ 	if (hvm_render_owner)
+ 		vgt_passthrough_execlist(pdev);
+diff --git a/drivers/gpu/drm/i915/vgt/mmio.c b/drivers/gpu/drm/i915/vgt/mmio.c
+index 1b2839c..33e8141 100644
+--- a/drivers/gpu/drm/i915/vgt/mmio.c
++++ b/drivers/gpu/drm/i915/vgt/mmio.c
+@@ -379,7 +379,8 @@ bool vgt_emulate_read(struct vgt_device *vgt, uint64_t pa, void *p_data,int byte
+ 			goto err_mmio;
+ 
+ 	if (!reg_is_tracked(pdev, offset) && vgt->warn_untrack) {
+-		vgt_warn("vGT: untracked MMIO read: vm_id(%d), offset=0x%x,"
++		vgt_dbg(VGT_DBG_GENERIC,
++			"vGT: untracked MMIO read: vm_id(%d), offset=0x%x,"
+ 			"len=%d, val=0x%x!!!\n",
+ 			vgt->vm_id, offset, bytes, *(u32 *)p_data);
+ 
+@@ -494,7 +495,8 @@ bool vgt_emulate_write(struct vgt_device *vgt, uint64_t pa,
+ 	}
+ 
+ 	if (!reg_is_tracked(pdev, offset) && vgt->warn_untrack) {
+-		vgt_warn("vGT: untracked MMIO write: vm_id(%d), offset=0x%x,"
++		vgt_dbg(VGT_DBG_GENERIC,
++			"vGT: untracked MMIO write: vm_id(%d), offset=0x%x,"
+ 			"len=%d, val=0x%x!!!\n",
+ 			vgt->vm_id, offset, bytes, *(u32 *)p_data);
+ 

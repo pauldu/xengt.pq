@@ -435,6 +435,7 @@ vgt-fix-vgtbuffer-ioctl.patch
 vgtbuffer-round-up-y-tiled-size.patch
 vgt-adjust-default-parameters.patch
 add-configuration-files.patch
+adjust-logging.patch
 blacklist_i915.patch
 
 # Fix for Xen 4.7
