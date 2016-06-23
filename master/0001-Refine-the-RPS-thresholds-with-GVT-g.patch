@@ -1,0 +1,60 @@
+From 2016e0cf9f2a23f66aafe00479d9e8459e980713 Mon Sep 17 00:00:00 2001
+From: Weinan Li <weinan.z.li@intel.com>
+Date: Tue, 14 Jun 2016 10:43:52 +0800
+Subject: [PATCH] Refine the RPS thresholds with GVT-g
+
+The GPU freq can't up during run application in multi VMs with many short
+GPU cmds submission with GVT-g, refine the RPS thresholds to fit it.
+
+Bug: 1098
+
+Signed-off-by: Weinan Li <weinan.z.li@intel.com>
+---
+ drivers/gpu/drm/i915/intel_pm.c | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/intel_pm.c b/drivers/gpu/drm/i915/intel_pm.c
+index 82613cd..c7daa06 100644
+--- a/drivers/gpu/drm/i915/intel_pm.c
++++ b/drivers/gpu/drm/i915/intel_pm.c
+@@ -4223,31 +4223,31 @@ static void gen6_set_rps_thresholds(struct drm_i915_private *dev_priv, u8 val)
+ 	case LOW_POWER:
+ 		/* Upclock if more than 95% busy over 16ms */
+ 		ei_up = 16000;
+-		threshold_up = 95;
++		threshold_up = 80;
+ 
+ 		/* Downclock if less than 85% busy over 32ms */
+ 		ei_down = 32000;
+-		threshold_down = 85;
++		threshold_down = 60;
+ 		break;
+ 
+ 	case BETWEEN:
+ 		/* Upclock if more than 90% busy over 13ms */
+ 		ei_up = 13000;
+-		threshold_up = 90;
++		threshold_up = 75;
+ 
+ 		/* Downclock if less than 75% busy over 32ms */
+ 		ei_down = 32000;
+-		threshold_down = 75;
++		threshold_down = 55;
+ 		break;
+ 
+ 	case HIGH_POWER:
+ 		/* Upclock if more than 85% busy over 10ms */
+ 		ei_up = 10000;
+-		threshold_up = 85;
++		threshold_up = 70;
+ 
+ 		/* Downclock if less than 60% busy over 32ms */
+ 		ei_down = 32000;
+-		threshold_down = 60;
++		threshold_down = 40;
+ 		break;
+ 	}
+ 
+-- 
+1.9.1
+

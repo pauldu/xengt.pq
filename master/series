@@ -18,6 +18,7 @@ build-system-integration.patch
 # Some of the patches were then post-processed or dropped to remove
 # reference to KVM sources that do not exist in this repository.
 #
+
 0001-wrap-all-unreview-patches.patch
 0002-Revice-the-execlist-dump.patch
 0003-vgt-Media-code-cleanup-for-BDW-VCS2.patch
@@ -392,6 +393,12 @@ build-system-integration.patch
 0403-vgt-debug-leverage-the-new-debug-funtion.patch
 
 #
+# Intel patches not yet available via otcshare
+#
+
+0001-Refine-the-RPS-thresholds-with-GVT-g.patch
+
+#
 # Patches analogous to those in the kernel patch queue required
 # because of GVT-g updates to the DRM.
 #
@@ -415,6 +422,7 @@ i915-xengt-dependency.patch
 # Update to build system integration to add extra configuration options
 # and handle extra modules.
 #
+
 build-system-update.patch
 fix-build-warnings.patch
 
@@ -426,7 +434,6 @@ vgt-add-hashing-gtt-framebuffer.patch
 vgt-fix-vgtbuffer-ioctl.patch
 vgtbuffer-round-up-y-tiled-size.patch
 vgt-adjust-default-parameters.patch
-
 add-configuration-files.patch
 blacklist_i915.patch
 
