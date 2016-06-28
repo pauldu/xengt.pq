@@ -1,3 +1,19 @@
+#
+# This patch queue is intended to be applied to the following base commit:
+#
+# commit d3208cf589e0bf2f940360c361284b023fe7f259
+# Author: Paul Durrant <paul.durrant@citrix.com>
+# Date:   Wed Jun 22 10:53:08 2016 +0000
+#
+#     Initial commit matching source from linux-3.x.git with patches up
+#     to and including CONFIG_DMA_SHARED_BUFFER-update.patch applied.
+#
+#     This equates to a backport of drm-intel commit 840c81e9 (which is
+#     the commit on which GVT-g is currently based).
+#
+#     Signed-off-by: Paul Durrant <paul.durrant@citrix.com>
+#
+
 # This has to be compiled into the kernel
 remove-drm_backport_c.patch
 
@@ -6,6 +22,12 @@ import-intel_ips_h
 
 # Add build system integration
 build-system-integration.patch
+
+#
+# With patches up to an including the above applied, this repository
+# can be built and will result in kernel modules equivalent to building
+# the base code in-tree.
+#
 
 #
 # Patches from https://github.com/otcshare/XenGT-Server-kernel.git
