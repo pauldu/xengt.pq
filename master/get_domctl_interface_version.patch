@@ -1,0 +1,96 @@
+diff --git a/drivers/xen/xengt.c b/drivers/xen/xengt.c
+index a476fa6..2c2e954 100644
+--- a/drivers/xen/xengt.c
++++ b/drivers/xen/xengt.c
+@@ -137,6 +137,55 @@ static int xen_get_max_gpfn(int vm_id)
+ 	return max_gpfn;
+ }
+ 
++/*
++ * We cannot just use the value of XEN_DOMCTL_INTERFACE_VERSION provided
++ * by domctl.h as this is modified in the kernel source to be compatible
++ * with the next version of Xen, rather than the one we're running on.
++ * So, use a domctl with no side effects to search for the right domctl
++ * version starting with XEN_DOMCTL_INTERFACE_VERSION and working
++ * backwards.
++ */
++static u32 get_domctl_interface_version(void)
++{
++	static u32 version = XEN_DOMCTL_INTERFACE_VERSION;
++	static bool found = false;
++
++	while (!found) {
++		int attempt = 0;
++		struct xen_domctl domctl;
++		int rc;
++
++		domctl.domain = DOMID_SELF;
++		domctl.cmd = XEN_DOMCTL_getdomaininfo;
++		domctl.interface_version = version;
++
++		printk("trying HYPERVISOR_domctl version %08x\n",
++		       version);
++
++		rc = HYPERVISOR_domctl(&domctl);
++
++		/*
++		 * If we get EACCES back, the means that the version
++		 * is wrong, so try an older version and see if that
++		 * works.
++		 */
++		if (rc == -EACCES && attempt++ < 5) {
++			--version;
++			continue;
++		}
++
++		/*
++		 * Either we've found the right version within 5
++		 * attempts or we give up, pass back the value we've
++		 * got to and let the failure path of the caller handle
++		 * things.
++		 */
++		found = true;
++	}
++
++	return version;
++}
++
+ static int xen_pause_domain(int vm_id)
+ {
+ 	int rc;
+@@ -144,7 +193,7 @@ static int xen_pause_domain(int vm_id)
+ 
+ 	domctl.domain = vm_id;
+ 	domctl.cmd = XEN_DOMCTL_pausedomain;
+-	domctl.interface_version = XEN_DOMCTL_INTERFACE_VERSION;
++	domctl.interface_version = get_domctl_interface_version();
+ 
+ 	rc = HYPERVISOR_domctl(&domctl);
+ 	if (rc != 0)
+@@ -174,7 +223,7 @@ static int xen_domain_iomem_perm(uint32_t domain_id, uint64_t first_mfn,
+ 
+ 	arg.domain = domain_id;
+ 	arg.cmd = XEN_DOMCTL_iomem_permission;
+-	arg.interface_version = XEN_DOMCTL_INTERFACE_VERSION;
++	arg.interface_version = get_domctl_interface_version();
+ 	arg.u.iomem_permission.first_mfn = first_mfn;
+ 	arg.u.iomem_permission.nr_mfns = nr_mfns;
+ 	arg.u.iomem_permission.allow_access = allow_access;
+@@ -200,7 +249,7 @@ static int xen_hvm_memory_mapping(int vm_id, uint64_t first_gfn, uint64_t first_
+ 
+ 	arg.domain = vm_id;
+ 	arg.cmd = XEN_DOMCTL_memory_mapping;
+-	arg.interface_version = XEN_DOMCTL_INTERFACE_VERSION;
++	arg.interface_version = get_domctl_interface_version();
+ 	arg.u.memory_mapping.add_mapping = add_mapping;
+ 
+ retry:
+@@ -269,7 +318,7 @@ static int xen_get_nr_vcpu(int vm_id)
+ 
+ 	arg.domain = vm_id;
+ 	arg.cmd = XEN_DOMCTL_getdomaininfo;
+-	arg.interface_version = XEN_DOMCTL_INTERFACE_VERSION;
++	arg.interface_version = get_domctl_interface_version();
+ 
+ 	rc = HYPERVISOR_domctl(&arg);
+ 	if (rc<0){
