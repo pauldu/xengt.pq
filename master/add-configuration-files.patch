@@ -28,7 +28,7 @@ index 0000000..9038c3f
 +0058656e7365727665720a202020003c
 diff --git a/gvt-g-whitelist b/gvt-g-whitelist
 new file mode 100644
-index 0000000..65eca4b
+index 0000000..964073e
 --- /dev/null
 +++ b/gvt-g-whitelist
 @@ -0,0 +1,47 @@
@@ -76,11 +76,11 @@ index 0000000..65eca4b
 +192b experimental=1 name='Intel GVT-g' low_gm_sz=128 high_gm_sz=384 fence_sz=4 framebuffer_sz=128 max_heads=1 resolution=1920x1080 monitor_config_file=/etc/gvt-g-monitor.conf
 +192a experimental=1 name='Intel GVT-g' low_gm_sz=128 high_gm_sz=384 fence_sz=4 framebuffer_sz=128 max_heads=1 resolution=1920x1080 monitor_config_file=/etc/gvt-g-monitor.conf
 +1932 experimental=1 name='Intel GVT-g' low_gm_sz=128 high_gm_sz=384 fence_sz=4 framebuffer_sz=128 max_heads=1 resolution=1920x1080 monitor_config_file=/etc/gvt-g-monitor.conf
-+193b experimental=1 name='Intel GVT-g' low_gm_sz=128 high_gm_sz=384 fence_sz=4 framebuffer_sz=128 max_heads=1 resolution=1920x1080 monitor_config_file=/etc/gvt-g-monitor.conf
-+193d experimental=1 name='Intel GVT-g' low_gm_sz=128 high_gm_sz=384 fence_sz=4 framebuffer_sz=128 max_heads=1 resolution=1920x1080 monitor_config_file=/etc/gvt-g-monitor.conf
++193b experimental=0 name='Intel GVT-g' low_gm_sz=128 high_gm_sz=384 fence_sz=4 framebuffer_sz=128 max_heads=1 resolution=1920x1080 monitor_config_file=/etc/gvt-g-monitor.conf
++193d experimental=0 name='Intel GVT-g' low_gm_sz=128 high_gm_sz=384 fence_sz=4 framebuffer_sz=128 max_heads=1 resolution=1920x1080 monitor_config_file=/etc/gvt-g-monitor.conf
 +193a experimental=1 name='Intel GVT-g' low_gm_sz=128 high_gm_sz=384 fence_sz=4 framebuffer_sz=128 max_heads=1 resolution=1920x1080 monitor_config_file=/etc/gvt-g-monitor.conf
 diff --git a/mk/Makefile b/mk/Makefile
-index 8ec6498..5cff5a9 100644
+index 0c605eb..d7610ce 100644
 --- a/mk/Makefile
 +++ b/mk/Makefile
 @@ -13,6 +13,8 @@ PKG_RELEASE := $(XS_RELEASE)
