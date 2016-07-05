@@ -458,6 +458,7 @@ vgtbuffer-round-up-y-tiled-size.patch
 vgt-adjust-default-parameters.patch
 add-configuration-files.patch
 adjust-logging.patch
+i2c_missing_slave.patch
 blacklist_i915.patch
 
 # Fix for Xen 4.7

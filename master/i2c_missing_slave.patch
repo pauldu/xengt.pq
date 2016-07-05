@@ -1,0 +1,14 @@
+diff --git a/drivers/gpu/drm/i915/vgt/edid.c b/drivers/gpu/drm/i915/vgt/edid.c
+index 43f0998..90416be 100644
+--- a/drivers/gpu/drm/i915/vgt/edid.c
++++ b/drivers/gpu/drm/i915/vgt/edid.c
+@@ -573,7 +573,8 @@ bool vgt_i2c_handle_aux_ch_write(struct vgt_device *vgt,
+ 		if (i2c_edid->edid_available && i2c_edid->slave_selected) {
+ 			unsigned char val = edid_get_byte(vgt);
+ 			aux_data_for_write = (val << 16);
+-		}
++		} else
++			aux_data_for_write = (0xff << 16);
+ 	}
+ 
+ 	/* write the return value in AUX_CH_DATA reg which includes:
