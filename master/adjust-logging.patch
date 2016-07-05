@@ -11,6 +11,23 @@ index 1bffe0e..d5e2508 100644
  	.nuclear_pageflip = 0,
  	.edp_vswing = 0,
  	.enable_guc_submission = false,
+diff --git a/drivers/gpu/drm/i915/intel_uncore.c b/drivers/gpu/drm/i915/intel_uncore.c
+index 497d4d8..d89d0c7 100644
+--- a/drivers/gpu/drm/i915/intel_uncore.c
++++ b/drivers/gpu/drm/i915/intel_uncore.c
+@@ -635,11 +635,9 @@ hsw_unclaimed_reg_detect(struct drm_i915_private *dev_priv)
+ 		return;
+ 
+ 	if (__raw_i915_read32(dev_priv, FPGA_DBG) & FPGA_DBG_RM_NOCLAIM) {
+-		DRM_DEBUG("Unclaimed register detected, "
+-			  "enabling oneshot unclaimed register reporting. "
++		DRM_DEBUG("Unclaimed register detected. "
+ 			  "Please use i915.mmio_debug=N for more information.\n");
+ 		__raw_i915_write32(dev_priv, FPGA_DBG, FPGA_DBG_RM_NOCLAIM);
+-		i915.mmio_debug = mmio_debug_once--;
+ 	}
+ }
+ 
 diff --git a/drivers/gpu/drm/i915/vgt/cfg_space.c b/drivers/gpu/drm/i915/vgt/cfg_space.c
 index 7e62375..592577d 100644
 --- a/drivers/gpu/drm/i915/vgt/cfg_space.c
@@ -47,7 +64,7 @@ index 7e62375..592577d 100644
  			memcpy (&vgt->state.cfg_space[off], p_data, bytes);
  			break;
 diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
-index 6971a19..b528f63 100644
+index 3257114..7abb571 100644
 --- a/drivers/gpu/drm/i915/vgt/handlers.c
 +++ b/drivers/gpu/drm/i915/vgt/handlers.c
 @@ -265,7 +265,7 @@ static bool rc_state_ctrl_1_mmio_write(struct vgt_device *vgt, unsigned int offs
@@ -70,7 +87,7 @@ index 6971a19..b528f63 100644
  		v, *data0);
  
  	v &= ~(1 << 31);
-@@ -4223,7 +4225,7 @@ static void vgt_passthrough_execlist(struct pgt_device *pdev)
+@@ -4279,7 +4281,7 @@ static void vgt_passthrough_execlist(struct pgt_device *pdev)
  
  bool vgt_post_setup_mmio_hooks(struct pgt_device *pdev)
  {

@@ -1,0 +1,35 @@
+From 8645ed27bccee129a65e52925b5ca4f46eedbd82 Mon Sep 17 00:00:00 2001
+From: Yulei Zhang <yulei.zhang@intel.com>
+Date: Tue, 3 May 2016 10:34:15 +0800
+Subject: [PATCH 406/408] vgt: stop drop the frame while tile format isn't
+ aligned
+
+after compare with the native behavior, instread of dropping the
+frame while tile format isn't aligned between plane ctl register
+and MI_DISPLAY_FLIP command in async flip mode, to print warning
+information about it.
+
+this fix is for bug#1035.
+
+Signed-off-by: Yulei Zhang <yulei.zhang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |    3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index 48895b7..cc3ef81 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -1363,8 +1363,7 @@ static int vgt_handle_mi_display_flip(struct parser_exec_state *s)
+ 	}
+ 
+ 	{
+-		if (!vgt_flip_parameter_check(s, plane_code, stride_val, surf_val))
+-			goto wrong_command;
++		vgt_flip_parameter_check(s, plane_code, stride_val, surf_val);
+ 
+ 		GET_INFO_FOR_FLIP(pipe, plane,
+ 			ctrl_reg, surf_reg, stride_reg, stride_mask);
+-- 
+1.7.10.4
+

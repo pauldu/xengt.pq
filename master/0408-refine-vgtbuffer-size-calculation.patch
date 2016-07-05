@@ -1,0 +1,31 @@
+From c366c49c79d0c5a0a0b6d2d79e2b3337c65e5bae Mon Sep 17 00:00:00 2001
+From: Weinan Li <weinan.z.li@intel.com>
+Date: Wed, 1 Jun 2016 16:29:51 +0800
+Subject: [PATCH 408/408] refine vgtbuffer size calculation
+
+Use stride instead of width to calculate the vgtbuffer size. The memory
+buffer might contain extra padding bytes after each row of pixels. The
+stride is the exact number of bytes from one row of pixels in memory to the
+next row of pixels in memory.
+
+Signed-off-by: Weinan Li <weinan.z.li@intel.com>
+---
+ drivers/gpu/drm/i915/i915_gem_vgtbuffer.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
+index b272718..a69f9f6 100644
+--- a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
++++ b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c
+@@ -185,7 +185,7 @@ static int vgt_decode_information(struct drm_device *dev,
+ 		return -EINVAL;
+ 	}
+ 
+-	args->size = (((args->width * args->height * args->bpp) / 8) +
++	args->size = (((args->stride * args->height * args->bpp) / 8) +
+ 		      (PAGE_SIZE - 1)) >> PAGE_SHIFT;
+ 
+ 	if (args->start & (PAGE_SIZE - 1)) {
+-- 
+1.7.10.4
+

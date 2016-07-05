@@ -1,0 +1,137 @@
+From b5be8cad19d9094e865f8a79ed4605dc86c2b853 Mon Sep 17 00:00:00 2001
+From: Yulei Zhang <yulei.zhang@intel.com>
+Date: Tue, 3 May 2016 10:40:53 +0800
+Subject: [PATCH 407/408] vgt: add more registers into track list for SKL
+
+introduce more registers into track list after review the untracked
+mmio access on SKL platform.
+
+also add _REG_VCS2_EXCC and _REG_VECS_EXCC into render restore
+list.
+
+Signed-off-by: Yulei Zhang <yulei.zhang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |   64 ++++++++++++++++++++++++++++++++---
+ drivers/gpu/drm/i915/vgt/render.c   |    3 ++
+ 2 files changed, 63 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 6971a19..3257114 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -3708,6 +3708,11 @@ reg_attr_t vgt_reg_info_general[] = {
+ {0x4270, 4, F_VIRT, 0, D_BDW_PLUS, NULL, vgt_reg_tlb_control_handler},
+ 
+ {_RING_FAULT_REG(RING_BUFFER_RCS), 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++{0x6651c, 4, F_DPY, 0, D_BDW_PLUS, NULL, NULL},
++{0x6671c, 4, F_DPY, 0, D_BDW_PLUS, NULL, NULL},
++{0x44484, 4, F_DOM0, 0, D_BDW_PLUS, NULL, NULL},
++{0x4448c, 4, F_DOM0, 0, D_BDW_PLUS, NULL, NULL},
++{0x4a404, 4, F_DPY, 0, D_BDW_PLUS, NULL, NULL},
+ };
+ 
+ reg_attr_t vgt_reg_info_bdw[] = {
+@@ -3945,9 +3950,9 @@ reg_attr_t vgt_reg_info_bdw[] = {
+ 
+ {0x7300, 4, F_RDR_MODE, 0, D_BDW_PLUS, NULL, NULL},
+ 
+-{0x420b0, 4, F_DPY, 0, D_BDW, NULL, NULL},
+-{0x420b4, 4, F_DPY, 0, D_BDW, NULL, NULL},
+-{0x420b8, 4, F_DPY, 0, D_BDW, NULL, NULL},
++{0x420b0, 4, F_DPY, 0, D_BDW_PLUS, NULL, NULL},
++{0x420b4, 4, F_DPY, 0, D_BDW_PLUS, NULL, NULL},
++{0x420b8, 4, F_DPY, 0, D_BDW_PLUS, NULL, NULL},
+ 
+ {0x45260, 4, F_DPY, 0, D_BDW, NULL, NULL},
+ {0x6f800, 4, F_DPY, 0, D_BDW, NULL, NULL},
+@@ -3962,7 +3967,7 @@ reg_attr_t vgt_reg_info_bdw[] = {
+ {0x913c, 4, F_VIRT, 0, D_BDW_PLUS, NULL, NULL},
+ 
+ /* WA */
+-{0xfdc, 4, F_DOM0, 0, D_BDW, NULL, NULL},
++{0xfdc, 4, F_DOM0, 0, D_BDW_PLUS, NULL, NULL},
+ {0xe4f0, 4, F_RDR_MODE, 0, D_BDW_PLUS, NULL, NULL},
+ {0xe4f4, 4, F_RDR_MODE, 0, D_BDW_PLUS, NULL, NULL},
+ {0x9430, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
+@@ -4153,6 +4158,8 @@ reg_attr_t vgt_reg_info_skl[] = {
+ {_REG_701C4(PIPE_C, 4), 4, F_DPY, 0, D_SKL, NULL, dpy_plane_mmio_write},
+ 
+ {0x70380, 4, F_DPY, 0, D_SKL, NULL, NULL},
++{0x71380, 4, F_DPY, 0, D_SKL, NULL, NULL},
++{0x72380, 4, F_DPY, 0, D_SKL, NULL, NULL},
+ {0x7039c, 4, F_DPY, 0, D_SKL, NULL, NULL},
+ 
+ {0x80000, 0x3000, F_DPY, 0, D_SKL, NULL, NULL},
+@@ -4189,6 +4196,55 @@ reg_attr_t vgt_reg_info_skl[] = {
+ {0xc403c, 4, F_VIRT, 0, D_SKL, NULL, NULL},
+ {0xb004, 4, F_DOM0, 0, D_SKL, NULL, NULL},
+ {DMA_CTRL, 4, F_DOM0, 0, D_SKL_PLUS, NULL, dma_ctrl_write},
++
++{0x65900, 4, F_DOM0, 0, D_SKL, NULL, NULL},
++{0x1082c0, 4, F_DOM0, 0, D_SKL, NULL, NULL},
++{0x4068, 4, F_DOM0, 0, D_SKL, NULL, NULL},
++{0x67054, 4, F_DOM0, 0, D_SKL, NULL, NULL},
++{0x6e560, 4, F_DOM0, 0, D_SKL, NULL, NULL},
++{0x6e544, 4, F_DOM0, 0, D_SKL, NULL, NULL},
++{0x2b20, 4, F_DOM0, 0, D_SKL, NULL, NULL},
++{0x65f00, 4, F_DOM0, 0, D_SKL, NULL, NULL},
++{0x65f08, 4, F_DOM0, 0, D_SKL, NULL, NULL},
++{0x320f0, 4, F_DOM0, 0, D_SKL, NULL, NULL},
++
++{_REG_VCS2_EXCC, 4, F_RDR, 0, D_SKL, NULL, NULL},
++{_REG_VECS_EXCC, 4, F_RDR, 0, D_SKL, NULL, NULL},
++{0x70034, 4, F_DPY, 0, D_SKL, NULL, NULL},
++{0x71034, 4, F_DPY, 0, D_SKL, NULL, NULL},
++{0x72034, 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{_PLANE_KEYVAL_1(PIPE_A), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{_PLANE_KEYVAL_1(PIPE_B), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{_PLANE_KEYVAL_1(PIPE_C), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{_PLANE_KEYMSK_1(PIPE_A), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{_PLANE_KEYMSK_1(PIPE_B), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{_PLANE_KEYMSK_1(PIPE_C), 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{SPRKEYMAX(PIPE_A), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SPRKEYMAX(PIPE_B), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SPRKEYMAX(PIPE_C), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SPRPOS(PIPE_A), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SPRPOS(PIPE_B), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SPRPOS(PIPE_C), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SPRKEYVAL(PIPE_A), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SPRKEYVAL(PIPE_B), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SPRKEYVAL(PIPE_C), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SPRKEYMSK(PIPE_A), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SPRKEYMSK(PIPE_B), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SPRKEYMSK(PIPE_C), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SPROFFSET(PIPE_A), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SPROFFSET(PIPE_B), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SPROFFSET(PIPE_C), 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{VGT_SPRSTRIDE(PIPE_A), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{VGT_SPRSTRIDE(PIPE_B), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{VGT_SPRSTRIDE(PIPE_C), 4, F_DPY, 0, D_SKL, NULL, NULL},
++
++{SPRSIZE(PIPE_A), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SPRSIZE(PIPE_B), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{SPRSIZE(PIPE_C), 4, F_DPY, 0, D_SKL, NULL, NULL},
++{0x44500, 4, F_DPY, 0, D_SKL, NULL, NULL},
+ };
+ 
+ static void vgt_passthrough_execlist(struct pgt_device *pdev)
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index f0e96f4..5948ded 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -243,6 +243,9 @@ vgt_reg_t vgt_gen9_render_regs[] = {
+ 	0x24d8,
+ 	0x24dc,
+ 
++	_REG_VCS2_EXCC,
++	_REG_VECS_EXCC,
++
+ 	/* Execlist Status Registers */
+ 	_REG_RCS_EXECLIST_STATUS,
+ 	_REG_VCS_EXECLIST_STATUS,
+-- 
+1.7.10.4
+

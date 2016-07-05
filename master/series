@@ -413,6 +413,11 @@ build-system-integration.patch
 0401-vgt-debug-print-schedule-and-blank-time.patch
 0402-vgt-debug-dump-debug-information-for-specific-guest.patch
 0403-vgt-debug-leverage-the-new-debug-funtion.patch
+0404-Add-64-bpp-RGB-support-for-Windows-10-guests.patch
+0405-VGT-Fix-wrong-sprite-plane-format.patch
+0406-vgt-stop-drop-the-frame-while-tile-format-isn-t-alig.patch
+0407-vgt-add-more-registers-into-track-list-for-SKL.patch
+0408-refine-vgtbuffer-size-calculation.patch
 
 #
 # Intel patches not yet available via otcshare
