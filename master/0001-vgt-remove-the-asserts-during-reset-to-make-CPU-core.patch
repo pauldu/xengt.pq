@@ -1,0 +1,72 @@
+From 3d3c75c5bc89d9cee4ae54cb8934952fc341ce4c Mon Sep 17 00:00:00 2001
+From: fred gao <fred.gao@intel.com>
+Date: Wed, 29 Jun 2016 10:44:15 +0800
+Subject: [PATCH] vgt:remove the asserts during reset to make CPU core live
+
+the whole system will be panic after DomU TDR, this patch is
+to let CPU stay alive even after DomU meets GT hang.
+
+V2: update some comments reviewed by Hongbo.
+
+Signed-off-by: fred gao <fred.gao@intel.com>
+---
+ drivers/gpu/drm/i915/intel_uncore.c  | 3 ++-
+ drivers/gpu/drm/i915/vgt/interrupt.c | 6 ++++--
+ drivers/gpu/drm/i915/vgt/vgt.c       | 3 ++-
+ 3 files changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/intel_uncore.c b/drivers/gpu/drm/i915/intel_uncore.c
+index 497d4d8..e712398 100644
+--- a/drivers/gpu/drm/i915/intel_uncore.c
++++ b/drivers/gpu/drm/i915/intel_uncore.c
+@@ -1532,7 +1532,8 @@ static int gen8_do_reset(struct drm_device *dev)
+ 				      RESET_CTL_READY_TO_RESET,
+ 				      700)) {
+ 			DRM_ERROR("%s: reset request timeout\n", engine->name);
+-			goto not_ready;
++			if (!i915.reset)
++				goto not_ready;
+ 		}
+ 	}
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/interrupt.c b/drivers/gpu/drm/i915/vgt/interrupt.c
+index 8a17197..df3d63c 100644
+--- a/drivers/gpu/drm/i915/vgt/interrupt.c
++++ b/drivers/gpu/drm/i915/vgt/interrupt.c
+@@ -553,7 +553,8 @@ bool vgt_reg_master_irq_handler(struct vgt_device *vgt,
+ 		__this_cpu_read(in_vgt) != 1) {
+ 		vgt_err("i915 virq happens in nested vgt context(%d)!!!\n",
+ 			__this_cpu_read(in_vgt));
+-		ASSERT(0);
++		if (!enable_reset)
++			ASSERT(0);
+ 	}
+ 
+ 	/*
+@@ -603,7 +604,8 @@ bool vgt_reg_ier_handler(struct vgt_device *vgt,
+ 		__this_cpu_read(in_vgt) != 1) {
+ 		vgt_err("i915 virq happens in nested vgt context(%d)!!!\n",
+ 			__this_cpu_read(in_vgt));
+-		ASSERT(0);
++		if (!enable_reset)
++			ASSERT(0);
+ 	}
+ 
+ 	/* figure out newly enabled/disable bits */
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 89b1530..b207652 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -1218,7 +1218,8 @@ static void do_device_reset(struct pgt_device *pdev)
+ 	if (test_bit(WAIT_RESET, &vgt_dom0->reset_flags)) {
+ 		vgt_err("DOM0 GPU reset didn't happen?.\n");
+ 		vgt_err("Maybe you set i915.reset=0 in kernel command line? Panic the system.\n");
+-		ASSERT(0);
++		if (!enable_reset)
++			ASSERT(0);
+ 	}
+ 
+ 	if (IS_PREBDW(pdev)) {
+-- 
+1.9.1
+
