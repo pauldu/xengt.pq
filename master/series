@@ -454,7 +454,7 @@ i915-xengt-dependency.patch
 build-system-update.patch
 fix-build-warnings.patch
 
-# Extra patches from Dundee
+# Extra patches
 port-limit-on-hvm-memory-mapping.patch
 vgt-fix-opregion-mapping-size.patch
 vgt-make-force-primary-work.patch
@@ -462,6 +462,10 @@ vgt-add-hashing-gtt-framebuffer.patch
 vgt-fix-vgtbuffer-ioctl.patch
 vgtbuffer-round-up-y-tiled-size.patch
 vgt-adjust-default-parameters.patch
+setup_gtt_use_vzalloc.patch
+setup_gtt_don_t_use_wc_page.patch
+vgt_el_create_shadow_ppgtt_squash_warning.patch
+
 add-configuration-files.patch
 adjust-logging.patch
 i2c_missing_slave.patch

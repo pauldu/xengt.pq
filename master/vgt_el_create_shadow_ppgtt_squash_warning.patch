@@ -1,0 +1,17 @@
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index e690595..b0a42df 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -1137,10 +1137,12 @@ int vgt_el_create_shadow_ppgtt(struct vgt_device *vgt,
+ 		return -1;
+ 	}
+ 
++#if 0
+ 	vgt_warn("Given PPGTT in EL context for creation is not yet constructed! "
+ 		"It is not expected to happen! lrca = 0x%x\n",
+ 		el_ctx->guest_context.lrca);
+ 	dump_regstate_ctx_header(reg_state);
++#endif
+ 
+ ppgtt_creation_done:
+ 	el_ctx->ppgtt_mm = mm;

@@ -1,0 +1,12 @@
+diff --git a/drivers/gpu/drm/i915/vgt/utility.c b/drivers/gpu/drm/i915/vgt/utility.c
+index 4b53f31..934ffc2 100644
+--- a/drivers/gpu/drm/i915/vgt/utility.c
++++ b/drivers/gpu/drm/i915/vgt/utility.c
+@@ -924,7 +924,6 @@ int setup_gtt(struct pgt_device *pdev)
+ 		}
+ 
+ 		get_page(page);
+-		set_memory_wc((unsigned long)page_address(page), 1);
+ 
+ 		pages[i] = page;
+ 

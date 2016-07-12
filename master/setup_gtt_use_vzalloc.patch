@@ -1,0 +1,83 @@
+diff --git a/drivers/gpu/drm/i915/vgt/utility.c b/drivers/gpu/drm/i915/vgt/utility.c
+index 01b03dc..4b53f31 100644
+--- a/drivers/gpu/drm/i915/vgt/utility.c
++++ b/drivers/gpu/drm/i915/vgt/utility.c
+@@ -821,17 +821,16 @@ static void vgt_free_gtt_pages(struct pgt_device *pdev)
+ {
+ 	int i;
+ 	struct page *dummy_page = pdev->dummy_page;
+-	struct page *(*pages)[VGT_APERTURE_PAGES] =
+-		pdev->rsvd_aperture_pages;
++	struct page **pages = pdev->rsvd_aperture_pages;
+ 
+ 	if (pages != NULL) {
+ 		for (i = 0; i < VGT_APERTURE_PAGES; i++) {
+-			if ((*pages)[i] == NULL)
++			if (pages[i] == NULL)
+ 				continue;
+-			put_page((*pages)[i]);
+-			__free_page((*pages)[i]);
++			put_page(pages[i]);
++			__free_page(pages[i]);
+ 		}
+-		kfree(pages);
++		vfree(pages);
+ 	}
+ 
+ 	if (dummy_page != NULL) {
+@@ -865,7 +864,7 @@ int setup_gtt(struct pgt_device *pdev)
+ {
+ 	struct vgt_gtt_pte_ops *ops = pdev->gtt.pte_ops;
+ 	struct page *dummy_page;
+-	struct page *(*pages)[VGT_APERTURE_PAGES];
++	struct page **pages;
+ 	struct page *page;
+ 
+ 	int i, ret, index;
+@@ -908,14 +907,12 @@ int setup_gtt(struct pgt_device *pdev)
+ 	printk("vGT: allocate vGT aperture\n");
+ 	/* Fill GTT range owned by vGT driver */
+ 
+-	ASSERT(sizeof(*pages) == VGT_APERTURE_PAGES * sizeof(struct page*));
+-	if ((pages = kzalloc(sizeof(*pages), GFP_KERNEL)) == NULL) {
++	if ((pages = vzalloc(VGT_APERTURE_PAGES * sizeof(struct page*))) == NULL) {
+ 		ret = -ENOMEM;
+ 		goto err_out;
+ 	}
+ 	pdev->rsvd_aperture_pages = pages;
+ 
+-
+ 	index = GTT_INDEX(pdev, aperture_2_gm(pdev, pdev->rsvd_aperture_base));
+ 	for (i = 0; i < VGT_APERTURE_PAGES; i++) {
+ 		/* need a DMA flag? */
+@@ -929,7 +926,7 @@ int setup_gtt(struct pgt_device *pdev)
+ 		get_page(page);
+ 		set_memory_wc((unsigned long)page_address(page), 1);
+ 
+-		(*pages)[i] = page;
++		pages[i] = page;
+ 
+ 		/* dom0 needs DMAR anyway */
+ 		dma_addr = pci_map_page(pdev->pdev, page, 0, PAGE_SIZE, PCI_DMA_BIDIRECTIONAL);
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 16a84fa..a60f26e 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -446,7 +446,7 @@ struct pgt_device {
+ 	DECLARE_BITMAP(rsvd_aperture_bitmap, VGT_RSVD_APERTURE_BITMAP_BITS);
+ 
+ 	struct page *dummy_page;
+-	struct page *(*rsvd_aperture_pages)[VGT_APERTURE_PAGES];
++	struct page **rsvd_aperture_pages;
+ 	gtt_entry_t dummy_gtt_entry;
+ 
+ 	uint64_t rsvd_aperture_sz;
+@@ -918,7 +918,7 @@ extern void state_sreg_init(struct vgt_device *vgt);
+ #define v_aperture(pdev, addr)		(phys_aperture_vbase(pdev) + (addr))
+ 
+ #define aperture_page_idx(pdev, gma)	(((gma) - aperture_2_gm(pdev, pdev->rsvd_aperture_base)) >> GTT_PAGE_SHIFT)
+-#define aperture_page(pdev, idx)	 ((*pdev->rsvd_aperture_pages)[idx])
++#define aperture_page(pdev, idx)	((pdev->rsvd_aperture_pages)[idx])
+ 
+ 
+ #define vm_aperture_sz(pdev)		(pdev->vm_aperture_sz)
