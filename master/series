@@ -466,6 +466,7 @@ vgt-adjust-default-parameters.patch
 setup_gtt_use_vzalloc.patch
 setup_gtt_don_t_use_wc_page.patch
 vgt_el_create_shadow_ppgtt_squash_warning.patch
+vgt_fix_mapping.patch
 
 add-configuration-files.patch
 adjust-logging.patch

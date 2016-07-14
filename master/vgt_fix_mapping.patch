@@ -1,0 +1,406 @@
+diff --git a/drivers/xen/xengt.c b/drivers/xen/xengt.c
+index 2c2e954..e76690f 100644
+--- a/drivers/xen/xengt.c
++++ b/drivers/xen/xengt.c
+@@ -78,12 +78,17 @@ struct vgt_hvm_info {
+ #define VMEM_BUCK_SIZE		(1ULL << VMEM_BUCK_SHIFT)
+ #define VMEM_BUCK_MASK		(~(VMEM_BUCK_SIZE - 1))
+ 	uint64_t vmem_sz;
++
++	unsigned int nr_low_4k_bkt;
++	unsigned int nr_high_bkt;
++	unsigned int nr_high_4k_bkt;
++
+ 	/* for the 1st 1MB memory of HVM: each vm_struct means one 4K-page */
+-	struct vm_struct **vmem_vma_low_1mb;
++	struct vm_struct **vmem_vma_low_4k;
+ 	/* for >1MB memory of HVM: each vm_struct means 1MB */
+-	struct vm_struct **vmem_vma;
++	struct vm_struct **vmem_vma_high;
+ 	/* for >1MB memory of HVM: each vm_struct means 4KB */
+-	struct vm_struct **vmem_vma_4k;
++	struct vm_struct **vmem_vma_high_4k;
+ };
+ 
+ static int xen_pause_domain(int vm_id);
+@@ -594,14 +599,16 @@ static int xen_inject_msi(int vm_id, u32 addr_lo, u16 data)
+ 
+ static int vgt_hvm_vmem_init(struct vgt_device *vgt)
+ {
+-	unsigned long i, j, gpfn, count;
+-	unsigned long nr_low_1mb_bkt, nr_high_bkt, nr_high_4k_bkt;
++	unsigned long i, j;
++	unsigned int count_low_4k, count_high, count_high_4k;
+ 	struct vgt_hvm_info *info = vgt->hvm_info;
+ 
+ 	if (!vgt->vm_id)
+ 		return 0;
+ 
+-	ASSERT(info->vmem_vma == NULL && info->vmem_vma_low_1mb == NULL);
++	ASSERT(info->vmem_vma_high_4k == NULL &&
++	       info->vmem_vma_high == NULL &&
++	       info->vmem_vma_low_4k == NULL);
+ 
+ 	info->vmem_sz = xen_get_max_gpfn(vgt->vm_id) + 1;
+ 	info->vmem_sz <<= PAGE_SHIFT;
+@@ -610,90 +617,122 @@ static int vgt_hvm_vmem_init(struct vgt_device *vgt)
+ 	if (info->vmem_sz & ~VMEM_BUCK_MASK)
+ 		vgt_warn("VM%d: vmem_sz=0x%llx!\n", vgt->vm_id, info->vmem_sz);
+ 
+-	nr_low_1mb_bkt = VMEM_1MB >> PAGE_SHIFT;
+-	nr_high_bkt = (info->vmem_sz >> VMEM_BUCK_SHIFT);
+-	nr_high_4k_bkt = (info->vmem_sz >> PAGE_SHIFT);
++	info->nr_low_4k_bkt = VMEM_1MB >> PAGE_SHIFT;
++	info->nr_high_bkt = (info->vmem_sz >> VMEM_BUCK_SHIFT);
++	info->nr_high_4k_bkt = (info->vmem_sz >> PAGE_SHIFT);
+ 
+-	info->vmem_vma_low_1mb =
+-		vzalloc(sizeof(*info->vmem_vma) * nr_low_1mb_bkt);
+-	info->vmem_vma =
+-		vzalloc(sizeof(*info->vmem_vma) * nr_high_bkt);
+-	info->vmem_vma_4k =
+-		vzalloc(sizeof(*info->vmem_vma) * nr_high_4k_bkt);
++	info->vmem_vma_low_4k =
++		vzalloc(sizeof(struct vm_struct *) * info->nr_low_4k_bkt);
++	info->vmem_vma_high =
++		vzalloc(sizeof(struct vm_struct *) * info->nr_high_bkt);
++	info->vmem_vma_high_4k =
++		vzalloc(sizeof(struct vm_struct *) * info->nr_high_4k_bkt);
+ 
+-	if (info->vmem_vma_low_1mb == NULL || info->vmem_vma == NULL ||
+-		info->vmem_vma_4k == NULL) {
++	if (info->vmem_vma_low_4k == NULL ||
++	    info->vmem_vma_high == NULL ||
++	    info->vmem_vma_high_4k == NULL) {
+ 		vgt_err("Insufficient memory for vmem_vma, vmem_sz=0x%llx\n",
+-				info->vmem_sz );
++			info->vmem_sz );
+ 		goto err;
+ 	}
+ 
++	vgt_info("VM%d: buckets: low_4k = %u, high = %u, high_4k = %u\n",
++		 vgt->vm_id,
++		 info->nr_low_4k_bkt,
++		 info->nr_high_bkt,
++		 info->nr_high_4k_bkt);
++
++	count_low_4k = 0;
++	count_high = 0;
++	count_high_4k = 0;
++
+ 	/* map the low 1MB memory */
+-	for (i = 0; i < nr_low_1mb_bkt; i++) {
+-		info->vmem_vma_low_1mb[i] =
+-			xen_remap_domain_mfn_range_in_kernel(i, 1, vgt->vm_id);
++	for (i = 0; i < info->nr_low_4k_bkt; i++) {
++		unsigned long gpfn = i;
++		unsigned long gpa = gpfn << PAGE_SHIFT;
++		struct vm_struct *area;
+ 
+-		if (info->vmem_vma_low_1mb[i] != NULL)
++		if (gpa >= 0xa0000 && gpa < 0x100000)
+ 			continue;
+ 
+-		/* Don't warn on [0xa0000, 0x100000): a known non-RAM hole */
+-		if (i < (0xa0000 >> PAGE_SHIFT))
+-			printk(KERN_ERR "vGT: VM%d: can't map GPFN %ld!\n",
+-				vgt->vm_id, i);
++		area = xen_remap_domain_mfn_range_in_kernel(gpfn,
++							    1,
++							    vgt->vm_id);
++		if (area == NULL) {
++			vgt_warn("VM%d: map gpfn %lx failed\n",
++				 vgt->vm_id,
++				 gpfn);
++			continue;
++		}
++
++		info->vmem_vma_low_4k[i] = area;
++		count_low_4k++;
+ 	}
+ 
+-	printk("start vmem_map\n");
+-	count = 0;
+ 	/* map the >1MB memory */
+-	for (i = 1; i < nr_high_bkt; i++) {
+-		gpfn = i << (VMEM_BUCK_SHIFT - PAGE_SHIFT);
+-		info->vmem_vma[i] = xen_remap_domain_mfn_range_in_kernel(
+-				gpfn, VMEM_BUCK_SIZE >> PAGE_SHIFT, vgt->vm_id);
+-
+-		if (info->vmem_vma[i] != NULL)
++	for (i = 1; i < info->nr_high_bkt; i++) {
++		unsigned long gpfn = i << (VMEM_BUCK_SHIFT - PAGE_SHIFT);
++		const unsigned int nr = VMEM_BUCK_SIZE >> PAGE_SHIFT;
++		struct vm_struct *area;
++
++		if (vgt->low_mem_max_gpfn != 0 &&
++		    gpfn < (1 << (32 - PAGE_SHIFT)) &&
++		    gpfn > vgt->low_mem_max_gpfn)
+ 			continue;
+ 
++		area = xen_remap_domain_mfn_range_in_kernel(gpfn,
++							    nr,
++							    vgt->vm_id);
+ 
+-		/* for <4G GPFNs: skip the hole after low_mem_max_gpfn */
+-		if (gpfn < (1 << (32 - PAGE_SHIFT)) &&
+-			vgt->low_mem_max_gpfn != 0 &&
+-			gpfn > vgt->low_mem_max_gpfn)
++		if (area != NULL) {
++			info->vmem_vma_high[i] = area;
++			count_high++;
+ 			continue;
++		}
+ 
+-		for (j = gpfn;
+-		     j < ((i + 1) << (VMEM_BUCK_SHIFT - PAGE_SHIFT));
+-		     j++) {
+-			info->vmem_vma_4k[j] = xen_remap_domain_mfn_range_in_kernel(j, 1, vgt->vm_id);
++		for (j = gpfn; j < gpfn + nr; j++) {
++			if (vgt->low_mem_max_gpfn != 0 &&
++			    j < (1 << (32 - PAGE_SHIFT)) &&
++			    j > vgt->low_mem_max_gpfn)
++				continue;
++
++			area = xen_remap_domain_mfn_range_in_kernel(j,
++								    1,
++								    vgt->vm_id);
+ 
+-			if (info->vmem_vma_4k[j]) {
+-				count++;
+-				printk(KERN_ERR "map 4k gpa (%lx)\n", j << PAGE_SHIFT);
++			if (area == NULL) {
++				vgt_warn("VM%d: map gpfn %lx failed\n",
++					 vgt->vm_id,
++					 j);
++				continue;
+ 			}
+-		}
+ 
+-		/* To reduce the number of err messages(some of them, due to
+-		 * the MMIO hole, are spurious and harmless) we only print a
+-		 * message if it's at every 64MB boundary or >4GB memory.
+-		 */
+-		if ((i % 64 == 0) || (i >= (1ULL << (32 - VMEM_BUCK_SHIFT))))
+-			printk(KERN_ERR "vGT: VM%d: can't map %ldKB\n",
+-				vgt->vm_id, i);
++			info->vmem_vma_high_4k[j] = area;
++			count_high_4k++;
++		}
+ 	}
+-	printk("end vmem_map (%ld 4k mappings)\n", count);
++
++	vgt_info("VM%d: count: low_4k = %u, high = %u, high_4k = %u\n",
++		 vgt->vm_id,
++		 count_low_4k,
++		 count_high,
++		 count_high_4k);
+ 
+ 	return 0;
++
+ err:
+-	vfree(info->vmem_vma);
+-	vfree(info->vmem_vma_low_1mb);
+-	vfree(info->vmem_vma_4k);
+-	info->vmem_vma = info->vmem_vma_low_1mb = info->vmem_vma_4k = NULL;
++	vfree(info->vmem_vma_high);
++	vfree(info->vmem_vma_low_4k);
++	vfree(info->vmem_vma_high_4k);
++
++	info->vmem_vma_high = info->vmem_vma_low_4k = info->vmem_vma_high_4k = NULL;
++
+ 	return -ENOMEM;
+ }
+ 
+ static void vgt_vmem_destroy(struct vgt_device *vgt)
+ {
+-	int i, j;
+-	unsigned long nr_low_1mb_bkt, nr_high_bkt, nr_high_bkt_4k;
++	int i;
+ 	struct vgt_hvm_info *info = vgt->hvm_info;
+ 
+ 	if (vgt->vm_id == 0)
+@@ -703,42 +742,50 @@ static void vgt_vmem_destroy(struct vgt_device *vgt)
+ 	 * Maybe the VM hasn't accessed GEN MMIO(e.g., still in the legacy VGA
+ 	 * mode), so no mapping is created yet.
+ 	 */
+-	if (info->vmem_vma == NULL && info->vmem_vma_low_1mb == NULL)
++	if (info->vmem_vma_high == NULL)
+ 		return;
+ 
+-	ASSERT(info->vmem_vma != NULL && info->vmem_vma_low_1mb != NULL);
++	ASSERT(info->vmem_vma_high_4k != NULL &&
++	       info->vmem_vma_low_4k != NULL);
+ 
+-	nr_low_1mb_bkt = VMEM_1MB >> PAGE_SHIFT;
+-	nr_high_bkt = (info->vmem_sz >> VMEM_BUCK_SHIFT);
+-	nr_high_bkt_4k = (info->vmem_sz >> PAGE_SHIFT);
++	for (i = 0; i < info->nr_low_4k_bkt; i++) {
++		struct vm_struct *area = info->vmem_vma_low_4k[i];
+ 
+-	for (i = 0; i < nr_low_1mb_bkt; i++) {
+-		if (info->vmem_vma_low_1mb[i] == NULL)
++		if (area == NULL)
+ 			continue;
+-		xen_unmap_domain_mfn_range_in_kernel(info->vmem_vma_low_1mb[i],
+-				1, vgt->vm_id);
++
++		xen_unmap_domain_mfn_range_in_kernel(area,
++						     1,
++						     vgt->vm_id);
+ 	}
+ 
+-	for (i = 1; i < nr_high_bkt; i++) {
+-		if (info->vmem_vma[i] == NULL) {
+-			for (j = (i << (VMEM_BUCK_SHIFT - PAGE_SHIFT));
+-			     j < ((i + 1) << (VMEM_BUCK_SHIFT - PAGE_SHIFT));
+-			     j++) {
+-				if (info->vmem_vma_4k[j] == NULL)
+-					continue;
+-				xen_unmap_domain_mfn_range_in_kernel(
+-					info->vmem_vma_4k[j], 1, vgt->vm_id);
+-			}
++	for (i = 1; i < info->nr_high_bkt; i++) {
++		struct vm_struct *area = info->vmem_vma_high[i];
++
++		if (area == NULL)
+ 			continue;
+-		}
+-		xen_unmap_domain_mfn_range_in_kernel(
+-			info->vmem_vma[i], VMEM_BUCK_SIZE >> PAGE_SHIFT,
+-			vgt->vm_id);
++
++		xen_unmap_domain_mfn_range_in_kernel(area,
++						     VMEM_BUCK_SIZE >> PAGE_SHIFT,
++						     vgt->vm_id);
+ 	}
+ 
+-	vfree(info->vmem_vma);
+-	vfree(info->vmem_vma_low_1mb);
+-	vfree(info->vmem_vma_4k);
++	for (i = 1; i < info->nr_high_4k_bkt; i++) {
++		struct vm_struct *area = info->vmem_vma_high_4k[i];
++
++		if (area == NULL)
++			continue;
++
++		xen_unmap_domain_mfn_range_in_kernel(area,
++						     1,
++						     vgt->vm_id);
++	}
++
++	vfree(info->vmem_vma_high);
++	vfree(info->vmem_vma_low_4k);
++	vfree(info->vmem_vma_high_4k);
++
++	info->vmem_vma_high = info->vmem_vma_low_4k = info->vmem_vma_high_4k = NULL;
+ }
+ 
+ static int _hvm_mmio_emulation(struct vgt_device *vgt, struct ioreq *req)
+@@ -751,7 +798,7 @@ static int _hvm_mmio_emulation(struct vgt_device *vgt, struct ioreq *req)
+ 	int pvinfo_page;
+ 	struct vgt_hvm_info *info = vgt->hvm_info;
+ 
+-	if (info->vmem_vma == NULL) {
++	if (info->vmem_vma_high == NULL) {
+ 		tmp = vgt_ops->pa_to_mmio_offset(vgt, req->addr);
+ 		pvinfo_page = (tmp >= VGT_PVINFO_PAGE
+ 				&& tmp < (VGT_PVINFO_PAGE + VGT_PVINFO_SIZE));
+@@ -761,7 +808,7 @@ static int _hvm_mmio_emulation(struct vgt_device *vgt, struct ioreq *req)
+ 		 */
+ 		if (!pvinfo_page && vgt_hvm_vmem_init(vgt) < 0) {
+ 			vgt_err("can not map the memory of VM%d!!!\n", vgt->vm_id);
+-			XEN_ASSERT_VM(info->vmem_vma != NULL, vgt);
++			XEN_ASSERT_VM(info->vmem_vma_high != NULL, vgt);
+ 			return -EINVAL;
+ 		}
+ 	}
+@@ -792,10 +839,7 @@ static int _hvm_mmio_emulation(struct vgt_device *vgt, struct ioreq *req)
+ 					&tmp, req->size))
+ 					return -EINVAL;
+ 				gpa = req->data + sign * i * req->size;
+-				if(!vgt->vm_id)
+-					gva = (char *)xen_mfn_to_virt(gpa >> PAGE_SHIFT) + offset_in_page(gpa);
+-				else
+-					gva = xen_gpa_to_va(vgt, gpa);
++				gva = xen_gpa_to_va(vgt, gpa);
+ 				if (gva) {
+ 					if (!IS_SNB(vgt->pdev))
+ 						memcpy(gva, &tmp, req->size);
+@@ -827,10 +871,7 @@ static int _hvm_mmio_emulation(struct vgt_device *vgt, struct ioreq *req)
+ 
+ 			for (i = 0; i < req->count; i++) {
+ 				gpa = req->data + sign * i * req->size;
+-				if(!vgt->vm_id)
+-					gva = (char *)xen_mfn_to_virt(gpa >> PAGE_SHIFT) + offset_in_page(gpa);
+-				else
+-					gva = xen_gpa_to_va(vgt, gpa);
++				gva = xen_gpa_to_va(vgt, gpa);
+ 
+ 				if (gva != NULL)
+ 					memcpy(&tmp, gva, req->size);
+@@ -1187,45 +1228,45 @@ err:
+ 
+ static void *xen_gpa_to_va(struct vgt_device *vgt, unsigned long gpa)
+ {
+-	unsigned long buck_index, buck_4k_index;
++	unsigned long buck_index;
+ 	struct vgt_hvm_info *info = vgt->hvm_info;
+ 
+ 	if (!vgt->vm_id)
+-		return (char*)xen_mfn_to_virt(gpa>>PAGE_SHIFT) + (gpa & (PAGE_SIZE-1));
++		return xen_mfn_to_virt(gpa >> PAGE_SHIFT) + (gpa & ~PAGE_MASK);
+ 	/*
+ 	 * At the beginning of _hvm_mmio_emulation(), we already initialize
+-	 * info->vmem_vma and info->vmem_vma_low_1mb.
++	 * info->vmem_vma_high and info->vmem_vma_low_4k.
+ 	 */
+-	ASSERT(info->vmem_vma != NULL && info->vmem_vma_low_1mb != NULL);
++	ASSERT(info->vmem_vma_high_4k != NULL &&
++	       info->vmem_vma_high != NULL &&
++	       info->vmem_vma_low_4k != NULL);
+ 
+ 	/* handle the low 1MB memory */
+ 	if (gpa < VMEM_1MB) {
+ 		buck_index = gpa >> PAGE_SHIFT;
+-		if (!info->vmem_vma_low_1mb[buck_index])
++		ASSERT(buck_index < info->nr_low_4k_bkt);
++
++		if (info->vmem_vma_low_4k[buck_index] == NULL)
+ 			return NULL;
+ 
+-		return (char*)(info->vmem_vma_low_1mb[buck_index]->addr) +
+-			(gpa & ~PAGE_MASK);
++		return info->vmem_vma_low_4k[buck_index]->addr + (gpa & ~PAGE_MASK);
+ 
+ 	}
+ 
+ 	/* handle the >1MB memory */
+ 	buck_index = gpa >> VMEM_BUCK_SHIFT;
++	ASSERT(buck_index < info->nr_high_bkt);
+ 
+-	if (!info->vmem_vma[buck_index]) {
+-		buck_4k_index = gpa >> PAGE_SHIFT;
+-		if (!info->vmem_vma_4k[buck_4k_index]) {
+-			if (buck_4k_index > vgt->low_mem_max_gpfn)
+-				vgt_err("vGT failed to map gpa=0x%lx?\n", gpa);
+-			return NULL;
+-		}
++	if (info->vmem_vma_high[buck_index] != NULL)
++		return info->vmem_vma_high[buck_index]->addr + (gpa & ~VMEM_BUCK_MASK);
+ 
+-		return (char*)(info->vmem_vma_4k[buck_4k_index]->addr) +
+-			(gpa & ~PAGE_MASK);
+-	}
++	buck_index = gpa >> PAGE_SHIFT;
++	ASSERT(buck_index < info->nr_high_4k_bkt);
++
++	if (info->vmem_vma_high_4k[buck_index] != NULL)
++		return info->vmem_vma_high_4k[buck_index]->addr + (gpa & ~PAGE_MASK);
+ 
+-	return (char*)(info->vmem_vma[buck_index]->addr) +
+-		(gpa & (VMEM_BUCK_SIZE -1));
++	return NULL;
+ }
+ 
+ static bool xen_read_va(struct vgt_device *vgt, void *va, void *val,
