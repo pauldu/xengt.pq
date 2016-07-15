@@ -1,5 +1,5 @@
 diff --git a/drivers/xen/xengt.c b/drivers/xen/xengt.c
-index 2c2e954..e76690f 100644
+index d2f0c5d..6447174 100644
 --- a/drivers/xen/xengt.c
 +++ b/drivers/xen/xengt.c
 @@ -78,12 +78,17 @@ struct vgt_hvm_info {
@@ -23,7 +23,7 @@ index 2c2e954..e76690f 100644
  };
  
  static int xen_pause_domain(int vm_id);
-@@ -594,14 +599,16 @@ static int xen_inject_msi(int vm_id, u32 addr_lo, u16 data)
+@@ -541,14 +546,16 @@ static int xen_inject_msi(int vm_id, u32 addr_lo, u16 data)
  
  static int vgt_hvm_vmem_init(struct vgt_device *vgt)
  {
@@ -43,7 +43,7 @@ index 2c2e954..e76690f 100644
  
  	info->vmem_sz = xen_get_max_gpfn(vgt->vm_id) + 1;
  	info->vmem_sz <<= PAGE_SHIFT;
-@@ -610,90 +617,122 @@ static int vgt_hvm_vmem_init(struct vgt_device *vgt)
+@@ -557,90 +564,114 @@ static int vgt_hvm_vmem_init(struct vgt_device *vgt)
  	if (info->vmem_sz & ~VMEM_BUCK_MASK)
  		vgt_warn("VM%d: vmem_sz=0x%llx!\n", vgt->vm_id, info->vmem_sz);
  
@@ -108,12 +108,8 @@ index 2c2e954..e76690f 100644
 +		area = xen_remap_domain_mfn_range_in_kernel(gpfn,
 +							    1,
 +							    vgt->vm_id);
-+		if (area == NULL) {
-+			vgt_warn("VM%d: map gpfn %lx failed\n",
-+				 vgt->vm_id,
-+				 gpfn);
++		if (area == NULL)
 +			continue;
-+		}
 +
 +		info->vmem_vma_low_4k[i] = area;
 +		count_low_4k++;
@@ -151,17 +147,17 @@ index 2c2e954..e76690f 100644
 +			count_high++;
  			continue;
 +		}
- 
--		for (j = gpfn;
--		     j < ((i + 1) << (VMEM_BUCK_SHIFT - PAGE_SHIFT));
--		     j++) {
--			info->vmem_vma_4k[j] = xen_remap_domain_mfn_range_in_kernel(j, 1, vgt->vm_id);
++
 +		for (j = gpfn; j < gpfn + nr; j++) {
 +			if (vgt->low_mem_max_gpfn != 0 &&
 +			    j < (1 << (32 - PAGE_SHIFT)) &&
 +			    j > vgt->low_mem_max_gpfn)
 +				continue;
-+
+ 
+-		for (j = gpfn;
+-		     j < ((i + 1) << (VMEM_BUCK_SHIFT - PAGE_SHIFT));
+-		     j++) {
+-			info->vmem_vma_4k[j] = xen_remap_domain_mfn_range_in_kernel(j, 1, vgt->vm_id);
 +			area = xen_remap_domain_mfn_range_in_kernel(j,
 +								    1,
 +								    vgt->vm_id);
@@ -169,13 +165,10 @@ index 2c2e954..e76690f 100644
 -			if (info->vmem_vma_4k[j]) {
 -				count++;
 -				printk(KERN_ERR "map 4k gpa (%lx)\n", j << PAGE_SHIFT);
-+			if (area == NULL) {
-+				vgt_warn("VM%d: map gpfn %lx failed\n",
-+					 vgt->vm_id,
-+					 j);
-+				continue;
- 			}
+-			}
 -		}
++			if (area == NULL)
++				continue;
  
 -		/* To reduce the number of err messages(some of them, due to
 -		 * the MMIO hole, are spurious and harmless) we only print a
@@ -220,7 +213,7 @@ index 2c2e954..e76690f 100644
  	struct vgt_hvm_info *info = vgt->hvm_info;
  
  	if (vgt->vm_id == 0)
-@@ -703,42 +742,50 @@ static void vgt_vmem_destroy(struct vgt_device *vgt)
+@@ -650,42 +681,50 @@ static void vgt_vmem_destroy(struct vgt_device *vgt)
  	 * Maybe the VM hasn't accessed GEN MMIO(e.g., still in the legacy VGA
  	 * mode), so no mapping is created yet.
  	 */
@@ -273,11 +266,8 @@ index 2c2e954..e76690f 100644
 +		xen_unmap_domain_mfn_range_in_kernel(area,
 +						     VMEM_BUCK_SIZE >> PAGE_SHIFT,
 +						     vgt->vm_id);
- 	}
- 
--	vfree(info->vmem_vma);
--	vfree(info->vmem_vma_low_1mb);
--	vfree(info->vmem_vma_4k);
++	}
++
 +	for (i = 1; i < info->nr_high_4k_bkt; i++) {
 +		struct vm_struct *area = info->vmem_vma_high_4k[i];
 +
@@ -287,8 +277,11 @@ index 2c2e954..e76690f 100644
 +		xen_unmap_domain_mfn_range_in_kernel(area,
 +						     1,
 +						     vgt->vm_id);
-+	}
-+
+ 	}
+ 
+-	vfree(info->vmem_vma);
+-	vfree(info->vmem_vma_low_1mb);
+-	vfree(info->vmem_vma_4k);
 +	vfree(info->vmem_vma_high);
 +	vfree(info->vmem_vma_low_4k);
 +	vfree(info->vmem_vma_high_4k);
@@ -297,7 +290,7 @@ index 2c2e954..e76690f 100644
  }
  
  static int _hvm_mmio_emulation(struct vgt_device *vgt, struct ioreq *req)
-@@ -751,7 +798,7 @@ static int _hvm_mmio_emulation(struct vgt_device *vgt, struct ioreq *req)
+@@ -698,7 +737,7 @@ static int _hvm_mmio_emulation(struct vgt_device *vgt, struct ioreq *req)
  	int pvinfo_page;
  	struct vgt_hvm_info *info = vgt->hvm_info;
  
@@ -306,7 +299,7 @@ index 2c2e954..e76690f 100644
  		tmp = vgt_ops->pa_to_mmio_offset(vgt, req->addr);
  		pvinfo_page = (tmp >= VGT_PVINFO_PAGE
  				&& tmp < (VGT_PVINFO_PAGE + VGT_PVINFO_SIZE));
-@@ -761,7 +808,7 @@ static int _hvm_mmio_emulation(struct vgt_device *vgt, struct ioreq *req)
+@@ -708,7 +747,7 @@ static int _hvm_mmio_emulation(struct vgt_device *vgt, struct ioreq *req)
  		 */
  		if (!pvinfo_page && vgt_hvm_vmem_init(vgt) < 0) {
  			vgt_err("can not map the memory of VM%d!!!\n", vgt->vm_id);
@@ -315,7 +308,7 @@ index 2c2e954..e76690f 100644
  			return -EINVAL;
  		}
  	}
-@@ -792,10 +839,7 @@ static int _hvm_mmio_emulation(struct vgt_device *vgt, struct ioreq *req)
+@@ -739,10 +778,7 @@ static int _hvm_mmio_emulation(struct vgt_device *vgt, struct ioreq *req)
  					&tmp, req->size))
  					return -EINVAL;
  				gpa = req->data + sign * i * req->size;
@@ -327,7 +320,7 @@ index 2c2e954..e76690f 100644
  				if (gva) {
  					if (!IS_SNB(vgt->pdev))
  						memcpy(gva, &tmp, req->size);
-@@ -827,10 +871,7 @@ static int _hvm_mmio_emulation(struct vgt_device *vgt, struct ioreq *req)
+@@ -774,10 +810,7 @@ static int _hvm_mmio_emulation(struct vgt_device *vgt, struct ioreq *req)
  
  			for (i = 0; i < req->count; i++) {
  				gpa = req->data + sign * i * req->size;
@@ -339,7 +332,7 @@ index 2c2e954..e76690f 100644
  
  				if (gva != NULL)
  					memcpy(&tmp, gva, req->size);
-@@ -1187,45 +1228,45 @@ err:
+@@ -1134,45 +1167,49 @@ err:
  
  static void *xen_gpa_to_va(struct vgt_device *vgt, unsigned long gpa)
  {
@@ -397,6 +390,10 @@ index 2c2e954..e76690f 100644
 +
 +	if (info->vmem_vma_high_4k[buck_index] != NULL)
 +		return info->vmem_vma_high_4k[buck_index]->addr + (gpa & ~PAGE_MASK);
++
++	vgt_warn("VM%d: failed to find mapping for gpfn %lx\n",
++		 vgt->vm_id,
++		 gpa >> PAGE_SHIFT);
  
 -	return (char*)(info->vmem_vma[buck_index]->addr) +
 -		(gpa & (VMEM_BUCK_SIZE -1));
