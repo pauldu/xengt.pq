@@ -425,7 +425,7 @@ build-system-integration.patch
 
 0001-Refine-the-RPS-thresholds-with-GVT-g.patch
 0001-vgt-remove-the-asserts-during-reset-to-make-CPU-core.patch
-0001-Refine-SKL-MOCS-save-restore-policy.patch
+v2-0001-vgt-refine-SKL-MOCS-save-restore-policy.patch
 
 #
 # Patches analogous to those in the kernel patch queue required

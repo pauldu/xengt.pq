@@ -1,0 +1,249 @@
+From 3c4d9832cfbf2557dbfbb04f4ee2c6ebaec7e0f9 Mon Sep 17 00:00:00 2001
+From: Weinan Li <weinan.z.li@intel.com>
+Date: Wed, 20 Jul 2016 16:12:12 +0800
+Subject: [PATCH v2] vgt: refine SKL MOCS save restore policy
+
+Save and restore the MOCS regs of one VM in GVT-g burning too much CPU
+utilization. Use MMIO trap and LRI command scan to monitor the change of
+MOCS regs, save the state in vreg, and use delta update policy to restore
+the MOCS. It can obviously reduce the MMIO r/w count, and improve the
+performance of context switch.
+
+V2: Add LRI command scan to monitor MOCS reg update. Remove initialization
+value of MOCS change in driver, remain original. Move MOCS save/restore out
+of vgt_rendering_mmio_save/restore.
+
+Signed-off-by: Weinan Li <weinan.z.li@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c | 20 +++++++++-
+ drivers/gpu/drm/i915/vgt/debugfs.c    |  3 ++
+ drivers/gpu/drm/i915/vgt/perf.h       |  1 +
+ drivers/gpu/drm/i915/vgt/render.c     | 69 ++++++++++++++++++++++++++---------
+ drivers/gpu/drm/i915/vgt/vgt.c        |  4 ++
+ drivers/gpu/drm/i915/vgt/vgt.h        |  7 ++++
+ 6 files changed, 86 insertions(+), 18 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index fa89d89..c0cd92a 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -797,6 +797,21 @@ static bool is_shadowed_mmio(unsigned int offset)
+ 	return ret;
+ }
+ 
++#define reg_is_mocs(offset) \
++	(((offset >= 0xC800) && (offset <= 0xCFF8)) || \
++	((offset >= 0xB020) && (offset <= 0xB0A0)))
++
++static int mocs_cmd_reg_handler(struct parser_exec_state *s,
++	unsigned int offset, unsigned int index)
++{
++	struct vgt_device *vgt = s->vgt;
++
++	if (!reg_is_mocs(offset))
++		return -1;
++	__sreg(vgt, offset) = __vreg(vgt, offset) = cmd_val(s, index + 1);
++	return 0;
++}
++
+ static int cmd_reg_handler(struct parser_exec_state *s,
+ 	unsigned int offset, unsigned int index, char *cmd)
+ {
+@@ -817,7 +832,10 @@ static int cmd_reg_handler(struct parser_exec_state *s,
+ 				reg_passthrough(pdev, offset) ||
+ 				reg_pt_readonly(pdev, offset) ||
+ 		(!vgt->vm_id && reg_is_config(pdev, offset))) {
+-		rc = 0;
++		if (reg_is_mocs(offset))
++			rc = mocs_cmd_reg_handler(s, offset, index);
++		else
++			rc = 0;
+ 	} else if (offset == _REG_DE_RRMR || offset == FORCEWAKE_MT) {
+ 		if (!strcmp(cmd, "lri")) {
+ 			rc = add_post_handle_entry(s, vgt_cmd_handler_lri_emulate);
+diff --git a/drivers/gpu/drm/i915/vgt/debugfs.c b/drivers/gpu/drm/i915/vgt/debugfs.c
+index a0a1954..4ae1ad0 100644
+--- a/drivers/gpu/drm/i915/vgt/debugfs.c
++++ b/drivers/gpu/drm/i915/vgt/debugfs.c
+@@ -1206,6 +1206,9 @@ struct dentry *vgt_init_debugfs(struct pgt_device *pdev)
+ 				&pdev->stat.ring_0_busy);
+ 	debugfs_create_u64_node("ring_0_idle", 0440, d_vgt_debug,
+ 				&pdev->stat.ring_0_idle);
++	debugfs_create_u64_node("mocs_restore_cnt", 0440, d_vgt_debug,
++				&pdev->stat.mocs_restore_cnt);
++
+ 
+ 	temp_d = debugfs_create_file("reginfo", 0444, d_vgt_debug,
+ 		pdev, &reginfo_fops);
+diff --git a/drivers/gpu/drm/i915/vgt/perf.h b/drivers/gpu/drm/i915/vgt/perf.h
+index 7972c95..6231dc6 100644
+--- a/drivers/gpu/drm/i915/vgt/perf.h
++++ b/drivers/gpu/drm/i915/vgt/perf.h
+@@ -113,6 +113,7 @@ struct pgt_statistics {
+ 	u64	oos_page_detach_cnt;
+ 	u64	context_switch_cost;
+ 	u64	context_switch_num;
++	u64	mocs_restore_cnt;
+ 	u64	ring_idle_wait;
+ 	u64	ring_0_idle;
+ 	u64	ring_0_busy;
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index 5948ded..00c1767 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -290,29 +290,65 @@ static void gen9_save_mocs(struct vgt_device *vgt)
+ 	struct pgt_device *pdev = vgt->pdev;
+ 	u32 reg;
+ 
+-	for (reg = 0xc800; reg < 0xcff8; reg += 4)
+-		__vreg(vgt, reg) = VGT_MMIO_READ(pdev, reg);
+-
+-	for (reg = 0xb020; reg < 0xb09c; reg += 4)
+-		__vreg(vgt, reg) = VGT_MMIO_READ(pdev, reg);
++	if (!(mocs_saverestore_mode == MOCS_SAVE_RESTORE_LITE) ||
++		((mocs_saverestore_mode == MOCS_SAVE_RESTORE_LITE) &&
++		(vgt->vm_id == 0))) {
++		for (reg = 0xc800; reg < 0xcff8; reg += 4)
++			__vreg(vgt, reg) = VGT_MMIO_READ(pdev, reg);
++		for (reg = 0xb020; reg < 0xb09c; reg += 4)
++			__vreg(vgt, reg) = VGT_MMIO_READ(pdev, reg);
++	}
+ }
+ 
+-static void gen9_restore_mocs(struct vgt_device *vgt)
++static void gen9_restore_mocs(struct vgt_device *prev_vgt,
++	struct vgt_device *next_vgt)
+ {
+-	struct pgt_device *pdev = vgt->pdev;
++	struct pgt_device *pdev = next_vgt->pdev;
+ 	u32 reg;
+ 
+-	for (reg = 0xc800; reg < 0xcff8; reg += 4) {
+-		VGT_MMIO_WRITE(pdev, reg, __vreg(vgt, reg));
+-		VGT_POST_READ(pdev, reg);
+-	}
++	if (prev_vgt && mocs_saverestore_mode == MOCS_SAVE_RESTORE_LITE) {
++		for (reg = 0xc800; reg < 0xcff8; reg += 4) {
++			if (__vreg(prev_vgt, reg) != __vreg(next_vgt, reg)) {
++				VGT_MMIO_WRITE(pdev, reg, __vreg(next_vgt, reg));
++				VGT_POST_READ(pdev, reg);
++				pdev->stat.mocs_restore_cnt++;
++			}
++		}
++		for (reg = 0xb020; reg < 0xb09c; reg += 4) {
++			if (__vreg(prev_vgt, reg) != __vreg(next_vgt, reg)) {
++				VGT_MMIO_WRITE(pdev, reg, __vreg(next_vgt, reg));
++				VGT_POST_READ(pdev, reg);
++				pdev->stat.mocs_restore_cnt++;
++			}
++		}
++	} else {
++		for (reg = 0xc800; reg < 0xcff8; reg += 4) {
++			VGT_MMIO_WRITE(pdev, reg, __vreg(next_vgt, reg));
++			VGT_POST_READ(pdev, reg);
++			pdev->stat.mocs_restore_cnt++;
++		}
+ 
+-	for (reg = 0xb020; reg < 0xb09c; reg += 4) {
+-		VGT_MMIO_WRITE(pdev, reg, __vreg(vgt, reg));
+-		VGT_POST_READ(pdev, reg);
++		for (reg = 0xb020; reg < 0xb09c; reg += 4) {
++			VGT_MMIO_WRITE(pdev, reg, __vreg(next_vgt, reg));
++			VGT_POST_READ(pdev, reg);
++			pdev->stat.mocs_restore_cnt++;
++		}
+ 	}
+ }
+ 
++static void vgt_rendering_save_mocs(struct vgt_device *vgt)
++{
++	if (IS_SKL(vgt->pdev))
++		gen9_save_mocs(vgt);
++}
++
++static void vgt_rendering_restore_mocs(struct vgt_device *prev_vgt,
++	struct vgt_device *next_vgt)
++{
++	if (IS_SKL(next_vgt->pdev))
++		gen9_restore_mocs(prev_vgt, next_vgt);
++}
++
+ /* For save/restore global states difference between VMs.
+  * Other context states should be covered by normal context switch later. */
+ static void vgt_rendering_save_mmio(struct vgt_device *vgt)
+@@ -334,7 +370,6 @@ static void vgt_rendering_save_mmio(struct vgt_device *vgt)
+ 				vgt_get_extra_ctx_regs_num(),
+ 				vgt_get_extra_ctx_regs());
+ 	else if (IS_SKL(pdev)) {
+-		gen9_save_mocs(vgt);
+ 		__vgt_rendering_save(vgt,
+ 				ARRAY_NUM(vgt_gen9_render_regs),
+ 				&vgt_gen9_render_regs[0]);
+@@ -398,7 +433,6 @@ static void vgt_rendering_restore_mmio(struct vgt_device *vgt)
+ 				vgt_get_extra_ctx_regs_num(),
+ 				vgt_get_extra_ctx_regs());
+ 	else if (IS_SKL(pdev)) {
+-		gen9_restore_mocs(vgt);
+ 		__vgt_rendering_restore(vgt,
+ 				ARRAY_NUM(vgt_gen9_render_regs),
+ 				&vgt_gen9_render_regs[0]);
+@@ -652,7 +686,7 @@ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ 
+ 	/* STEP-1: manually save render context */
+ 	vgt_rendering_save_mmio(prev);
+-
++	vgt_rendering_save_mocs(prev);
+ 	/* STEP-2: HW render context switch */
+ 	for (i=0; i < pdev->max_engines; i++) {
+ 		if (!pdev->ring_buffer[i].need_switch)
+@@ -665,6 +699,7 @@ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ 	}
+ 
+ 	/* STEP-3: manually restore render context */
++	vgt_rendering_restore_mocs(prev, next);
+ 	vgt_rendering_restore_mmio(next);
+ 
+ 	/* STEP-4: restore ring buffer structure */
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index bafca2c..51ac2d9 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -99,6 +99,10 @@ bool render_engine_reset = true;
+ module_param_named(render_engine_reset, render_engine_reset, bool, 0600);
+ MODULE_PARM_DESC(render_engine_reset, "Reset rendering engines before loading another VM's context");
+ 
++int mocs_saverestore_mode = 1;
++module_param_named(mocs_saverestore_mode, mocs_saverestore_mode, int, 0600);
++MODULE_PARM_DESC(mocs_saverestore_mode, "MOCS save restore mode in context switch (default: 1 lite-saverestore, 0 full)");
++
+ bool propagate_monitor_to_guest = true;
+ module_param_named(propagate_monitor_to_guest, propagate_monitor_to_guest, bool, 0600);
+ MODULE_PARM_DESC(propagate_monitor_to_guest, "Propagate monitor information to guest by XenGT, other than dom0 services to do so");
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index a258880..9513ba5 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -91,6 +91,7 @@ extern int dom0_fence_sz;
+ extern int bypass_scan_mask;
+ extern bool bypass_dom0_addr_check;
+ extern bool render_engine_reset;
++extern int mocs_saverestore_mode;
+ extern bool enable_panel_fitting;
+ extern bool enable_reset;
+ extern int reset_count_threshold;
+@@ -167,6 +168,12 @@ extern bool vblank_broadcast;
+ #define VGT_MMIO_SPACE_SZ	(2*SIZE_1MB)
+ #define VGT_CFG_SPACE_SZ	256
+ #define VGT_BAR_NUM		4
++
++enum mocs_saverestore_mode {
++	MOCS_SAVE_RESTORE_FULL = 0,
++	MOCS_SAVE_RESTORE_LITE
++};
++
+ typedef struct {
+ 	uint64_t	mmio_base_gpa;	/* base guest physical address of the MMIO registers */
+ 	vgt_reg_t	*vReg;		/* guest view of the register state */
+-- 
+1.9.1
+
