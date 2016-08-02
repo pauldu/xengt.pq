@@ -1,21 +1,14 @@
 #
 # This patch queue is intended to be applied to the following base commit:
 #
-# commit d3208cf589e0bf2f940360c361284b023fe7f259
-# Author: Paul Durrant <paul.durrant@citrix.com>
-# Date:   Wed Jun 22 10:53:08 2016 +0000
+# commit 6d9230cddb6e966ea1ce6b13584cc35af1c8fbdb
+# Author: Jennifer Herbert <Jennifer.Herbert@citrix.com>
+# Date:   Tue Aug 2 13:54:10 2016 +0000
 #
-#     Initial commit matching source from linux-3.x.git with patches up
-#     to and including CONFIG_DMA_SHARED_BUFFER-update.patch applied.
+#    Initial commit matching source from linux-4.x.git with patches
 #
-#     This equates to a backport of drm-intel commit 840c81e9 (which is
-#     the commit on which GVT-g is currently based).
-#
-#     Signed-off-by: Paul Durrant <paul.durrant@citrix.com>
-#
-
-# This has to be compiled into the kernel
-remove-drm_backport_c.patch
+#    This equates to a backport of drm-intel commit 840c81e9 (which is
+#    the commit on which GVT-g is currently based).
 
 # The DRM code relies on a non-public header
 import-intel_ips_h
@@ -432,11 +425,10 @@ v2-0001-vgt-refine-SKL-MOCS-save-restore-policy.patch
 # because of GVT-g updates to the DRM.
 #
 
-drm-compat.patch
 build-mipi-dsi-as-a-module.patch
 
 # Adjustment to XenGT code to make it compatible with the kernel
-xengt-compat.patch
+xengt-iommu.patch
 
 # Adjustment to drivers/xen/Makefile to make xengt the only build target
 xengt-build.patch

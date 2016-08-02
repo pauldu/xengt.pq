@@ -65,32 +65,6 @@ index a69f9f6..10a47b5 100644
  	return 0;
  }
  
-diff --git a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c.rej b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c.rej
-index 5048b01..edbbe59 100644
---- a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c.rej
-+++ b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c.rej
-@@ -1,12 +1,10 @@
- diff a/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c b/drivers/gpu/drm/i915/i915_gem_vgtbuffer.c	(rejected hunks)
--@@ -172,8 +172,8 @@ static int vgt_decode_information(struct drm_device *dev,
-- 		args->hw_format = p->hw_format;
-- 		args->drm_format = p->drm_format;
-- 		args->tiled = p->tiled;
---		args->size = ((p->stride * roundup(p->height, 8)) +
---			      (PAGE_SIZE - 1)) >> PAGE_SHIFT;
--+		args->size = ((p->stride * roundup(p->height, (args->tiled > I915_TILING_X) ? 32 : 8) +
--+			      (PAGE_SIZE - 1)) >> PAGE_SHIFT);
-- 	} else if ((args->plane_id) == I915_VGT_PLANE_CURSOR) {
-- 		c = &pipe->cursor;
-- 		args->enabled = c->enabled;
-+@@ -185,7 +190,7 @@ static int vgt_decode_information(struct drm_device *dev,
-+ 		return -EINVAL;
-+ 	}
-+ 
-+-	args->size = (((args->width * args->height * args->bpp) / 8) +
-++	args->size = ((args->stride * roundup(args->height, 8)) +
-+ 		      (PAGE_SIZE - 1)) >> PAGE_SHIFT;
-+ 
-+ 	if (args->start & (PAGE_SIZE - 1)) {
 diff --git a/include/uapi/drm/i915_drm.h b/include/uapi/drm/i915_drm.h
 index 32bf107..d763d0f 100644
 --- a/include/uapi/drm/i915_drm.h
