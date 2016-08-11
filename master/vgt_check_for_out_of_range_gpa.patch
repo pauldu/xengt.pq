@@ -1,0 +1,22 @@
+diff --git a/drivers/xen/xengt.c b/drivers/xen/xengt.c
+index 1604835..7ad810f 100644
+--- a/drivers/xen/xengt.c
++++ b/drivers/xen/xengt.c
+@@ -1245,6 +1245,9 @@ static void *xen_gpa_to_va(struct vgt_device *vgt, unsigned long gpa)
+ 	       info->vmem_vma_high != NULL &&
+ 	       info->vmem_vma_low_4k != NULL);
+ 
++	if (gpa >= info->vmem_sz)
++		goto done;
++
+ 	/* handle the low 1MB memory */
+ 	if (gpa < VMEM_1MB) {
+ 		buck_index = gpa >> PAGE_SHIFT;
+@@ -1270,6 +1273,7 @@ static void *xen_gpa_to_va(struct vgt_device *vgt, unsigned long gpa)
+ 	if (info->vmem_vma_high_4k[buck_index] != NULL)
+ 		return info->vmem_vma_high_4k[buck_index]->addr + (gpa & ~PAGE_MASK);
+ 
++done:
+ 	vgt_warn("VM%d: failed to find mapping for gpfn %lx\n",
+ 		 vgt->vm_id,
+ 		 gpa >> PAGE_SHIFT);
