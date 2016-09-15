@@ -1,0 +1,60 @@
+From 87139edb3554ea9274d8af2f91b1124f061636f8 Mon Sep 17 00:00:00 2001
+From: Zhao Yan <yan.y.zhao@intel.com>
+Date: Thu, 30 Jun 2016 13:16:25 +0800
+Subject: [PATCH 413/417] temporay workaround for bug 1136 on kernel 4.3
+
+in bug 1136, linux guest will get tdr if running 7 linux vms on host
+simultaneously.
+The reason is that: the hang check function i915_hangcheck_elapsed() will get
+called every 1.5 sec and it will check whether seqno gets moved forward ralative
+to it's last run. if not, it will check whether the ring is idle, if not, it may
+treat this situation as HANG.
+But there is corner case that for certain ring (like blitter ring), it has been
+idle for a long time, so seqno is not moving forward. If at this time, maybe 100ms
+before the ring gets checked in i915_hangecheck_elapsed(), a workload is added the
+request list but has not been submitted to hardware, then the ring's seqno is not
+moving and is also not idle, so is treated as HANG, which, however, is wrong.
+
+This problem have been fixed in latest 4.7 i915 kernel. Here, referencing to 4.7's
+implementaion, we just add some quick workaround fix for it.
+
+Signed-off-by: Zhao Yan <yan.y.zhao@intel.com>
+---
+ drivers/gpu/drm/i915/i915_irq.c |   14 ++++++++++++--
+ 1 file changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/i915_irq.c b/drivers/gpu/drm/i915/i915_irq.c
+index 3a09cb1..23a9699 100644
+--- a/drivers/gpu/drm/i915/i915_irq.c
++++ b/drivers/gpu/drm/i915/i915_irq.c
+@@ -2981,6 +2981,9 @@ static void i915_hangcheck_elapsed(struct work_struct *work)
+ #define BUSY 1
+ #define KICK 5
+ #define HUNG 20
++#ifdef DRM_I915_VGT_SUPPORT
++#define ACTIVE_DECAY 15
++#endif
+ 
+ 	if (!i915.enable_hangcheck)
+ 		return;
+@@ -3056,8 +3059,15 @@ static void i915_hangcheck_elapsed(struct work_struct *work)
+ 			/* Gradually reduce the count so that we catch DoS
+ 			 * attempts across multiple batches.
+ 			 */
+-			if (ring->hangcheck.score > 0)
+-				ring->hangcheck.score--;
++#ifdef DRM_I915_VGT_SUPPORT
++            if (ring->hangcheck.score > 0)
++                ring->hangcheck.score -= ACTIVE_DECAY;
++            if (ring->hangcheck.score < 0)
++                ring->hangcheck.score = 0;
++#else
++            if (ring->hangcheck.score > 0)
++                ring->hangcheck.score--;
++#endif
+ 
+ 			ring->hangcheck.acthd = ring->hangcheck.max_acthd = 0;
+ 		}
+-- 
+1.7.10.4
+

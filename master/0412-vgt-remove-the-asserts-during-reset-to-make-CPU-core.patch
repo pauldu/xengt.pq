@@ -1,7 +1,8 @@
-From 3d3c75c5bc89d9cee4ae54cb8934952fc341ce4c Mon Sep 17 00:00:00 2001
+From e3fc6d68c28991db60144fdee0b586ebf5991f21 Mon Sep 17 00:00:00 2001
 From: fred gao <fred.gao@intel.com>
 Date: Wed, 29 Jun 2016 10:44:15 +0800
-Subject: [PATCH] vgt:remove the asserts during reset to make CPU core live
+Subject: [PATCH 412/417] vgt:remove the asserts during reset to make CPU core
+ live
 
 the whole system will be panic after DomU TDR, this patch is
 to let CPU stay alive even after DomU meets GT hang.
@@ -10,9 +11,9 @@ V2: update some comments reviewed by Hongbo.
 
 Signed-off-by: fred gao <fred.gao@intel.com>
 ---
- drivers/gpu/drm/i915/intel_uncore.c  | 3 ++-
- drivers/gpu/drm/i915/vgt/interrupt.c | 6 ++++--
- drivers/gpu/drm/i915/vgt/vgt.c       | 3 ++-
+ drivers/gpu/drm/i915/intel_uncore.c  |    3 ++-
+ drivers/gpu/drm/i915/vgt/interrupt.c |    6 ++++--
+ drivers/gpu/drm/i915/vgt/vgt.c       |    3 ++-
  3 files changed, 8 insertions(+), 4 deletions(-)
 
 diff --git a/drivers/gpu/drm/i915/intel_uncore.c b/drivers/gpu/drm/i915/intel_uncore.c
@@ -68,5 +69,5 @@ index 89b1530..b207652 100644
  
  	if (IS_PREBDW(pdev)) {
 -- 
-1.9.1
+1.7.10.4
 

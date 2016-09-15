@@ -411,14 +411,15 @@ build-system-integration.patch
 0406-vgt-stop-drop-the-frame-while-tile-format-isn-t-alig.patch
 0407-vgt-add-more-registers-into-track-list-for-SKL.patch
 0408-refine-vgtbuffer-size-calculation.patch
-
-#
-# Intel patches not yet available via otcshare
-#
-
-0001-Refine-the-RPS-thresholds-with-GVT-g.patch
-0001-vgt-remove-the-asserts-during-reset-to-make-CPU-core.patch
-v2-0001-vgt-refine-SKL-MOCS-save-restore-policy.patch
+0409-Separate-GVT-g-host-RPS-threshold-parameters-with-na.patch
+0410-Refine-the-RPS-thresholds-with-GVT-g.patch
+0411-vgt-always-update-the-shadow-indirect_ctx-bb_per_ctx.patch
+0412-vgt-remove-the-asserts-during-reset-to-make-CPU-core.patch
+0413-temporay-workaround-for-bug-1136-on-kernel-4.3.patch
+0414-vgt-fix-guest-fail-to-read-EDID-leading-to-black-gue.patch
+0415-Revert-Add-64-bpp-RGB-support-for-Windows-10-guests.patch
+0416-Revert-VGT-Fix-wrong-sprite-plane-format.patch
+0417-vgt-refine-SKL-MOCS-save-restore-policy.patch
 
 #
 # Patches analogous to those in the kernel patch queue required
@@ -463,7 +464,6 @@ vgt_check_for_out_of_range_gpa.patch
 
 add-configuration-files.patch
 adjust-logging.patch
-i2c_missing_slave.patch
 blacklist_i915.patch
 
 # Fix for Xen 4.7

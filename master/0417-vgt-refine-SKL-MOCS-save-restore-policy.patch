@@ -1,7 +1,7 @@
-From 3c4d9832cfbf2557dbfbb04f4ee2c6ebaec7e0f9 Mon Sep 17 00:00:00 2001
+From 5c36bcef78796c2bd6d3e904524b746b74a03d82 Mon Sep 17 00:00:00 2001
 From: Weinan Li <weinan.z.li@intel.com>
 Date: Wed, 20 Jul 2016 16:12:12 +0800
-Subject: [PATCH v2] vgt: refine SKL MOCS save restore policy
+Subject: [PATCH 417/417] vgt: refine SKL MOCS save restore policy
 
 Save and restore the MOCS regs of one VM in GVT-g burning too much CPU
 utilization. Use MMIO trap and LRI command scan to monitor the change of
@@ -14,17 +14,20 @@ value of MOCS change in driver, remain original. Move MOCS save/restore out
 of vgt_rendering_mmio_save/restore.
 
 Signed-off-by: Weinan Li <weinan.z.li@intel.com>
+Reviewed-by: Kevin Tian <kevin.tian@intel.com>
+Reviewed-by: Zhenyu Wang <zhenyu.z.wang@intel.com>
+Reviewed-by: Zheng, Xiao <xiao.zheng@intel.com>
 ---
- drivers/gpu/drm/i915/vgt/cmd_parser.c | 20 +++++++++-
- drivers/gpu/drm/i915/vgt/debugfs.c    |  3 ++
- drivers/gpu/drm/i915/vgt/perf.h       |  1 +
- drivers/gpu/drm/i915/vgt/render.c     | 69 ++++++++++++++++++++++++++---------
- drivers/gpu/drm/i915/vgt/vgt.c        |  4 ++
- drivers/gpu/drm/i915/vgt/vgt.h        |  7 ++++
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |   20 +++++++++-
+ drivers/gpu/drm/i915/vgt/debugfs.c    |    3 ++
+ drivers/gpu/drm/i915/vgt/perf.h       |    1 +
+ drivers/gpu/drm/i915/vgt/render.c     |   69 +++++++++++++++++++++++++--------
+ drivers/gpu/drm/i915/vgt/vgt.c        |    4 ++
+ drivers/gpu/drm/i915/vgt/vgt.h        |    7 ++++
  6 files changed, 86 insertions(+), 18 deletions(-)
 
 diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
-index fa89d89..c0cd92a 100644
+index cc3ef81..3d6d8c0 100644
 --- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
 +++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
 @@ -797,6 +797,21 @@ static bool is_shadowed_mmio(unsigned int offset)
@@ -62,7 +65,7 @@ index fa89d89..c0cd92a 100644
  		if (!strcmp(cmd, "lri")) {
  			rc = add_post_handle_entry(s, vgt_cmd_handler_lri_emulate);
 diff --git a/drivers/gpu/drm/i915/vgt/debugfs.c b/drivers/gpu/drm/i915/vgt/debugfs.c
-index a0a1954..4ae1ad0 100644
+index 427b096..d74253d 100644
 --- a/drivers/gpu/drm/i915/vgt/debugfs.c
 +++ b/drivers/gpu/drm/i915/vgt/debugfs.c
 @@ -1206,6 +1206,9 @@ struct dentry *vgt_init_debugfs(struct pgt_device *pdev)
@@ -76,10 +79,10 @@ index a0a1954..4ae1ad0 100644
  	temp_d = debugfs_create_file("reginfo", 0444, d_vgt_debug,
  		pdev, &reginfo_fops);
 diff --git a/drivers/gpu/drm/i915/vgt/perf.h b/drivers/gpu/drm/i915/vgt/perf.h
-index 7972c95..6231dc6 100644
+index 34e029e..7f7dac9 100644
 --- a/drivers/gpu/drm/i915/vgt/perf.h
 +++ b/drivers/gpu/drm/i915/vgt/perf.h
-@@ -113,6 +113,7 @@ struct pgt_statistics {
+@@ -101,6 +101,7 @@ struct pgt_statistics {
  	u64	oos_page_detach_cnt;
  	u64	context_switch_cost;
  	u64	context_switch_num;
@@ -205,7 +208,7 @@ index 5948ded..00c1767 100644
  
  	/* STEP-4: restore ring buffer structure */
 diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
-index bafca2c..51ac2d9 100644
+index b207652..4e1220d 100644
 --- a/drivers/gpu/drm/i915/vgt/vgt.c
 +++ b/drivers/gpu/drm/i915/vgt/vgt.c
 @@ -99,6 +99,10 @@ bool render_engine_reset = true;
@@ -220,7 +223,7 @@ index bafca2c..51ac2d9 100644
  module_param_named(propagate_monitor_to_guest, propagate_monitor_to_guest, bool, 0600);
  MODULE_PARM_DESC(propagate_monitor_to_guest, "Propagate monitor information to guest by XenGT, other than dom0 services to do so");
 diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
-index a258880..9513ba5 100644
+index 16a84fa..ec3209b 100644
 --- a/drivers/gpu/drm/i915/vgt/vgt.h
 +++ b/drivers/gpu/drm/i915/vgt/vgt.h
 @@ -91,6 +91,7 @@ extern int dom0_fence_sz;
@@ -231,7 +234,7 @@ index a258880..9513ba5 100644
  extern bool enable_panel_fitting;
  extern bool enable_reset;
  extern int reset_count_threshold;
-@@ -167,6 +168,12 @@ extern bool vblank_broadcast;
+@@ -166,6 +167,12 @@ extern int preemption_policy;
  #define VGT_MMIO_SPACE_SZ	(2*SIZE_1MB)
  #define VGT_CFG_SPACE_SZ	256
  #define VGT_BAR_NUM		4
@@ -245,5 +248,5 @@ index a258880..9513ba5 100644
  	uint64_t	mmio_base_gpa;	/* base guest physical address of the MMIO registers */
  	vgt_reg_t	*vReg;		/* guest view of the register state */
 -- 
-1.9.1
+1.7.10.4
 

@@ -1,0 +1,65 @@
+From 3965cf5753f9f1a1f8e04abfae4177f49f2657f7 Mon Sep 17 00:00:00 2001
+From: Weinan Li <weinan.z.li@intel.com>
+Date: Wed, 22 Jun 2016 13:42:02 +0800
+Subject: [PATCH 411/417] vgt: always update the shadow indirect_ctx &
+ bb_per_ctx value in ctx
+
+vgt cmd scan will allocate new shadow buffer for bb_per_ctx per scan cycle,
+need to update the value in shadow ctx even it's lite-restore before
+submission.
+the indirect_ctx also may be recreate if the size of it changed.
+refine to always update.
+
+Bug: 1076, 1085, 1145
+
+Signed-off-by: Weinan Li <weinan.z.li@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |   25 ++++++++++++++-----------
+ 1 file changed, 14 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index e690595..7c41a7f 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -694,6 +694,20 @@ static void update_shadow_regstate_from_guest(struct vgt_device *vgt,
+ 	src_ctx = (struct reg_state_ctx_header *)src;
+ 	ref_ctx = el_ctx->g_ctx_buf;
+ 
++	/* always need to update the indirect_ctx and bb_per_ctx value in
++	 * shadow context.
++	 */
++	if (shadow_indirect_ctx_bb) {
++		dest_ctx->rcs_indirect_ctx.val =
++			(dest_ctx->rcs_indirect_ctx.val &
++				(~INDIRECT_CTX_ADDR_MASK)) |
++				el_ctx->shadow_indirect_ctx.shadow_ctx_base;
++		dest_ctx->bb_per_ctx_ptr.val =
++			(dest_ctx->bb_per_ctx_ptr.val &
++				(~BB_PER_CTX_ADDR_MASK)) |
++				el_ctx->shadow_bb_per_ctx.shadow_bb_base;
++	}
++
+ 	if (tail_only) {
+ 		dest_ctx->ring_tail.val = src_ctx->ring_tail.val;
+ 		return;
+@@ -738,17 +752,6 @@ static void update_shadow_regstate_from_guest(struct vgt_device *vgt,
+ 	if (shadow_cmd_buffer)
+ 		dest_ctx->rb_start.val = el_ctx->shadow_rb.shadow_rb_base;
+ 
+-	if (shadow_indirect_ctx_bb) {
+-		dest_ctx->rcs_indirect_ctx.val =
+-			(dest_ctx->rcs_indirect_ctx.val &
+-				(~INDIRECT_CTX_ADDR_MASK)) |
+-				el_ctx->shadow_indirect_ctx.shadow_ctx_base;
+-		dest_ctx->bb_per_ctx_ptr.val =
+-			(dest_ctx->bb_per_ctx_ptr.val &
+-				(~BB_PER_CTX_ADDR_MASK)) |
+-				el_ctx->shadow_bb_per_ctx.shadow_bb_base;
+-	}
+-
+ 	ppgtt_update_shadow_ppgtt_for_ctx(vgt, el_ctx);
+ }
+ 
+-- 
+1.7.10.4
+

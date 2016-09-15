@@ -1,0 +1,64 @@
+From 890f50b432ddf584d77cfc81428432ebf5aaf005 Mon Sep 17 00:00:00 2001
+From: Yulei Zhang <yulei.zhang@intel.com>
+Date: Wed, 13 Jul 2016 14:06:41 +0800
+Subject: [PATCH 416/417] Revert "VGT: Fix wrong sprite plane format."
+
+This reverts commit 74ba186296c8538895b414e4d201e8261728c715.
+
+Revert patch 74ba18629 and 271a574e3 because it has regression in
+12 hours stress testing
+---
+ drivers/gpu/drm/i915/vgt/fb_decoder.c |   12 ++++++++----
+ drivers/gpu/drm/i915/vgt/fb_decoder.h |    1 -
+ 2 files changed, 8 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/fb_decoder.c b/drivers/gpu/drm/i915/vgt/fb_decoder.c
+index fd83bde..5a0092b 100644
+--- a/drivers/gpu/drm/i915/vgt/fb_decoder.c
++++ b/drivers/gpu/drm/i915/vgt/fb_decoder.c
+@@ -352,6 +352,7 @@ int vgt_decode_sprite_plane_format(struct vgt_device *vgt,
+ {
+ 	struct vgt_common_plane_format com_plane_fmt;
+ 	u32 val;
++	u32 width;
+ 
+ 	val = __vreg(vgt, VGT_SPRCTL(pipe));
+ 	plane->enabled = !!(val & SPRITE_ENABLE);
+@@ -379,15 +380,18 @@ int vgt_decode_sprite_plane_format(struct vgt_device *vgt,
+ 	memcpy(plane->drm_fmt_desc, com_plane_fmt.gen_pixel_format.desc, MAX_DRM_STR_SZ);
+ 
+ 	plane->base = __vreg(vgt, VGT_SPRSURF(pipe)) & GTT_PAGE_MASK;
+-	plane->stride = vgt_get_stride(vgt, pipe, plane->tiled,
+-					com_plane_fmt.stride_mask, plane->bpp);
++	plane->width = __vreg(vgt, VGT_SPRSTRIDE(pipe)) & com_plane_fmt.stride_mask;
++	plane->width /= plane->bpp / 8;	/* raw width in bytes */
+ 
+ 	val = __vreg(vgt, VGT_SPRSIZE(pipe));
+ 	plane->height = (val & _SPRITE_SIZE_HEIGHT_MASK) >>
+ 		_SPRITE_SIZE_HEIGHT_SHIFT;
+-	plane->width = (val & _SPRITE_SIZE_WIDTH_MASK) >> _SPRITE_SIZE_WIDTH_SHIFT;
++	width = (val & _SPRITE_SIZE_WIDTH_MASK) >> _SPRITE_SIZE_WIDTH_SHIFT;
+ 	plane->height += 1;	/* raw height is one minus the real value */
+-	plane->width += 1;		/* raw width is one minus the real value */
++	width += 1;		/* raw width is one minus the real value */
++	if (plane->width != width)
++		vgt_warn("sprite_plane: plane->width=%d, width=%d\n",
++			plane->width, width);
+ 
+ 	val = __vreg(vgt, VGT_SPRPOS(pipe));
+ 	plane->x_pos = (val & _SPRITE_POS_X_MASK) >> _SPRITE_POS_X_SHIFT;
+diff --git a/drivers/gpu/drm/i915/vgt/fb_decoder.h b/drivers/gpu/drm/i915/vgt/fb_decoder.h
+index bedec74..10e7ace 100644
+--- a/drivers/gpu/drm/i915/vgt/fb_decoder.h
++++ b/drivers/gpu/drm/i915/vgt/fb_decoder.h
+@@ -56,7 +56,6 @@ struct vgt_sprite_plane_format {
+ 	u32	y_offset;	/* in lines */
+ 	u32	width;		/* in pixels */
+ 	u32	height;		/* in lines */
+-	u32     stride;         /* in bytes */
+ 	u8	drm_fmt_desc[MAX_DRM_STR_SZ];
+ };
+ 
+-- 
+1.7.10.4
+

@@ -1,0 +1,123 @@
+From fe7074220e86547b3e827dc2c671b5959f93a0a6 Mon Sep 17 00:00:00 2001
+From: Weinan Li <weinan.z.li@intel.com>
+Date: Tue, 14 Jun 2016 10:43:52 +0800
+Subject: [PATCH 409/417] Separate GVT-g host RPS threshold parameters with
+ native driver
+
+In GVT-g need to use different RPS threshold parameters, to ensure GPU
+running with high performance.
+This patch just copied thresholds for gvtg, no functional changes.
+
+Signed-off-by: Weinan Li <weinan.z.li@intel.com>
+---
+ drivers/gpu/drm/i915/intel_pm.c |   88 +++++++++++++++++++++++++++------------
+ 1 file changed, 62 insertions(+), 26 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/intel_pm.c b/drivers/gpu/drm/i915/intel_pm.c
+index 82613cd..d61dac3 100644
+--- a/drivers/gpu/drm/i915/intel_pm.c
++++ b/drivers/gpu/drm/i915/intel_pm.c
+@@ -4219,38 +4219,74 @@ static void gen6_set_rps_thresholds(struct drm_i915_private *dev_priv, u8 val)
+ 		return;
+ 
+ 	/* Note the units here are not exactly 1us, but 1280ns. */
+-	switch (new_power) {
+-	case LOW_POWER:
+-		/* Upclock if more than 95% busy over 16ms */
+-		ei_up = 16000;
+-		threshold_up = 95;
++	if (!i915_host_mediate) {
++		switch (new_power) {
++		case LOW_POWER:
++			/* Upclock if more than 95% busy over 16ms */
++			ei_up = 16000;
++			threshold_up = 95;
++
++			/* Downclock if less than 85% busy over 32ms */
++			ei_down = 32000;
++			threshold_down = 85;
++			break;
+ 
+-		/* Downclock if less than 85% busy over 32ms */
+-		ei_down = 32000;
+-		threshold_down = 85;
+-		break;
++		case BETWEEN:
++			/* Upclock if more than 90% busy over 13ms */
++			ei_up = 13000;
++			threshold_up = 90;
+ 
+-	case BETWEEN:
+-		/* Upclock if more than 90% busy over 13ms */
+-		ei_up = 13000;
+-		threshold_up = 90;
++			/* Downclock if less than 75% busy over 32ms */
++			ei_down = 32000;
++			threshold_down = 75;
++			break;
+ 
+-		/* Downclock if less than 75% busy over 32ms */
+-		ei_down = 32000;
+-		threshold_down = 75;
+-		break;
++		case HIGH_POWER:
++			/* Upclock if more than 85% busy over 10ms */
++			ei_up = 10000;
++			threshold_up = 85;
+ 
+-	case HIGH_POWER:
+-		/* Upclock if more than 85% busy over 10ms */
+-		ei_up = 10000;
+-		threshold_up = 85;
++			/* Downclock if less than 60% busy over 32ms */
++			ei_down = 32000;
++			threshold_down = 60;
++			break;
++		}
+ 
+-		/* Downclock if less than 60% busy over 32ms */
+-		ei_down = 32000;
+-		threshold_down = 60;
+-		break;
+-	}
++	} else {
++		/* add separated rps threshold policy in GVT-g host */
++		switch (new_power) {
++		case LOW_POWER:
++			/* Upclock if more than 95% busy over 16ms */
++			ei_up = 16000;
++			threshold_up = 95;
++
++			/* Downclock if less than 85% busy over 32ms */
++			ei_down = 32000;
++			threshold_down = 85;
++			break;
++
++		case BETWEEN:
++			/* Upclock if more than 90% busy over 13ms */
++			ei_up = 13000;
++			threshold_up = 90;
++
++			/* Downclock if less than 75% busy over 32ms */
++			ei_down = 32000;
++			threshold_down = 75;
++			break;
+ 
++		case HIGH_POWER:
++			/* Upclock if more than 85% busy over 10ms */
++			ei_up = 10000;
++			threshold_up = 85;
++
++			/* Downclock if less than 60% busy over 32ms */
++			ei_down = 32000;
++			threshold_down = 60;
++			break;
++		}
++
++	}
+ 	I915_WRITE(GEN6_RP_UP_EI,
+ 		GT_INTERVAL_FROM_US(dev_priv, ei_up));
+ 	I915_WRITE(GEN6_RP_UP_THRESHOLD,
+-- 
+1.7.10.4
+

@@ -40,10 +40,10 @@ index 0000000..5bf1347
 \ No newline at end of file
 diff --git a/mk/Makefile b/mk/Makefile
 new file mode 100644
-index 0000000..0c605eb
+index 0000000..e43c766
 --- /dev/null
 +++ b/mk/Makefile
-@@ -0,0 +1,46 @@
+@@ -0,0 +1,52 @@
 +USE_BRANDING := yes
 +IMPORT_BRANDING := yes
 +REPONAME=$(shell echo "$$PWD" | awk -F/ '{print $$3}')
@@ -71,14 +71,20 @@ index 0000000..0c605eb
 +RPM_EXTRA_RPMBUILD_OPTIONS += --define "kernel_version $(LINUX_KABI_VERSION)"
 +RPM_EXTRA_RPMBUILD_OPTIONS += --define "module_dir extra"
 +
-+MODULES_RPM := $(NAME)-$(LINUX_KABI_VERSION)-modules$(MODULES_SUFFIX)-$(PKG_VERSION)-$(PKG_RELEASE).$(DOMAIN0_ARCH_OPTIMIZED).rpm
++MODULES_RPM := $(PKG_NAME)-$(LINUX_KABI_VERSION)-modules$(MODULES_SUFFIX)-$(PKG_VERSION)-$(PKG_RELEASE).$(DOMAIN0_ARCH_OPTIMIZED).rpm
 +
-+build: $(SRC_RPM) $(MY_INSTALLER_FILES)/.dirstamp 
++build: $(MY_OUTPUT_DIR)/xengt.inc $(SRC_RPM) $(MY_INSTALLER_FILES)/.dirstamp 
 +	mkdir -p $(MY_OUTPUT_DIR)/SOURCES
 +	echo "$(COMPONENT) $(call rpm_license,$(SRC_RPM)) file $(SRC_RPM)" >>$(MY_OUTPUT_DIR)/SOURCES/MANIFEST
 +
 +clean:
 +	rm -rf $(SPEC_FILE) $(SRC_TARBALL) $(MY_OBJ_DIR)/$(PKG_NAME)-$(PKG_VERSION)
++
++$(MY_OUTPUT_DIR)/xengt.inc: $(MY_OUTPUT_DIR)/.dirstamp
++	( echo XENGT_PKG_VERSION := $(PKG_VERSION) ;\
++	  echo XENGT_PKG_RELEASE := $(PKG_RELEASE) ;\
++	  echo XENGT_PKG_FILE := RPMS/$(DOMAIN0_ARCH_OPTIMIZED)/$(MODULES_RPM) ;\
++	) >$@
 +
 +$(SRC_RPM): $(RPM_DIRECTORIES) $(SRC_TARBALL) $(SPEC_FILE)
 +	$(RPMBUILD) -ba $(SPEC_FILE)

@@ -1,0 +1,37 @@
+From 226a14f88d1f932d62ada986bf62ea862d766a59 Mon Sep 17 00:00:00 2001
+From: Xu Han <xu.han@intel.com>
+Date: Thu, 7 Jul 2016 14:21:09 +0800
+Subject: [PATCH 414/417] vgt: fix guest fail to read EDID leading to black
+ guest console issue.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+* This patch would fix bug 1139.
+* It appears missing slaves on the i2c should cause 0xff to be returned rather than 0.
+  So, when the Windows driver tried to address a slave at 0x40 and got 0’s back rather
+  than 0xff’s it must have confused it.
+
+Signed-off-by: Paul Durrant <Paul.Durrant@citrix.com>
+Reviewed by: Xu Han <xu.han@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/edid.c |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/edid.c b/drivers/gpu/drm/i915/vgt/edid.c
+index 43f0998..90416be 100644
+--- a/drivers/gpu/drm/i915/vgt/edid.c
++++ b/drivers/gpu/drm/i915/vgt/edid.c
+@@ -573,7 +573,8 @@ bool vgt_i2c_handle_aux_ch_write(struct vgt_device *vgt,
+ 		if (i2c_edid->edid_available && i2c_edid->slave_selected) {
+ 			unsigned char val = edid_get_byte(vgt);
+ 			aux_data_for_write = (val << 16);
+-		}
++		} else
++			aux_data_for_write = (0xff << 16);
+ 	}
+ 
+ 	/* write the return value in AUX_CH_DATA reg which includes:
+-- 
+1.7.10.4
+

@@ -1,0 +1,72 @@
+From 87bb8d25808edce23701480b5a121623db981c36 Mon Sep 17 00:00:00 2001
+From: Weinan Li <weinan.z.li@intel.com>
+Date: Tue, 28 Jun 2016 20:58:53 +0800
+Subject: [PATCH 410/417] Refine the RPS thresholds with GVT-g
+
+The GPU freq can't up during run application in multi VMs with
+many short GPU cmds submission with GVT-g, refine the RPS thresholds to fit
+it.
+
+Bug: 1098
+
+v3: split into 2 patches for easy to track the change.
+v2: add i915_host_mediate check before change RPS policy.
+
+Signed-off-by: Weinan Li <weinan.z.li@intel.com>
+---
+ drivers/gpu/drm/i915/intel_pm.c |   24 ++++++++++++------------
+ 1 file changed, 12 insertions(+), 12 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/intel_pm.c b/drivers/gpu/drm/i915/intel_pm.c
+index d61dac3..ed31367 100644
+--- a/drivers/gpu/drm/i915/intel_pm.c
++++ b/drivers/gpu/drm/i915/intel_pm.c
+@@ -4256,33 +4256,33 @@ static void gen6_set_rps_thresholds(struct drm_i915_private *dev_priv, u8 val)
+ 		/* add separated rps threshold policy in GVT-g host */
+ 		switch (new_power) {
+ 		case LOW_POWER:
+-			/* Upclock if more than 95% busy over 16ms */
++			/* Upclock if more than 80% busy over 16ms */
+ 			ei_up = 16000;
+-			threshold_up = 95;
++			threshold_up = 80;
+ 
+-			/* Downclock if less than 85% busy over 32ms */
++			/* Downclock if less than 60% busy over 32ms */
+ 			ei_down = 32000;
+-			threshold_down = 85;
++			threshold_down = 60;
+ 			break;
+ 
+ 		case BETWEEN:
+-			/* Upclock if more than 90% busy over 13ms */
++			/* Upclock if more than 75% busy over 13ms */
+ 			ei_up = 13000;
+-			threshold_up = 90;
++			threshold_up = 75;
+ 
+-			/* Downclock if less than 75% busy over 32ms */
++			/* Downclock if less than 55% busy over 32ms */
+ 			ei_down = 32000;
+-			threshold_down = 75;
++			threshold_down = 55;
+ 			break;
+ 
+ 		case HIGH_POWER:
+-			/* Upclock if more than 85% busy over 10ms */
++			/* Upclock if more than 70% busy over 10ms */
+ 			ei_up = 10000;
+-			threshold_up = 85;
++			threshold_up = 70;
+ 
+-			/* Downclock if less than 60% busy over 32ms */
++			/* Downclock if less than 40% busy over 32ms */
+ 			ei_down = 32000;
+-			threshold_down = 60;
++			threshold_down = 40;
+ 			break;
+ 		}
+ 
+-- 
+1.7.10.4
+
