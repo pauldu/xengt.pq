@@ -20,7 +20,7 @@ Release: 19.408
 Vendor: %{vendor_name}
 License: GPLv2
 Group: System Environment/Kernel
-Source: %{name}-%{version}.tar.gz
+Source0: http://hg.uk.xensource.com/git/carbon/%{branch}/xengt-4.x.git/snapshot/refs/tags/v%{version}#/%{name}-%{version}.tar.gz
 BuildRoot: %{_tmppath}/%{name}-%{version}-root
 
 %description
