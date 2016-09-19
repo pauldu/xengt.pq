@@ -27,7 +27,7 @@ BuildRoot: %{_tmppath}/%{name}-%{version}-root
 %{vendor_name} %{driver_name} device drivers.
 
 %prep
-%setup
+%autosetup -p1
 
 %build
 %{?cov_wrap} %{__make} %{?_smp_mflags} -C /lib/modules/%{kernel_version}/build M=$(pwd) modules 
