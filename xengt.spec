@@ -22,6 +22,7 @@ License: GPLv2
 Group: System Environment/Kernel
 Source0: http://hg.uk.xensource.com/git/carbon/%{branch}/xengt-4.x.git/snapshot/refs/heads/master#/%{name}-%{version}.tar.gz
 BuildRoot: %{_tmppath}/%{name}-%{version}-root
+BuildRequires: kernel-devel
 
 %description
 %{vendor_name} %{driver_name} device drivers.
@@ -30,6 +31,7 @@ BuildRoot: %{_tmppath}/%{name}-%{version}-root
 %autosetup -p1
 
 %build
+ln mk/Kbuild Kbuild
 %{?cov_wrap} %{__make} %{?_smp_mflags} -C /lib/modules/%{kernel_version}/build M=$(pwd) modules 
 
 %install
@@ -37,10 +39,10 @@ rm -rf %{buildroot}
 %{?cov_wrap} %{__make} -C /lib/modules/%{kernel_version}/build M=$(pwd) INSTALL_MOD_PATH=%{buildroot} INSTALL_MOD_DIR=%{module_dir} DEPMOD=/bin/true modules_install
 
 # Flatten hierarchy
-mv %{buildroot}/lib/modules/%{kernel_version}/extra/drivers/gpu/drm/i915/*.ko %{buildroot}/lib/modules/%{kernel_version}/extra
-mv %{buildroot}/lib/modules/%{kernel_version}/extra/drivers/gpu/drm/*.ko %{buildroot}/lib/modules/%{kernel_version}/extra
-mv %{buildroot}/lib/modules/%{kernel_version}/extra/drivers/xen/*.ko %{buildroot}/lib/modules/%{kernel_version}/extra
-find %{buildroot}/lib/modules/%{kernel_version}/extra/ -mindepth 1 -type d -delete
+mv %{buildroot}/lib/modules/%{kernel_version}/%{module_dir}/drivers/gpu/drm/i915/*.ko %{buildroot}/lib/modules/%{kernel_version}/%{module_dir}
+mv %{buildroot}/lib/modules/%{kernel_version}/%{module_dir}/drivers/gpu/drm/*.ko %{buildroot}/lib/modules/%{kernel_version}/%{module_dir}
+mv %{buildroot}/lib/modules/%{kernel_version}/%{module_dir}/drivers/xen/*.ko %{buildroot}/lib/modules/%{kernel_version}/%{module_dir}
+find %{buildroot}/lib/modules/%{kernel_version}/%{module_dir}/ -mindepth 1 -type d -delete
 
 # mark modules executable so that strip-to-file can strip them
 find %{buildroot}/lib/modules/%{kernel_version} -name "*.ko" -type f | xargs chmod u+x
