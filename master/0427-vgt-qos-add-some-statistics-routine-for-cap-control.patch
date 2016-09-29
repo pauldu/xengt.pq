@@ -1,0 +1,127 @@
+From 97445710936ddb404858970601f00b3c4f88d8ff Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Wed, 20 Jul 2016 23:20:22 +0800
+Subject: [PATCH 427/433] vgt: qos: add some statistics routine for cap
+ control
+
+sched_time is the total render owner time in a period, it
+indicate the time slice consumption.
+busy_time is the HW working time(ctx running) in a period, it
+help to caculate the HW usage ratio by divide sched_time.
+last_ctx_submit_time used for longest unsched guest detection.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+Reviewed-by: Kevin Tian <kevin.tian@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |   24 ++++++++++++++++++++++++
+ drivers/gpu/drm/i915/vgt/execlists.h |    3 +++
+ drivers/gpu/drm/i915/vgt/handlers.c  |    1 +
+ drivers/gpu/drm/i915/vgt/render.c    |    3 +++
+ drivers/gpu/drm/i915/vgt/sched.h     |    8 ++++++++
+ 5 files changed, 39 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 7c41a7f..e727439 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -1430,6 +1430,25 @@ static void vgt_emulate_context_status_change(struct vgt_device *vgt,
+ 	ASSERT((el_slot_ctx_idx == 0) || (el_slot_ctx_idx == 1));
+ 	el_ctx = el_slot->el_ctxs[el_slot_ctx_idx];
+ 
++	/* TODO: Should put the tsc record into the interrupt routine to
++	 * make accuracy, need maintain some structure to link tsc and ctx.
++	 */
++	if (ctx_status->active_to_idle) {
++		/* This logic mainly to handle the two elements case:
++		 * busy_time = second element complete tsc - submit tsc;
++		 * el_slot->el_ctxs[1] == NULL means only one element exist
++		 * it's OK to record the complete_tsc after idle;
++		 * el_slot_ctx_idx == 1 means the second element become idle,
++		 * for other condition means element switch happen, skip
++		 * record the complete tsc.
++		 */
++		if (el_slot->el_ctxs[1] == NULL || el_slot_ctx_idx == 1) {
++			el_ctx->complete_tsc = vgt_get_cycles();
++			vgt->sched_info.busy_time +=
++				el_ctx->complete_tsc - el_ctx->submit_tsc;
++		}
++	}
++
+ 	lite_restore = ctx_status->preempted && ctx_status->lite_restore;
+ 
+ 	if (CTX_IS_SCHEDULED_OUT(ctx_status)) {
+@@ -2265,6 +2284,11 @@ int vgt_submit_execlist(struct vgt_device *vgt, enum vgt_ring_id ring_id)
+ 
+ 	if (vgt_validate_elsp_descs(vgt, &context_descs[0], &context_descs[1])) {
+ 		execlist->el_ctxs[0]->ctx_running = true;
++		execlist->el_ctxs[0]->submit_tsc = vgt_get_cycles();
++		if (context_descs[1].valid) {
++			execlist->el_ctxs[1]->submit_tsc =
++				execlist->el_ctxs[0]->submit_tsc;
++		}
+ 		vgt_hw_ELSP_write(vgt, ring_id, &context_descs[0],
+ 					&context_descs[1]);
+ 	}
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.h b/drivers/gpu/drm/i915/vgt/execlists.h
+index 2c78b50..ff1f1a0 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.h
++++ b/drivers/gpu/drm/i915/vgt/execlists.h
+@@ -258,6 +258,9 @@ struct execlist_context {
+ 	struct shadow_batch_buffer_per_ctx shadow_bb_per_ctx;
+ 
+ 	struct hlist_node node;
++
++	cycles_t submit_tsc;
++	cycles_t complete_tsc;
+ };
+ 
+ /* read execlist status or ctx status which are 64-bit MMIO
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index ea4774c..695ec8e 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -2510,6 +2510,7 @@ static bool vgt_write_submitport(struct vgt_device *vgt, unsigned int offset,
+ 		"VM(%d): MMIO write to virtual submitPort 0x%x with 0x%x\n",
+ 			vgt->vm_id, offset, *(vgt_reg_t *)p_data);
+ 	if (elsp_store->count == ELSP_BUNDLE_NUM) {
++		vgt->sched_info.last_ctx_submit_time = vgt_get_cycles();
+ 		rc = vgt_batch_ELSP_write(vgt, ring_id);
+ 	}
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index 00c1767..3aef472 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -676,7 +676,10 @@ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ 	pdev->stat.context_switch_num ++;
+ 	t1 = vgt_get_cycles();
+ 	pdev->stat.ring_idle_wait += t1 - t0;
++
+ 	prev->stat.schedule_out_time = t1;
++	prev->sched_info.sched_time += prev->stat.schedule_out_time -
++		prev->stat.schedule_in_time;
+ 
+ 	vgt_sched_update_prev(prev, t0);
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/sched.h b/drivers/gpu/drm/i915/vgt/sched.h
+index 4587b41..864e945 100644
+--- a/drivers/gpu/drm/i915/vgt/sched.h
++++ b/drivers/gpu/drm/i915/vgt/sched.h
+@@ -33,6 +33,14 @@ struct vgt_sched_info {
+ 	vgt_tslice_t actual_end_time;
+ 	vgt_tslice_t rb_empty_delay;	/* cost for "wait rendering engines empty */
+ 
++	/* total sched time since start*/
++	vgt_tslice_t sched_time;
++	/* total HW active time since start*/
++	vgt_tslice_t busy_time;
++
++	/* used for longest unsched guest detection */
++	vgt_tslice_t last_ctx_submit_time;
++
+ 	int32_t cap;
+ 
+ 	int32_t priority;
+-- 
+1.7.10.4
+

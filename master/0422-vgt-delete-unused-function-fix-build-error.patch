@@ -1,0 +1,38 @@
+From b24274fcf6aa95a210fdec68897511b6482f83a5 Mon Sep 17 00:00:00 2001
+From: Xu Han <xu.han@intel.com>
+Date: Mon, 8 Aug 2016 17:11:15 +0800
+Subject: [PATCH 422/433] vgt: delete unused function, fix build error.
+
+Signed-off-by: Xu Han <xu.han@intel.com>
+Reviewed-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |   13 -------------
+ 1 file changed, 13 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index cedb8e2..01dc838 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -1451,19 +1451,6 @@ static bool pri_surf_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ 	return rc;
+ }
+ 
+-static bool sprite_plane_ctl_write(struct vgt_device *vgt, unsigned int offset,
+-	void *p_data, unsigned int bytes)
+-{
+-	enum pipe pipe = VGT_SPRCNTRPIPE(offset);
+-	vgt_reg_t ret_val;
+-	bool rc = true;
+-
+-	dpy_plane_mmio_write(vgt, offset, p_data, bytes);
+-	rc &= !vgt_surf_base_range_check(vgt, pipe, SPRITE_PLANE, &ret_val);
+-
+-	return rc;
+-}
+-
+ static bool spr_surf_mmio_write(struct vgt_device *vgt, unsigned int offset,
+ 	void *p_data, unsigned int bytes)
+ {
+-- 
+1.7.10.4
+

@@ -1,0 +1,154 @@
+From ff0c424baf3e127098cb209b09d1c72de920a93c Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Sun, 11 Sep 2016 12:12:12 +0800
+Subject: [PATCH 430/433] vgt: qos: implement cap control
+
+This method tries to guarantee precision in second level, with the
+adjustment conducted in every 100ms. At the end of each ctx switch,
+calculate the sched time and subtract it from the time slice
+allocated; the dedicate time slice for every 100ms together with
+remaining timeslice, will be used to decide how much timeslice
+allocated to this vGPU in the next 100ms slice, with the end goal
+to guarantee cap limitation in second level.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+Reviewed-by: Kevin Tian <kevin.tian@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/render.c |    4 +--
+ drivers/gpu/drm/i915/vgt/sched.c  |   57 ++++++++++++++++++++++++++++++++++++-
+ drivers/gpu/drm/i915/vgt/sched.h  |    1 +
+ drivers/gpu/drm/i915/vgt/vgt.h    |    1 +
+ 4 files changed, 60 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index 3aef472..3000024 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -678,8 +678,8 @@ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ 	pdev->stat.ring_idle_wait += t1 - t0;
+ 
+ 	prev->stat.schedule_out_time = t1;
+-	prev->sched_info.sched_time += prev->stat.schedule_out_time -
+-		prev->stat.schedule_in_time;
++
++	vgt_timeslice_stat(prev);
+ 
+ 	vgt_sched_update_prev(prev, t0);
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/sched.c b/drivers/gpu/drm/i915/vgt/sched.c
+index 5502709..3e85c3ef 100644
+--- a/drivers/gpu/drm/i915/vgt/sched.c
++++ b/drivers/gpu/drm/i915/vgt/sched.c
+@@ -67,6 +67,44 @@ static inline bool phys_head_catch_tail(struct pgt_device *pdev)
+ 	return true;
+ }
+ 
++/* Calc the sched_time during ctx switch, subtract it
++ * from the time slice allocated correspondingly.
++ */
++void vgt_timeslice_stat(struct vgt_device *prev_vgt)
++{
++	int64_t delta;
++
++	delta = prev_vgt->stat.schedule_out_time -
++		prev_vgt->stat.schedule_in_time;
++
++	prev_vgt->sched_info.sched_time += delta;
++
++	prev_vgt->sched_info.time_slice -= delta / cpu_khz;
++}
++
++/* This function executed every 100ms, to alloc time slice
++ * for next 100ms.
++ */
++static void vgt_timeslice_balance(struct pgt_device *pdev)
++{
++	struct vgt_device *vgt;
++	static u64 stage_check;
++	int stage = stage_check++ % 10;
++
++	list_for_each_entry(vgt, &pdev->rendering_runq_head, list) {
++		int max_timeslice = VGT_TS_BALANCE_PERIOD * vgt_cap(vgt) / 100;
++		/* The time slice accumulation will reset at every one second */
++		if (stage == 0) {
++			vgt->sched_info.time_slice = max_timeslice;
++		} else {
++			/* timeslice for next 100ms should add the left/debt
++			 * slice of previous stages.
++			 */
++			vgt->sched_info.time_slice += max_timeslice;
++		}
++	}
++}
++
+ static struct vgt_device *vgt_pickup_next(struct list_head *head,
+ 	struct vgt_device *cur_vgt)
+ {
+@@ -81,12 +119,25 @@ static struct vgt_device *vgt_pickup_next(struct list_head *head,
+ 			next = head->next;
+ 		next_vgt = list_entry(next, struct vgt_device, list);
+ 
+-		if (!vgt_vrings_empty(next_vgt) || pdev->dummy_vm_switch) {
++		if (pdev->dummy_vm_switch) {
+ 			pdev->dummy_vm_switch = false;
+ 			break;
+ 		}
++
++		if (!vgt_vrings_empty(next_vgt)) {
++			/* no time slice check if the guest which has no cap set */
++			if (vgt_cap(next_vgt) == 0)
++				break;
++			/* allowed to schedule if has time slice left */
++			else if (vgt_time_slice(next_vgt) > 0)
++				break;
++		}
+ 	} while (next_vgt != cur_vgt);
+ 
++	/* dom0 become the render owner if next guests are all idle */
++	if (next_vgt == cur_vgt)
++		return vgt_dom0;
++
+ 	return next_vgt;
+ }
+ 
+@@ -839,11 +890,15 @@ void vgt_sched_update_next(struct vgt_device *vgt)
+ 
+ void vgt_schedule(struct pgt_device *pdev)
+ {
++	static u64 timer_check;
+ 	ASSERT(spin_is_locked(&pdev->lock));
+ 
+ 	if (vgt_nr_in_runq(pdev) < 2)
+ 		return;
+ 
++	if (!(timer_check++ % VGT_TS_BALANCE_PERIOD))
++		vgt_timeslice_balance(pdev);
++
+ 	pdev->next_sched_vgt = tbs_next_vgt(&pdev->rendering_runq_head,
+ 			current_render_owner(pdev));
+ }
+diff --git a/drivers/gpu/drm/i915/vgt/sched.h b/drivers/gpu/drm/i915/vgt/sched.h
+index 864e945..e1772c4 100644
+--- a/drivers/gpu/drm/i915/vgt/sched.h
++++ b/drivers/gpu/drm/i915/vgt/sched.h
+@@ -57,4 +57,5 @@ struct vgt_hrtimer {
+ #define VGT_TBS_PERIOD_MAX 15
+ #define VGT_TBS_PERIOD_MIN 1
+ #define VGT_TBS_DEFAULT_PERIOD(x) ((x) * 1000000) /* 15 ms */
++#define VGT_TS_BALANCE_PERIOD 100
+ #endif /*_VGT_SCHED_H_*/
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index a304248..62d6e50 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -1796,6 +1796,7 @@ extern void vgt_submit_commands(struct vgt_device *vgt, int ring_id);
+ extern void vgt_sched_update_prev(struct vgt_device *vgt, cycles_t time);
+ extern void vgt_sched_update_next(struct vgt_device *vgt);
+ extern void vgt_schedule(struct pgt_device *pdev);
++extern void vgt_timeslice_stat(struct vgt_device *prev_vgt);
+ extern void vgt_request_force_removal(struct vgt_device *vgt);
+ extern int vgt_el_slots_number(vgt_state_ring_t *ring_state);
+ 
+-- 
+1.7.10.4
+

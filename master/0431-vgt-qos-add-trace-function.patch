@@ -1,0 +1,124 @@
+From 120d025879c723b32efae707c44c6f18dbd6b9b5 Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Sun, 11 Sep 2016 13:55:10 +0800
+Subject: [PATCH 431/433] vgt: qos: add trace function
+
+add some trace functions for cap control.
+
+qos_ts_alloc, trace the tslice allcation at every 100ms point.
+qos_ts_used, trace the tslice consumption at every context switch.
+qos_pick, trace the scheduler how to pick next guest.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+Reviewed-by: Kevin Tian <kevin.tian@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/sched.c |    8 ++++++
+ drivers/gpu/drm/i915/vgt/trace.h |   52 ++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 60 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/sched.c b/drivers/gpu/drm/i915/vgt/sched.c
+index 3e85c3ef..0dc0ba5 100644
+--- a/drivers/gpu/drm/i915/vgt/sched.c
++++ b/drivers/gpu/drm/i915/vgt/sched.c
+@@ -24,6 +24,7 @@
+  */
+ 
+ #include "vgt.h"
++#include "trace.h"
+ 
+ /* Lets move context scheduler specific parameters here */
+ bool timer_based_qos = true;
+@@ -80,6 +81,9 @@ void vgt_timeslice_stat(struct vgt_device *prev_vgt)
+ 	prev_vgt->sched_info.sched_time += delta;
+ 
+ 	prev_vgt->sched_info.time_slice -= delta / cpu_khz;
++
++	trace_qos_ts_used(prev_vgt->vm_id, delta / cpu_khz,
++		prev_vgt->sched_info.time_slice);
+ }
+ 
+ /* This function executed every 100ms, to alloc time slice
+@@ -102,6 +106,8 @@ static void vgt_timeslice_balance(struct pgt_device *pdev)
+ 			 */
+ 			vgt->sched_info.time_slice += max_timeslice;
+ 		}
++		trace_qos_ts_alloc(vgt->vm_id, stage,
++			vgt->sched_info.time_slice);
+ 	}
+ }
+ 
+@@ -134,6 +140,8 @@ static struct vgt_device *vgt_pickup_next(struct list_head *head,
+ 		}
+ 	} while (next_vgt != cur_vgt);
+ 
++	trace_qos_pick(cur_vgt->vm_id, next_vgt->vm_id,
++		vgt_time_slice(next_vgt));
+ 	/* dom0 become the render owner if next guests are all idle */
+ 	if (next_vgt == cur_vgt)
+ 		return vgt_dom0;
+diff --git a/drivers/gpu/drm/i915/vgt/trace.h b/drivers/gpu/drm/i915/vgt/trace.h
+index 1a7d7e4..a10010f5 100644
+--- a/drivers/gpu/drm/i915/vgt/trace.h
++++ b/drivers/gpu/drm/i915/vgt/trace.h
+@@ -401,6 +401,58 @@ TRACE_EVENT(shadow_bb_relocate,
+ 
+ 		TP_printk("%s", __entry->buf)
+ );
++
++TRACE_EVENT(qos_ts_alloc,
++		TP_PROTO(int vm_id, int stage, int64_t tslice),
++
++		TP_ARGS(vm_id, stage, tslice),
++
++		TP_STRUCT__entry(
++			__array(char, buf, MAX_BUF_LEN)
++		),
++
++		TP_fast_assign(
++			snprintf(__entry->buf, MAX_BUF_LEN,
++			"VM-%d: stage %d, tslice alloc %lld", vm_id, stage, tslice);
++		),
++
++		TP_printk("%s", __entry->buf)
++);
++
++TRACE_EVENT(qos_ts_used,
++		TP_PROTO(int vm_id, int64_t delta, int64_t tslice),
++
++		TP_ARGS(vm_id, delta, tslice),
++
++		TP_STRUCT__entry(
++			__array(char, buf, MAX_BUF_LEN)
++		),
++
++		TP_fast_assign(
++			snprintf(__entry->buf, MAX_BUF_LEN,
++			"VM-%d: used %lld, tslice left %lld", vm_id, delta, tslice);
++		),
++
++		TP_printk("%s", __entry->buf)
++);
++
++TRACE_EVENT(qos_pick,
++		TP_PROTO(int cur_vm_id, int next_vm_id, int64_t tslice),
++
++		TP_ARGS(cur_vm_id, next_vm_id, tslice),
++
++		TP_STRUCT__entry(
++			__array(char, buf, MAX_BUF_LEN)
++		),
++
++		TP_fast_assign(
++		snprintf(__entry->buf, MAX_BUF_LEN,
++			"cur VM-%d, next VM-%d, next tslice left %lld", cur_vm_id, next_vm_id, tslice);
++		),
++
++		TP_printk("%s", __entry->buf)
++);
++
+ #endif /* _VGT_TRACE_H_ */
+ 
+ /* This part must be out of protection */
+-- 
+1.7.10.4
+

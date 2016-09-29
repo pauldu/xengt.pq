@@ -1,0 +1,30 @@
+From 99b8ff48b722e49b0b9bd37fbd1600fc941cc251 Mon Sep 17 00:00:00 2001
+From: Terrence Xu <terrence.xu@intel.com>
+Date: Fri, 5 Aug 2016 16:09:57 +0800
+Subject: [PATCH 423/433] Support USB-to-SATA device as startup disk
+
+Enable CONFIG_USB_DYNAMIC_MINORS option to support the HD, which connected
+by USB-toSATA device, as startup disk.
+
+Signed-off-by: Terrence Xu <terrence.xu@intel.com>
+Reviewed-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ config-4.3.0-host |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/config-4.3.0-host b/config-4.3.0-host
+index b4d4f19..2e0377a 100644
+--- a/config-4.3.0-host
++++ b/config-4.3.0-host
+@@ -3077,7 +3077,7 @@ CONFIG_USB_ANNOUNCE_NEW_DEVICES=y
+ # Miscellaneous USB options
+ #
+ CONFIG_USB_DEFAULT_PERSIST=y
+-# CONFIG_USB_DYNAMIC_MINORS is not set
++CONFIG_USB_DYNAMIC_MINORS=y
+ # CONFIG_USB_OTG is not set
+ # CONFIG_USB_OTG_WHITELIST is not set
+ # CONFIG_USB_OTG_FSM is not set
+-- 
+1.7.10.4
+
