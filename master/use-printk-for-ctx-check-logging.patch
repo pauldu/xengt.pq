@@ -1,0 +1,22 @@
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 39c8ee8..16d41ab 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -593,7 +593,7 @@ static bool sctx_reg_state_wp_handler(void *gp, uint64_t pa, void *p_data, int b
+ #define CHECK_CTX_VAL(MMIO, GUEST, REF, SRC)				\
+ do {									\
+ 	if(GUEST->MMIO.val != REF->MMIO.val)				\
+-		trace_printk("CTX_SYNC_CHECK: "				\
++		printk_ratelimited(KERN_DEBUG "CTX_SYNC_CHECK: " \
+ 			"guest "#MMIO"<0x%x> overwritten "		\
+ 			"by shadow update with 0x%x\n",			\
+ 			GUEST->MMIO.val, SRC->MMIO.val);\
+@@ -774,7 +774,7 @@ static void vgt_update_shadow_ctx_from_guest(struct vgt_device *vgt,
+ 			(memcmp(el_ctx->s_ctx_buf,
+ 				el_ctx->ctx_pages[1].shadow_page.vaddr,
+ 				PAGE_SIZE) != 0))
+-			trace_printk("CTX_SYNC_CHECK: "
++			printk_ratelimited(KERN_DEBUG "CTX_SYNC_CHECK: "
+ 			     "shadow ctx changed from the last ctx save!\n");
+ 	}
+ 

@@ -469,3 +469,4 @@ blacklist_i915.patch
 # Fix for Xen 4.7
 xen-4.7-compat.patch
 get_domctl_interface_version.patch
+use-printk-for-ctx-check-logging.patch
