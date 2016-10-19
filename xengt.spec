@@ -1,6 +1,8 @@
 %define vendor_name Intel Corporation
 %define driver_name xengt
 
+%define module_dir extra
+
 %if %undefined kernel_version
 %define kernel_version %(uname -r)
 %endif
