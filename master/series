@@ -436,6 +436,7 @@ build-system-integration.patch
 0431-vgt-qos-add-trace-function.patch
 0432-vgt-qos-add-debugfs-for-QoS-statistics.patch
 0433-avoid-unnecessary-context-switch.patch
+0434-vgt-add-two-more-untracked-register-after-apply-the-.patch
 
 #
 # Patches analogous to those in the kernel patch queue required

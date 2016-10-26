@@ -1,0 +1,36 @@
+From c0c695970e5774ca57c94cd62451e0700e0f264a Mon Sep 17 00:00:00 2001
+From: Yulei Zhang <yulei.zhang@intel.com>
+Date: Wed, 19 Oct 2016 11:07:45 +0800
+Subject: [PATCH 434/434] vgt: add two more untracked register after apply the
+ new windows driver
+
+Removing redundant warning information to improve performance
+which also can fix bug#1306.
+
+Signed-off-by: Yulei Zhang <yulei.zhang@intel.com>
+Reviewed-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |    2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 695ec8e..fd3f2a8 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -4186,11 +4186,13 @@ reg_attr_t vgt_reg_info_skl[] = {
+ {0xc403c, 4, F_VIRT, 0, D_SKL, NULL, NULL},
+ {0xb004, 4, F_DOM0, 0, D_SKL, NULL, NULL},
+ {DMA_CTRL, 4, F_DOM0, 0, D_SKL_PLUS, NULL, dma_ctrl_write},
++{0xc3e8, 4, F_DOM0, 0, D_SKL_PLUS, NULL, NULL},
+ 
+ {0x65900, 4, F_DOM0, 0, D_SKL, NULL, NULL},
+ {0x1082c0, 4, F_DOM0, 0, D_SKL, NULL, NULL},
+ {0x4068, 4, F_DOM0, 0, D_SKL, NULL, NULL},
+ {0x67054, 4, F_DOM0, 0, D_SKL, NULL, NULL},
++{0x6e400, 4, F_DOM0, 0, D_SKL, NULL, NULL},
+ {0x6e560, 4, F_DOM0, 0, D_SKL, NULL, NULL},
+ {0x6e544, 4, F_DOM0, 0, D_SKL, NULL, NULL},
+ {0x2b20, 4, F_DOM0, 0, D_SKL, NULL, NULL},
+-- 
+1.7.10.4
+
