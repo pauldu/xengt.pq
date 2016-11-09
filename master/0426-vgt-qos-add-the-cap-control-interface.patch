@@ -1,0 +1,161 @@
+From 8c24c8be237d19a5961f0bda48fc957b97857585 Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Tue, 19 Jul 2016 08:55:24 +0800
+Subject: [PATCH 426/433] vgt: qos: add the cap control interface
+
+Cap control the maximum amount of vGPU resource will be able to
+consume, valid value is [0, 100]. 0 and 100 means no upper cap.
+
+Cap of normal VM's vGPU set by the parameter from QEMU, the default
+value is '0', cap of Dom0's vGPU is always 0 and cannot be changed.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+Reviewed-by: Kevin Tian <kevin.tian@intel.com>
+---
+ drivers/gpu/drm/i915/i915_vgpu.h    |    1 +
+ drivers/gpu/drm/i915/vgt/instance.c |   10 +++++++---
+ drivers/gpu/drm/i915/vgt/sched.c    |    1 -
+ drivers/gpu/drm/i915/vgt/sched.h    |    3 ++-
+ drivers/gpu/drm/i915/vgt/sysfs.c    |   12 ++++++++----
+ drivers/gpu/drm/i915/vgt/vgt.c      |    2 ++
+ drivers/gpu/drm/i915/vgt/vgt.h      |    3 +++
+ 7 files changed, 23 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/i915_vgpu.h b/drivers/gpu/drm/i915/i915_vgpu.h
+index d38e320..6f4d36e 100644
+--- a/drivers/gpu/drm/i915/i915_vgpu.h
++++ b/drivers/gpu/drm/i915/i915_vgpu.h
+@@ -181,6 +181,7 @@ typedef struct {
+ 	int aperture_sz; /* in MB */
+ 	int gm_sz;  /* in MB */
+ 	int fence_sz;
++	int cap;
+ 
+ 	int vgt_primary; /* 0/1: config the vgt device as secondary/primary VGA,
+ 						-1: means the ioemu doesn't supply a value */
+diff --git a/drivers/gpu/drm/i915/vgt/instance.c b/drivers/gpu/drm/i915/vgt/instance.c
+index a95f45a..dedf486 100644
+--- a/drivers/gpu/drm/i915/vgt/instance.c
++++ b/drivers/gpu/drm/i915/vgt/instance.c
+@@ -116,9 +116,10 @@ int create_vgt_instance(struct pgt_device *pdev, struct vgt_device **ptr_vgt, vg
+ 	int rc = -ENOMEM;
+ 	int i;
+ 
+-	vgt_info("vm_id=%d, low_gm_sz=%dMB, high_gm_sz=%dMB, fence_sz=%d, vgt_primary=%d\n",
+-		vp.vm_id, vp.aperture_sz, vp.gm_sz-vp.aperture_sz, vp.fence_sz, vp.vgt_primary);
+-
++	vgt_info("vm_id=%d, low_gm_sz=%dMB, high_gm_sz=%dMB, fence_sz=%d,"
++					"vgt_primary=%d, vgt_cap=%d\n",
++		vp.vm_id, vp.aperture_sz, vp.gm_sz-vp.aperture_sz, vp.fence_sz,
++					vp.vgt_primary, vp.cap);
+ 	vgt = vzalloc(sizeof(*vgt));
+ 	if (vgt == NULL) {
+ 		printk("Insufficient memory for vgt_device in %s\n", __FUNCTION__);
+@@ -324,6 +325,9 @@ int create_vgt_instance(struct pgt_device *pdev, struct vgt_device **ptr_vgt, vg
+ 
+ 	*ptr_vgt = vgt;
+ 
++	vgt_cap(vgt) = vp.cap;
++	vgt_info("VM-%d set cap %d\n", vgt->vm_id, vgt_cap(vgt));
++
+ 	/* initialize context scheduler infor */
+ 	vgt_init_sched_info(vgt);
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/sched.c b/drivers/gpu/drm/i915/vgt/sched.c
+index 6980c9f..d95b42c 100644
+--- a/drivers/gpu/drm/i915/vgt/sched.c
++++ b/drivers/gpu/drm/i915/vgt/sched.c
+@@ -67,7 +67,6 @@ static inline bool phys_head_catch_tail(struct pgt_device *pdev)
+ 	return true;
+ }
+ 
+-
+ /* FIXME: Since it is part of "timer based scheduler",
+  * move this from vgt_context.c here and renamed from
+  * next_vgt() to tbs_next_vgt()
+diff --git a/drivers/gpu/drm/i915/vgt/sched.h b/drivers/gpu/drm/i915/vgt/sched.h
+index 71ae756..4587b41 100644
+--- a/drivers/gpu/drm/i915/vgt/sched.h
++++ b/drivers/gpu/drm/i915/vgt/sched.h
+@@ -33,6 +33,8 @@ struct vgt_sched_info {
+ 	vgt_tslice_t actual_end_time;
+ 	vgt_tslice_t rb_empty_delay;	/* cost for "wait rendering engines empty */
+ 
++	int32_t cap;
++
+ 	int32_t priority;
+ 	int32_t weight;
+ 	int64_t time_slice;
+@@ -47,5 +49,4 @@ struct vgt_hrtimer {
+ #define VGT_TBS_PERIOD_MAX 15
+ #define VGT_TBS_PERIOD_MIN 1
+ #define VGT_TBS_DEFAULT_PERIOD(x) ((x) * 1000000) /* 15 ms */
+-
+ #endif /*_VGT_SCHED_H_*/
+diff --git a/drivers/gpu/drm/i915/vgt/sysfs.c b/drivers/gpu/drm/i915/vgt/sysfs.c
+index da6e4e6..9dffd0d 100644
+--- a/drivers/gpu/drm/i915/vgt/sysfs.c
++++ b/drivers/gpu/drm/i915/vgt/sysfs.c
+@@ -49,24 +49,28 @@ static ssize_t vgt_create_instance_store(struct kobject *kobj, struct kobj_attri
+ 	* (where we want to release the vgt instance).
+ 	*/
+ 	(void)sscanf(buf, "%63s", param_str);
+-	param_cnt = sscanf(param_str, "%d,%d,%d,%d,%d", &vp.vm_id, &low_gm_sz,
+-		&high_gm_sz, &vp.fence_sz, &vp.vgt_primary);
++	param_cnt = sscanf(param_str, "%d,%d,%d,%d,%d,%d", &vp.vm_id,
++		&low_gm_sz, &high_gm_sz, &vp.fence_sz, &vp.vgt_primary,
++		&vp.cap);
+ 	vp.aperture_sz = low_gm_sz;
+ 	vp.gm_sz = high_gm_sz + low_gm_sz;
+ 
+ 	if (param_cnt == 1) {
+ 		if (vp.vm_id >= 0)
+ 			return -EINVAL;
+-	} else if (param_cnt == 4 || param_cnt == 5) {
++	} else if (param_cnt == 4 || param_cnt == 5 || param_cnt == 6) {
+ 		if (!(vp.vm_id > 0 && vp.aperture_sz > 0 &&
+ 			vp.aperture_sz <= vp.gm_sz && vp.fence_sz > 0))
+ 			return -EINVAL;
+ 
+-		if (param_cnt == 5) {
++		if (param_cnt == 5 || param_cnt == 6) {
+ 			/* -1/0/1 means: not-specified, non-primary, primary */
+ 			if (vp.vgt_primary < -1 || vp.vgt_primary > 1)
+ 				return -EINVAL;
++			if (vp.cap < 0 || vp.cap > 100)
++				return -EINVAL;
+ 		} else {
++			vp.cap = 0; /* The default, 0, means there is no upper cap. */
+ 			vp.vgt_primary = -1; /* no valid value specified. */
+ 		}
+ 	} else
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 4e1220d..c4e3ccc 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -991,6 +991,8 @@ static int vgt_initialize(struct pci_dev *dev)
+ 	vp.gm_sz = dom0_low_gm_sz + dom0_high_gm_sz;
+ 	vp.fence_sz = dom0_fence_sz;
+ 	vp.vgt_primary = 1; /* this isn't actually used for dom0 */
++	/* there is no upper cap for dom0 */
++	vp.cap = 0;
+ 	if (create_vgt_instance(pdev, &vgt_dom0, vp) < 0)
+ 		goto err;
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index ec3209b..a304248 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -1237,6 +1237,9 @@ static inline unsigned long __REG_READ(struct pgt_device *pdev,
+ #define ctx_actual_end_time(vgt) ((vgt)->sched_info.actual_end_time)
+ #define ctx_rb_empty_delay(vgt) ((vgt)->sched_info.rb_empty_delay)
+ #define ctx_tbs_period(vgt) ((vgt)->sched_info.tbs_period)
++#define vgt_time_slice(vgt) ((vgt)->sched_info.time_slice)
++#define vgt_cap(vgt) ((vgt)->sched_info.cap)
++
+ 
+ #define vgt_get_cycles() ({		\
+ 	cycles_t __ret;				\
+-- 
+1.7.10.4
+

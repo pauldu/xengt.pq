@@ -1,0 +1,37 @@
+From f28122d45ac47853014f94b4175b1164cf39adfe Mon Sep 17 00:00:00 2001
+From: Xu Han <xu.han@intel.com>
+Date: Mon, 8 Aug 2016 13:55:22 +0800
+Subject: [PATCH 421/433] vgt: disable sprite conrtol for PIPE B and C.
+
+* Disable sprite plane control for PIPE B and C.
+* It is for security consideration.
+
+Signed-off-by: Xu Han <xu.han@intel.com>
+Reviewed-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |    8 +++-----
+ 1 file changed, 3 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index f506715..cedb8e2 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -3181,12 +3181,10 @@ reg_attr_t vgt_reg_info_general[] = {
+ {_REG_SPRCSURFLIVE, 4, F_DPY_HWSTS_ADRFIX, 0xFFFFF000, D_ALL,
+ 			spr_surflive_mmio_read, surflive_mmio_write},
+ 
++/* Disable sprite plane control registers for PIPE A, B, and C. */
+ {_SPRA_CTL, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+-
+-{_PLANE_CTL_2_B, 4, F_DPY, 0, D_ALL, NULL, sprite_plane_ctl_write},
+-
+-{_REG_SPRC_CTL, 4, F_DPY, 0, D_ALL, NULL, sprite_plane_ctl_write},
+-
++{_PLANE_CTL_2_B, 4, F_VIRT, 0, D_ALL, NULL, NULL},
++{_REG_SPRC_CTL, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+ 
+ {_LGC_PALETTE_A, 4*256, F_DPY, 0, D_ALL, NULL, NULL},
+ {_LGC_PALETTE_B, 4*256, F_DPY, 0, D_ALL, NULL, NULL},
+-- 
+1.7.10.4
+

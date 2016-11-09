@@ -1,0 +1,37 @@
+From ef9e9edb8860ccafe809ac0e91499cb87cf6446b Mon Sep 17 00:00:00 2001
+From: Xu Han <xu.han@intel.com>
+Date: Fri, 26 Aug 2016 10:54:50 +0800
+Subject: [PATCH 425/433] vgt: add render CNTR and THRSH regs to handle list
+
+* Add VECS render CNTR and THRSH regs to handle list.
+* Add BCS render CNTR and THRSH regs to handle list.
+* Windows driver introduce new render registers
+into LRI instruction, and we need put those registers into
+track list to satisfy the cmd parser logic.
+* Fix bug #1218 The dom0 crashed when played media by
+WMP on Windows guest.
+
+Signed-off-by: Xu Han <xu.han@intel.com>
+Reviewed-by: Yulei Zhang <yulei.zhang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |    4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 01dc838..ea4774c 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -3670,6 +3670,10 @@ reg_attr_t vgt_reg_info_general[] = {
+ {0x5280, 16, F_RDR, 0, D_ALL, NULL, NULL},
+ {0x1c178, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
+ {0x1c17c, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++{0x1a178, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++{0x1a17c, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++{0x22178, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
++{0x2217c, 4, F_RDR, 0, D_BDW_PLUS, NULL, NULL},
+ {BCS_SWCTRL, 4, F_RDR, 0, D_ALL, NULL, NULL},
+ {HS_INVOCATION_COUNT, 8, F_RDR, 0, D_ALL, NULL, NULL},
+ {DS_INVOCATION_COUNT, 8, F_RDR, 0, D_ALL, NULL, NULL},
+-- 
+1.7.10.4
+

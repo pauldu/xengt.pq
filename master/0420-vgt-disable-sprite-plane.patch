@@ -1,0 +1,46 @@
+From 4ed616d7861e301e07b8eceb1ffbd88a24b2e50f Mon Sep 17 00:00:00 2001
+From: Xu Han <xu.han@intel.com>
+Date: Mon, 8 Aug 2016 11:19:15 +0800
+Subject: [PATCH 420/433] vgt: disable sprite plane.
+
+Signed-off-by: Xu Han <xu.han@intel.com>
+Reviewed-by: Zheng, Xiao <xiao.zheng@intel.com>
+
+* fix wrong surf_size of sprite plane.
+* change sprite plane control register handle method to F_VIRT.
+* disable overlay feature in order to fix security issue.
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |    3 ++-
+ drivers/gpu/drm/i915/vgt/handlers.c   |    2 +-
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index 3d6d8c0..4c68b22 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -1413,7 +1413,8 @@ static int vgt_handle_mi_display_flip(struct parser_exec_state *s)
+ 			struct vgt_sprite_plane_format spr_fmt;
+ 			if (!vgt_decode_sprite_plane_format(vgt, real_pipe, &spr_fmt)) {
+ 				if (spr_fmt.enabled)
+-					surf_size = spr_fmt.height * spr_fmt.width * spr_fmt.bpp / 8 ;
++					surf_size = spr_fmt.height
++						* spr_fmt.stride;
+ 			} else {
+ 				return -1;
+ 			}
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 3257114..f506715 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -3181,7 +3181,7 @@ reg_attr_t vgt_reg_info_general[] = {
+ {_REG_SPRCSURFLIVE, 4, F_DPY_HWSTS_ADRFIX, 0xFFFFF000, D_ALL,
+ 			spr_surflive_mmio_read, surflive_mmio_write},
+ 
+-{_SPRA_CTL, 4, F_DPY, 0, D_ALL, NULL, sprite_plane_ctl_write},
++{_SPRA_CTL, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+ 
+ {_PLANE_CTL_2_B, 4, F_DPY, 0, D_ALL, NULL, sprite_plane_ctl_write},
+ 
+-- 
+1.7.10.4
+

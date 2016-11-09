@@ -420,6 +420,23 @@ build-system-integration.patch
 0415-Revert-Add-64-bpp-RGB-support-for-Windows-10-guests.patch
 0416-Revert-VGT-Fix-wrong-sprite-plane-format.patch
 0417-vgt-refine-SKL-MOCS-save-restore-policy.patch
+0418-Add-64-bpp-RGB-support-for-Windows-10-guests.patch
+0419-VGT-Fix-wrong-sprite-plane-format.patch
+0420-vgt-disable-sprite-plane.patch
+0421-vgt-disable-sprite-conrtol-for-PIPE-B-and-C.patch
+0422-vgt-delete-unused-function-fix-build-error.patch
+0423-Support-USB-to-SATA-device-as-startup-disk.patch
+0424-vgt-fix-wrong-stride-value-of-sprite-plane.patch
+0425-vgt-add-render-CNTR-and-THRSH-regs-to-handle-list.patch
+0426-vgt-qos-add-the-cap-control-interface.patch
+0427-vgt-qos-add-some-statistics-routine-for-cap-control.patch
+0428-vgt-qos-factor-out-the-scheduler.patch
+0429-vgt-qos-add-sysfs-for-QoS-statistics.patch
+0430-vgt-qos-implement-cap-control.patch
+0431-vgt-qos-add-trace-function.patch
+0432-vgt-qos-add-debugfs-for-QoS-statistics.patch
+0433-avoid-unnecessary-context-switch.patch
+0434-vgt-add-two-more-untracked-register-after-apply-the-.patch
 
 #
 # Patches analogous to those in the kernel patch queue required

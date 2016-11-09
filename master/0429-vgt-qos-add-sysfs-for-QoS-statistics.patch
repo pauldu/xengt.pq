@@ -1,0 +1,83 @@
+From a3855e679dddb57c7978fa7f84f8905069eac9ef Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Sat, 10 Sep 2016 22:58:13 +0800
+Subject: [PATCH 429/433] vgt: qos: add sysfs for QoS statistics
+
+Add sysfs interface to query vGPU HW utilization.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+Reviewed-by: Kevin Tian <kevin.tian@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/perf.h  |    4 ++++
+ drivers/gpu/drm/i915/vgt/sysfs.c |   26 ++++++++++++++++++++++++++
+ 2 files changed, 30 insertions(+)
+
+diff --git a/drivers/gpu/drm/i915/vgt/perf.h b/drivers/gpu/drm/i915/vgt/perf.h
+index 7f7dac9..2c17e09 100644
+--- a/drivers/gpu/drm/i915/vgt/perf.h
++++ b/drivers/gpu/drm/i915/vgt/perf.h
+@@ -37,6 +37,10 @@ struct vgt_statistics {
+ 	u64	schedule_in_time;	/* TSC time when it is last scheduled in */
+ 	u64	schedule_out_time;
+ 	u64	last_vblank_time;
++	u64	last_sched_time;
++	u64	last_busy_time;
++	u64	last_util_busy_time;
++	u64	last_util_sched_time;
+ 	u64	allocated_cycles;
+ 	u64	used_cycles;
+ 	u64	irq_num;
+diff --git a/drivers/gpu/drm/i915/vgt/sysfs.c b/drivers/gpu/drm/i915/vgt/sysfs.c
+index 9dffd0d..c463096 100644
+--- a/drivers/gpu/drm/i915/vgt/sysfs.c
++++ b/drivers/gpu/drm/i915/vgt/sysfs.c
+@@ -868,6 +868,29 @@ static ssize_t aperture_base_va_show(struct kobject *kobj, struct kobj_attribute
+ 	return sprintf(buf, "%p\n", vgt->aperture_base_va);
+ }
+ 
++static ssize_t vgpu_hw_utilization_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
++{
++	struct vgt_device *vgt = kobj_to_vgt(kobj);
++	int utilization;
++	int cpu;
++
++	vgt_lock_dev(vgt->pdev, cpu);
++
++	if (vgt->sched_info.sched_time - vgt->stat.last_util_sched_time > 0) {
++		utilization = (vgt->sched_info.busy_time - vgt->stat.last_util_busy_time) *
++			100 / (vgt->sched_info.sched_time - vgt->stat.last_util_sched_time);
++	} else {
++		utilization = 0;
++	}
++
++	vgt->stat.last_util_sched_time = vgt->sched_info.sched_time;
++	vgt->stat.last_util_busy_time = vgt->sched_info.busy_time;
++
++	vgt_unlock_dev(vgt->pdev, cpu);
++
++	return sprintf(buf, "%d\n", utilization);
++}
++
+ static struct kobj_attribute vgt_id_attribute =
+ 	__ATTR_RO(vgt_id);
+ 
+@@ -883,6 +906,8 @@ static struct kobj_attribute aperture_base_attribute =
+ static struct kobj_attribute aperture_base_va_attribute =
+ 	__ATTR_RO(aperture_base_va);
+ 
++static struct kobj_attribute vgpu_hw_utilization_attribute =
++	__ATTR_RO(vgpu_hw_utilization);
+ /*
+  * Create a group of attributes so that we can create and destroy them all
+  * at once.
+@@ -893,6 +918,7 @@ static struct attribute *vgt_instance_attrs[] = {
+ 	&aperture_sz_attribute.attr,
+ 	&aperture_base_attribute.attr,
+ 	&aperture_base_va_attribute.attr,
++	&vgpu_hw_utilization_attribute.attr,
+ 	NULL,	/* need to NULL terminate the list of attributes */
+ };
+ 
+-- 
+1.7.10.4
+

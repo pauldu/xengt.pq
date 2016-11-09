@@ -1,0 +1,36 @@
+From fb1cafc48e44bb49480e62047f5348a045b4c538 Mon Sep 17 00:00:00 2001
+From: Ping Gao <ping.a.gao@intel.com>
+Date: Wed, 14 Sep 2016 10:11:37 +0800
+Subject: [PATCH 433/433] avoid unnecessary context switch
+
+Originally, force switch to dom0 to avoid the large sched_time
+breaking timeslice calculation, but it's no need if current guest
+has no cap set, otherwise will bring some unnecessary context
+switch and drop the performance.
+
+Signed-off-by: Ping Gao <ping.a.gao@intel.com>
+Reviewed-by: Kevin Tian <kevin.tian@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/sched.c |    6 ++++--
+ 1 file changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/sched.c b/drivers/gpu/drm/i915/vgt/sched.c
+index 0dc0ba5..5df23a5 100644
+--- a/drivers/gpu/drm/i915/vgt/sched.c
++++ b/drivers/gpu/drm/i915/vgt/sched.c
+@@ -142,8 +142,10 @@ static struct vgt_device *vgt_pickup_next(struct list_head *head,
+ 
+ 	trace_qos_pick(cur_vgt->vm_id, next_vgt->vm_id,
+ 		vgt_time_slice(next_vgt));
+-	/* dom0 become the render owner if next guests are all idle */
+-	if (next_vgt == cur_vgt)
++	/* dom0 become the render owner if next guests
++	 * are all idle and cur_vgt has cap set.
++	 */
++	if (vgt_cap(cur_vgt) && next_vgt == cur_vgt)
+ 		return vgt_dom0;
+ 
+ 	return next_vgt;
+-- 
+1.7.10.4
+
