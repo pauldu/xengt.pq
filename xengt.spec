@@ -17,8 +17,8 @@
 
 Summary: %{vendor_name} %{driver_name}
 Name: %{driver_name}
-Version: 1.0.0
-Release: 19.408
+Version: 2.0.0
+Release: 1
 Vendor: %{vendor_name}
 License: GPLv2
 Group: System Environment/Kernel
