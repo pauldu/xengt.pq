@@ -1,0 +1,124 @@
+From 8e1960301d71d4cd59a76f9d0db797ffd550c917 Mon Sep 17 00:00:00 2001
+From: fred gao <fred.gao@intel.com>
+Date: Mon, 14 Nov 2016 09:26:00 +0800
+Subject: [PATCH 439/446] vgt/TDR: GTT table should not be released during
+ emulating device reset
+
+GTT will be referred by some workloads again after TDR and should not
+be free/recreated, otherwise panic with the illegal gtt value.
+
+v2: per Zheng,xiao' comments:
+1. put the free ppgtt and ctx into handle_device_reset to better
+   emulate the device reset.
+2. modify some commit message for better understanding.
+
+v3: per Zheng,xiao' comments:
+1. do not mix ppgtt and gtt stuff into one function.
+2. rename the function name for better understanding.
+
+Signed-off-by: fred gao <fred.gao@intel.com>
+Reviewed-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/gtt.c      |   32 ++++++++++++++++++++++++++------
+ drivers/gpu/drm/i915/vgt/gtt.h      |    1 +
+ drivers/gpu/drm/i915/vgt/handlers.c |   17 ++++-------------
+ 3 files changed, 31 insertions(+), 19 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index 1e038e5..16a7f12 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -2131,20 +2131,40 @@ bool vgt_init_vgtt(struct vgt_device *vgt)
+ 	return true;
+ }
+ 
+-void vgt_clean_vgtt(struct vgt_device *vgt)
++static void vgt_free_page_table(struct vgt_device *vgt,
++						vgt_mm_type_t type)
+ {
+ 	struct list_head *pos, *n;
+ 	struct vgt_mm *mm;
+ 
+-	ppgtt_free_all_shadow_page(vgt);
+-	vgt_release_scratch_page(vgt);
+-
+ 	list_for_each_safe(pos, n, &vgt->gtt.mm_list_head) {
+ 		mm = container_of(pos, struct vgt_mm, list);
+-		vgt->pdev->gtt.mm_free_page_table(mm);
+-		kfree(mm);
++		if (mm->type == type) {
++			vgt->pdev->gtt.mm_free_page_table(mm);
++			list_del(&mm->list);
++			kfree(mm);
++		}
+ 	}
++}
++
++#define ppgtt_free_all_guest_table(vgt)	\
++		vgt_free_page_table(vgt, VGT_MM_PPGTT)
++
++#define ggtt_free_all_guest_table(vgt)	\
++		vgt_free_page_table(vgt, VGT_MM_GGTT)
+ 
++void vgt_clean_ppgtt(struct vgt_device *vgt)
++{
++	ppgtt_free_all_shadow_page(vgt);
++
++	ppgtt_free_all_guest_table(vgt);
++}
++
++void vgt_clean_vgtt(struct vgt_device *vgt)
++{
++	vgt_release_scratch_page(vgt);
++	ggtt_free_all_guest_table(vgt);
++	vgt_clean_ppgtt(vgt);
+ 	execlist_ctx_table_destroy(vgt);
+ 
+ 	return;
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.h b/drivers/gpu/drm/i915/vgt/gtt.h
+index 8a26f09..7e8a510 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.h
++++ b/drivers/gpu/drm/i915/vgt/gtt.h
+@@ -233,6 +233,7 @@ struct vgt_vgtt_info {
+ 
+ extern bool vgt_init_vgtt(struct vgt_device *vgt);
+ extern void vgt_clean_vgtt(struct vgt_device *vgt);
++extern void vgt_clean_ppgtt(struct vgt_device *vgt);
+ 
+ extern bool vgt_gtt_init(struct pgt_device *pdev);
+ extern void vgt_gtt_clean(struct pgt_device *pdev);
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 14ea4bd..4d27c85 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -342,23 +342,14 @@ static bool handle_device_reset(struct vgt_device *vgt, unsigned int offset,
+ 
+ 		/*clean up during reset */
+ 		if (test_and_clear_bit(RESET_INPROGRESS, &vgt->reset_flags)) {
+-
+ 			vgt_info("VM %d: vgt_clean_up begin.\n", vgt->vm_id);
+-
+-			/*unlock first, may sleep @ vfree in vgt_clean_vgtt*/
+ 			spin_unlock(&vgt->pdev->lock);
+-			vgt_clean_vgtt(vgt);
+-			vgt_clear_gtt(vgt);
+-			state_sreg_init(vgt);
+-			state_vreg_init(vgt);
+-			vgt_init_vgtt(vgt);
+-
+-			vgt_info("VM %d: vgt_clean_up end.\n", vgt->vm_id);
+-
++			vgt_clean_ppgtt(vgt);
++			execlist_ctx_table_destroy(vgt);
+ 			spin_lock(&vgt->pdev->lock);
+-
+-			vgt_info("VM %d: lock.again\n", vgt->vm_id);
++			vgt_info("VM %d: vgt_clean_up end.\n", vgt->vm_id);
+ 		}
++
+ 	}
+ 
+ 	return true;
+-- 
+1.7.10.4
+

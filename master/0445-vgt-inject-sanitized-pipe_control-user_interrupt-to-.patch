@@ -1,0 +1,170 @@
+From 78b383707b77b8961ad2bc876ad085100483a78f Mon Sep 17 00:00:00 2001
+From: Yulei Zhang <yulei.zhang@intel.com>
+Date: Wed, 21 Dec 2016 15:56:27 +0800
+Subject: [PATCH 445/446] vgt: inject sanitized pipe_control/user_interrupt to
+ guest VM before render switch
+
+There is corner case that pipe_contorl/user_interrupt will be lost
+before render switch, so inject sanitized events into guest VM
+before it switch to another render owner.
+
+Signed-off-by: Yulei Zhang <yulei.zhang@intel.com>
+Reviewed-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/cmd_parser.c |    6 ++++-
+ drivers/gpu/drm/i915/vgt/render.c     |   41 ++++++++++++++++++++++++++++++---
+ drivers/gpu/drm/i915/vgt/render.h     |    1 +
+ drivers/gpu/drm/i915/vgt/vgt.c        |    8 +++----
+ 4 files changed, 48 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/cmd_parser.c b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+index 4c68b22..54603eb 100644
+--- a/drivers/gpu/drm/i915/vgt/cmd_parser.c
++++ b/drivers/gpu/drm/i915/vgt/cmd_parser.c
+@@ -989,8 +989,11 @@ static int vgt_cmd_handler_pipe_control(struct parser_exec_state *s)
+ 		}
+ 	}
+ 
+-	if (!rc)
++	if (!rc) {
+ 		s->cmd_issue_irq = (cmd_val(s, 1) & PIPE_CONTROL_NOTIFY) ? true : false;
++		set_bit(GT_RENDER_PIPECTL_NOTIFY_INTERRUPT,
++				(void *)&s->vgt->rb[s->ring_id].request_irq);
++	}
+ 
+ 	return rc;
+ }
+@@ -998,6 +1001,7 @@ static int vgt_cmd_handler_pipe_control(struct parser_exec_state *s)
+ static int vgt_cmd_handler_mi_user_interrupt(struct parser_exec_state *s)
+ {
+ 	s->cmd_issue_irq = true;
++	set_bit(GT_RENDER_USER_INTERRUPT, (void *)&s->vgt->rb[s->ring_id].request_irq);
+ 	return 0;
+ }
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index 2c85e06..46cfa8f 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -648,6 +648,41 @@ static bool subunits_stuck(struct pgt_device *pdev, int ring_id)
+ 	return stuck;
+ }
+ 
++static void vgt_inject_sanitized_irq(struct vgt_device *vgt)
++{
++	int id, v_event;
++
++	if (test_and_clear_bit(GT_RENDER_PIPECTL_NOTIFY_INTERRUPT,
++				(void *)&vgt->rb[RING_BUFFER_RCS].request_irq))
++		vgt_trigger_virtual_event(vgt, RCS_PIPE_CONTROL);
++
++	for(id = 0; id < vgt->pdev->max_engines; id++) {
++		if (test_and_clear_bit(GT_RENDER_USER_INTERRUPT,
++					(void *)&vgt->rb[id].request_irq)) {
++			switch (id) {
++				case RING_BUFFER_RCS:
++					v_event = RCS_MI_USER_INTERRUPT;
++					break;
++				case RING_BUFFER_VCS:
++					v_event = VCS_MI_USER_INTERRUPT;
++					break;
++				case RING_BUFFER_VCS2:
++					v_event = VCS2_MI_USER_INTERRUPT;
++					break;
++				case RING_BUFFER_BCS:
++					v_event = BCS_MI_USER_INTERRUPT;
++					break;
++				case RING_BUFFER_VECS:
++					v_event = VECS_MI_USER_INTERRUPT;
++					break;
++				default:
++					return;
++			}
++			vgt_trigger_virtual_event(vgt, v_event);
++		}
++	}
++}
++
+ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ {
+ 	int i = 0;
+@@ -714,7 +749,6 @@ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ 					} else if (check_cnt%(hang_threshold/SUBUNIT_CHECK_CNT) == 0) {
+ 						if (subunits_stuck(pdev, ring_id)) {
+ 							subunit_hang_cnt++;
+-							vgt_info("subunit_hang_cnt %d\n", subunit_hang_cnt);
+ 						}
+ 					}
+ 					last_acthd = current_acthd;
+@@ -724,10 +758,10 @@ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ 					check_cnt = 0;
+ 					if ((subunit_hang_cnt >= MAX_SUBUNIT_HANG_CNT)
+ 						&& is_subunits_stuck(pdev)) {
+-						vgt_err("vGT:(%lldth switch<%d>) ring(%d) is busy\n",
++						vgt_err("vGT:(%lldth switch<%d>) ring(%d) is busy, subunit_hang_cnt %d\n",
+ 							vgt_ctx_switch(pdev),
+ 							current_render_owner(pdev)->vgt_id,
+-							i);
++							i, subunit_hang_cnt);
+ 
+ 						set_bit(HW_RESET, &prev->reset_flags);
+ 						if (!test_bit(VM_RESET, &prev->reset_flags)) {
+@@ -754,6 +788,7 @@ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ 
+ 	vgt_dbg(VGT_DBG_RENDER, "vGT: next vgt (%d)\n", next->vgt_id);
+ 	
++	vgt_inject_sanitized_irq(prev);
+ 
+ 	/* variable exported by debugfs */
+ 	pdev->stat.context_switch_num ++;
+diff --git a/drivers/gpu/drm/i915/vgt/render.h b/drivers/gpu/drm/i915/vgt/render.h
+index 30ecb31..56ea700 100644
+--- a/drivers/gpu/drm/i915/vgt/render.h
++++ b/drivers/gpu/drm/i915/vgt/render.h
+@@ -137,6 +137,7 @@ typedef struct {
+ 	struct vgt_elsp_store elsp_store;
+ 	int csb_write_ptr;
+ 
++	uint64_t request_irq;
+ 	struct execlist_context *el_ctx;
+ } vgt_state_ring_t;
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index f9aeb1a..0340824 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -291,7 +291,7 @@ struct pci_dev *pgt_to_pci(struct pgt_device *pdev)
+  * vreg/sreg/ hwreg. In the future we can futher tune this part on
+  * a necessary base.
+  */
+-static void vgt_processe_lo_priority_request(struct pgt_device *pdev)
++static void vgt_process_lo_priority_request(struct pgt_device *pdev)
+ {
+ 	int cpu;
+ 
+@@ -351,7 +351,7 @@ static void vgt_processe_lo_priority_request(struct pgt_device *pdev)
+ 	return;
+ }
+ 
+-static void vgt_processe_hi_priority_request(struct pgt_device *pdev)
++static void vgt_process_hi_priority_request(struct pgt_device *pdev)
+ {
+ 	int cpu;
+ 	enum vgt_ring_id ring_id;
+@@ -453,11 +453,11 @@ static int vgt_thread(void *priv)
+ 
+ 		do {
+ 			/* give another chance for high priority request */
+-			vgt_processe_hi_priority_request(pdev);
++			vgt_process_hi_priority_request(pdev);
+ 		}
+ 		while(REQUEST_LOOP(pdev));
+ 
+-		vgt_processe_lo_priority_request(pdev);
++		vgt_process_lo_priority_request(pdev);
+ 	}
+ 	return 0;
+ }
+-- 
+1.7.10.4
+

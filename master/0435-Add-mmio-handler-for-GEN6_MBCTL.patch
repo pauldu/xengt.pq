@@ -1,0 +1,44 @@
+From 53b85889492531bd1a5b6a499846ddb3b681cf8a Mon Sep 17 00:00:00 2001
+From: Pei Zhang <pei.zhang@intel.com>
+Date: Fri, 4 Nov 2016 17:29:01 +0800
+Subject: [PATCH 435/446] Add mmio handler for GEN6_MBCTL
+
+Without this patch, guest performance drop would happen.
+
+Signed-off-by: Pei Zhang <pei.zhang@intel.com>
+Reviewed-by: yulei zhang <yulei.zhang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |   10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index fd3f2a8..5448d08 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -2815,6 +2815,14 @@ static bool vgt_reg_write_flash_tlb_handler(struct vgt_device *vgt, unsigned int
+ 	return rc;
+ }
+ 
++static bool mbctl_write(struct vgt_device *vgt, unsigned int offset,
++			void *p_data, unsigned int bytes)
++{
++	*(u32 *)p_data &= ~0x10;
++	default_mmio_write(vgt, offset, p_data, bytes);
++	return 0;
++}
++
+ static bool vgt_reg_write_misc_ctl_handler(struct vgt_device *vgt, unsigned int offset,
+ 			void *p_data, unsigned int bytes)
+ {
+@@ -3595,7 +3603,7 @@ reg_attr_t vgt_reg_info_general[] = {
+ {0x7180, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+ {0x7408, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+ {0x7c00, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+-{GEN6_MBCTL, 4, F_VIRT, 0, D_ALL, NULL, NULL},
++{GEN6_MBCTL, 4, F_VIRT, 0, D_ALL, NULL, mbctl_write},
+ {0x911c, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+ {0x9120, 4, F_VIRT, 0, D_ALL, NULL, NULL},
+ 
+-- 
+1.7.10.4
+

@@ -1,0 +1,96 @@
+From 323a4056ff10de7fd633a8e23a284e01804a164e Mon Sep 17 00:00:00 2001
+From: fred gao <fred.gao@intel.com>
+Date: Fri, 18 Nov 2016 10:41:10 +0800
+Subject: [PATCH 440/446] vgt/TDR: refine idle engine hang code
+
+current engine hang detect logic with wait function will block VMs
+scheduling, finally trigger more VMs' TDR. so
+1. using acthd instead of wait.
+2. add parameter max_check_cnt to dynamically change check count times.
+
+v2: per Zheng,xiao's comment:
+change the parameter name to hang_threshold for better understanding.
+
+Signed-off-by: fred gao <fred.gao@intel.com>
+Reviewed-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/render.c |   26 ++++++++++++++++++++++----
+ drivers/gpu/drm/i915/vgt/vgt.c    |    3 +++
+ drivers/gpu/drm/i915/vgt/vgt.h    |    1 +
+ 3 files changed, 26 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index a835605..64a3016 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -627,19 +627,37 @@ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ 
+ 	if (pdev->enable_execlist) {
+ 		static int check_cnt = 0;
++		static vgt_reg_t last_acthd;
+ 		for (ring_id = 0; ring_id < pdev->max_engines; ++ ring_id) {
+ 			if (!pdev->ring_buffer[ring_id].need_switch)
+ 				continue;
+ 			if (!vgt_idle_execlist(pdev, ring_id)) {
+ 				vgt_dbg(VGT_DBG_EXECLIST, "rendering ring is not idle. "
+ 					"Ignore the context switch!\n");
++
++				if (!check_cnt)
++					last_acthd = VGT_MMIO_READ(pdev,
++								VGT_ACTHD(ring_id));
++
+ 				check_cnt++;
+ 
+-				if (check_cnt > 500 && !idle_rendering_engines(pdev, &i)) {
+-					vgt_err("vGT: (%lldth switch<%d>)...ring(%d) is busy\n",
++				if (check_cnt <= hang_threshold) {
++					vgt_reg_t current_acthd;
++
++					current_acthd = VGT_MMIO_READ(pdev,
++								VGT_ACTHD(ring_id));
++					if (current_acthd != last_acthd)
++						check_cnt = 0;
++					last_acthd = current_acthd;
++
++					if (check_cnt == hang_threshold) {
++						vgt_err("vGT:(%lldth switch<%d>) ring(%d) is busy\n",
+ 						vgt_ctx_switch(pdev),
+-					current_render_owner(pdev)->vgt_id, i);
+-					goto err;
++						current_render_owner(pdev)->vgt_id,
++						i);
++
++						goto err;
++					}
+ 				}
+ 
+ 				vgt_force_wake_put();
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 64d5466..9d72292 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -167,6 +167,9 @@ module_param_named(enable_panel_fitting, enable_panel_fitting, bool, 0600);
+ bool enable_reset = true;
+ module_param_named(enable_reset, enable_reset, bool, 0600);
+ 
++int hang_threshold = 50;
++module_param_named(hang_threshold, hang_threshold, int, 0600);
++
+ /* possible value of preemption_policy:
+  * 0: (default) pre-emption and lite-restore are enabled.
+  * 1: pre-emption disabled, lite-restore enabled.
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index c8c972e1..8386ce3 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -94,6 +94,7 @@ extern bool render_engine_reset;
+ extern int mocs_saverestore_mode;
+ extern bool enable_panel_fitting;
+ extern bool enable_reset;
++extern int hang_threshold;
+ extern int reset_count_threshold;
+ extern int reset_dur_threshold;
+ extern int reset_max_threshold;
+-- 
+1.7.10.4
+

@@ -1,0 +1,206 @@
+From 982a12544b9971ff1de37db8a1d40d5eff0f799d Mon Sep 17 00:00:00 2001
+From: fred gao <fred.gao@intel.com>
+Date: Wed, 14 Dec 2016 21:39:42 +0800
+Subject: [PATCH 442/446] vgt/TDR: refine ring hang logic
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+This patch is to add RCS subunit state activity check during render
+switch, in case ring active head doesn’t change for a long time
+due to time-consuming workload and finally introduce false reset.
+
+Porting Inspect subunit states on hangcheck patch from upstreaming
+"drm/i915: Inspect subunit states on hangcheck,
+author Mika Kuoppala <mika.kuoppala@linux.intel.com>
+ Tue, 1 Dec 2015 23:56:12 +0800 (17:56 +0200)
+committer Mika Kuoppala <mika.kuoppala@intel.com>
+ Fri, 8 Jan 2016 19:06:04 +0800 (13:06 +0200)
+commit 61642ff03523995918c452ef41adf0795d54d909 "
+
+This patch will fix Bug 1363--Win7-32 guest will be destoryed automatically
+while running windowsrender. Bug 1365--Dom0 crashed and Kernel panic while
+running windowsrender.
+
+v2:
+1. add orginal patch owner, commit ID by Hongbo.
+2. add more comments on the introducation of this patch by Yulei.
+
+Signed-off-by: fred gao <fred.gao@intel.com>
+Signed-off-by: Yulei Zhang <yulei.zhang@intel.com>
+Reviewed-by: Wang, Hongbo <hongbo.wang@intel.com>
+Reviewed-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/render.c |   99 ++++++++++++++++++++++++++++++++-----
+ drivers/gpu/drm/i915/vgt/vgt.c    |    2 +-
+ drivers/gpu/drm/i915/vgt/vgt.h    |    1 +
+ 3 files changed, 88 insertions(+), 14 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index 4ba5053..2c85e06 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -591,6 +591,63 @@ static bool gen8plus_ring_switch(struct pgt_device *pdev,
+ 	return true;
+ }
+ 
++static bool is_subunits_stuck(struct pgt_device *pdev)
++{
++	if ((pdev->instdone[0] == 0xfffffffe) &&
++		(pdev->instdone[1] == 0xffffffff) &&
++		(pdev->instdone[2] == 0xffffffff) &&
++		(pdev->instdone[3] == 0xffffffff))
++
++		return false;
++	else
++		return true;
++
++}
++
++static void vgt_get_extra_instdone(struct pgt_device *pdev, uint32_t *instdone)
++{
++	memset(instdone, 0, sizeof(*instdone) * I915_NUM_INSTDONE_REG);
++
++	instdone[0] = VGT_MMIO_READ(pdev, RING_INSTDONE(RENDER_RING_BASE));
++	instdone[1] = VGT_MMIO_READ(pdev, GEN7_SC_INSTDONE);
++	instdone[2] = VGT_MMIO_READ(pdev, GEN7_SAMPLER_INSTDONE);
++	instdone[3] = VGT_MMIO_READ(pdev, GEN7_ROW_INSTDONE);
++}
++
++static bool subunits_stuck(struct pgt_device *pdev, int ring_id)
++{
++	u32 instdone[I915_NUM_INSTDONE_REG];
++	bool stuck;
++	int i;
++
++	if (ring_id != RING_BUFFER_RCS)
++		return true;
++
++	vgt_get_extra_instdone(pdev, instdone);
++
++	/* There might be unstable subunit states even when
++	* actual head is not moving. Filter out the unstable ones by
++	* accumulating the undone -> done transitions and only
++	* consider those as progress.
++	*/
++	stuck = true;
++	for (i = 0; i < I915_NUM_INSTDONE_REG; i++) {
++		const u32 tmp = instdone[i] | pdev->instdone[i];
++
++		if (tmp != pdev->instdone[i]) {
++			stuck = false;
++			vgt_dbg(VGT_DBG_RENDER,
++				"ring(%d)instdone[%d](%x) pdev->instdone[%d](%x)\n",
++				ring_id, i, instdone[i],
++				i, pdev->instdone[i]);
++	}
++
++	pdev->instdone[i] |= tmp;
++	}
++
++	return stuck;
++}
++
+ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ {
+ 	int i = 0;
+@@ -628,6 +685,9 @@ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ 	if (pdev->enable_execlist) {
+ 		static int check_cnt = 0;
+ 		static vgt_reg_t last_acthd;
++		static u32 subunit_hang_cnt;
++		#define SUBUNIT_CHECK_CNT 10
++		#define MAX_SUBUNIT_HANG_CNT (SUBUNIT_CHECK_CNT - 3)
+ 		for (ring_id = 0; ring_id < pdev->max_engines; ++ ring_id) {
+ 			if (!pdev->ring_buffer[ring_id].need_switch)
+ 				continue;
+@@ -635,9 +695,12 @@ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ 				vgt_dbg(VGT_DBG_EXECLIST, "rendering ring is not idle. "
+ 					"Ignore the context switch!\n");
+ 
+-				if (!check_cnt)
++				if (!check_cnt) {
+ 					last_acthd = VGT_MMIO_READ(pdev,
+ 								VGT_ACTHD(ring_id));
++					memset(pdev->instdone, 0, sizeof(pdev->instdone));
++					subunit_hang_cnt = 0;
++				}
+ 
+ 				check_cnt++;
+ 
+@@ -646,25 +709,35 @@ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ 
+ 					current_acthd = VGT_MMIO_READ(pdev,
+ 								VGT_ACTHD(ring_id));
+-					if (current_acthd != last_acthd)
++					if (current_acthd != last_acthd) {
+ 						check_cnt = 0;
++					} else if (check_cnt%(hang_threshold/SUBUNIT_CHECK_CNT) == 0) {
++						if (subunits_stuck(pdev, ring_id)) {
++							subunit_hang_cnt++;
++							vgt_info("subunit_hang_cnt %d\n", subunit_hang_cnt);
++						}
++					}
+ 					last_acthd = current_acthd;
+ 				}
+ 
+ 				if (check_cnt == hang_threshold) {
+-					vgt_err("vGT:(%lldth switch<%d>) ring(%d) is busy\n",
+-						vgt_ctx_switch(pdev),
+-						current_render_owner(pdev)->vgt_id,
+-						i);
+-
+-					set_bit(HW_RESET, &prev->reset_flags);
+-					if (!test_bit(VM_RESET, &prev->reset_flags)) {
+-						vgt_info("guest not trigger tdr yet\n");
+-						/*enable render after VM reset by Guest*/
+-						vgt_disable_render(prev);
+-					}
++					check_cnt = 0;
++					if ((subunit_hang_cnt >= MAX_SUBUNIT_HANG_CNT)
++						&& is_subunits_stuck(pdev)) {
++						vgt_err("vGT:(%lldth switch<%d>) ring(%d) is busy\n",
++							vgt_ctx_switch(pdev),
++							current_render_owner(pdev)->vgt_id,
++							i);
++
++						set_bit(HW_RESET, &prev->reset_flags);
++						if (!test_bit(VM_RESET, &prev->reset_flags)) {
++							vgt_info("guest not trigger tdr yet\n");
++							/*enable render after VM reset by Guest*/
++							vgt_disable_render(prev);
++						}
+ 
+ 					goto err;
++					}
+ 				}
+ 
+ 				vgt_force_wake_put();
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index 9d72292..f9aeb1a 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -167,7 +167,7 @@ module_param_named(enable_panel_fitting, enable_panel_fitting, bool, 0600);
+ bool enable_reset = true;
+ module_param_named(enable_reset, enable_reset, bool, 0600);
+ 
+-int hang_threshold = 50;
++int hang_threshold = 200;
+ module_param_named(hang_threshold, hang_threshold, int, 0600);
+ 
+ /* possible value of preemption_policy:
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 9c30b3c..45fa3c2 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -410,6 +410,7 @@ struct pgt_device {
+ 	wait_queue_head_t destroy_wq;
+ 
+ 	unsigned long device_reset_flags;
++	u32 instdone[I915_NUM_INSTDONE_REG];
+ 
+ 	uint32_t request;
+ 
+-- 
+1.7.10.4
+

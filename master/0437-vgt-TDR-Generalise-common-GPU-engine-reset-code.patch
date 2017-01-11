@@ -1,0 +1,245 @@
+From 2eaed9c2349c4a249c0baa83b7168103d75fc8b9 Mon Sep 17 00:00:00 2001
+From: fred gao <fred.gao@intel.com>
+Date: Fri, 11 Nov 2016 15:49:34 +0800
+Subject: [PATCH 437/446] vgt/TDR:Generalise common GPU engine reset code
+
+TDR = Timeout Detection and Recovery.
+
+1. split the common engine reset code from gen8plus_ring_switch
+for reuse later in engine hang path.
+2. add per-engine hang recovery support for gen8+.
+
+v2: per Zheng,Xiao' comments:
+1. change the parameter in reset_phys_el_structure to ring_id
+   instead of hard code RING_BUFFER_RCS.
+2. move force_wake to better balance the pre_bdw and bdw+ path.
+3. merge the reset ctrl request/unrequest into vgt_do_engine_reset().
+
+Signed-off-by: fred gao <fred.gao@intel.com>
+Reviewed-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/i915_reg.h   |    3 ++
+ drivers/gpu/drm/i915/vgt/render.c |   42 +++++++++-----------
+ drivers/gpu/drm/i915/vgt/vgt.c    |   77 +++++++++++++++++++++++++++++++++++++
+ drivers/gpu/drm/i915/vgt/vgt.h    |    2 +
+ 4 files changed, 100 insertions(+), 24 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/i915_reg.h b/drivers/gpu/drm/i915/i915_reg.h
+index c918ae1..f0bcf82a 100644
+--- a/drivers/gpu/drm/i915/i915_reg.h
++++ b/drivers/gpu/drm/i915/i915_reg.h
+@@ -135,6 +135,9 @@
+ #define  GEN6_GRDOM_RENDER		(1 << 1)
+ #define  GEN6_GRDOM_MEDIA		(1 << 2)
+ #define  GEN6_GRDOM_BLT			(1 << 3)
++#define  GEN6_GRDOM_VECS		(1 << 4)
++#define  GEN8_GRDOM_MEDIA2		(1 << 7)
++
+ 
+ #define RING_PP_DIR_BASE(ring)		((ring)->mmio_base+0x228)
+ #define RING_PP_DIR_BASE_READ(ring)	((ring)->mmio_base+0x518)
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index 3000024..cdaf547 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -569,27 +569,8 @@ static bool gen8plus_ring_switch(struct pgt_device *pdev,
+ 	 */
+ 	if (render_engine_reset) {
+ 
+-		VGT_MMIO_WRITE(pdev, 0x20d0, (1 << 16) | (1 << 0));
+-
+-		for (count = 1000; count > 0; count --)
+-			if (VGT_MMIO_READ(pdev, 0x20d0) & (1 << 1))
+-				break;
+-
+-		if (!count) {
+-			vgt_err("wait 0x20d0 timeout.\n");
++		if (!vgt_do_engine_reset(pdev, ring_id))
+ 			return false;
+-		}
+-
+-		VGT_MMIO_WRITE(pdev, GEN6_GDRST, GEN6_GRDOM_RENDER);
+-
+-		for (count = 1000; count > 0; count --)
+-			if (!(VGT_MMIO_READ(pdev, GEN6_GDRST) & GEN6_GRDOM_RENDER))
+-				break;
+-
+-		if (!count) {
+-			vgt_err("wait gdrst timeout.\n");
+-			return false;
+-		}
+ 
+ 		VGT_MMIO_WRITE(pdev, IMR, __sreg(vgt_dom0, IMR));
+ 	}
+@@ -616,6 +597,8 @@ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ 	int cpu;
+ 	struct vgt_device *next, *prev;
+ 	cycles_t t0, t1, t2;
++	int ring_id;
++	bool ret = false;
+ 
+ 	vgt_lock_dev(pdev, cpu);
+ 	if (!ctx_switch_requested(pdev))
+@@ -644,7 +627,6 @@ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ 
+ 	if (pdev->enable_execlist) {
+ 		static int check_cnt = 0;
+-		int ring_id;
+ 		for (ring_id = 0; ring_id < pdev->max_engines; ++ ring_id) {
+ 			if (!pdev->ring_buffer[ring_id].need_switch)
+ 				continue;
+@@ -652,7 +634,6 @@ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ 				vgt_dbg(VGT_DBG_EXECLIST, "rendering ring is not idle. "
+ 					"Ignore the context switch!\n");
+ 				check_cnt++;
+-				vgt_force_wake_put();
+ 
+ 				if (check_cnt > 500 && !idle_rendering_engines(pdev, &i)) {
+ 					vgt_err("vGT: (%lldth switch<%d>)...ring(%d) is busy\n",
+@@ -661,6 +642,7 @@ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ 					goto err;
+ 				}
+ 
++				vgt_force_wake_put();
+ 				goto out;
+ 			}
+ 			vgt_clear_submitted_el_record(pdev, ring_id);
+@@ -744,7 +726,8 @@ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ 	pdev->stat.context_switch_cost += (t2-t1);
+ out:
+ 	vgt_unlock_dev(pdev, cpu);
+-	return true;
++	ret = true;
++	return ret;
+ err:
+ 	dump_regs_on_err(pdev);
+ 	/* TODO: any cleanup for context switch errors? */
+@@ -768,6 +751,17 @@ err:
+ 		/* crash system now, to avoid causing more confusing errors */
+ 		ASSERT(0);
+ 
++	if (pdev->enable_execlist) {
++		if (vgt_do_engine_reset(pdev, ring_id)) {
++			VGT_MMIO_WRITE(pdev, IMR, __sreg(vgt_dom0, IMR));
++			reset_phys_el_structure(pdev, ring_id);
++			vgt_info("the %d ring reset done.\n", ring_id);
++			ret = true;
++		} else {
++			vgt_info("the %d ring reset fail.\n", ring_id);
++			ret = false;
++		}
++	}
+ 	/*
+ 	 * put this after the ASSERT(). When ASSERT() tries to dump more
+ 	 * CPU/GPU states: we want to hold the lock to prevent other
+@@ -777,5 +771,5 @@ err:
+ 
+ 	vgt_unlock_dev(pdev, cpu);
+ 
+-	return false;
++	return ret;
+ }
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.c b/drivers/gpu/drm/i915/vgt/vgt.c
+index c4e3ccc..64d5466 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.c
++++ b/drivers/gpu/drm/i915/vgt/vgt.c
+@@ -1422,6 +1422,83 @@ int vgt_reset_device(struct pgt_device *pdev)
+ 	return 0;
+ }
+ 
++static int ring_id_to_gpu_reset_bit(int ring_id)
++{
++	int reset_bit = 0;
++
++	switch (ring_id) {
++	case RING_BUFFER_RCS:
++		reset_bit = GEN6_GRDOM_RENDER;
++		break;
++
++	case RING_BUFFER_BCS:
++		reset_bit = GEN6_GRDOM_BLT;
++		break;
++
++	case RING_BUFFER_VCS:
++		reset_bit = GEN6_GRDOM_MEDIA;
++		break;
++
++	case RING_BUFFER_VECS:
++		reset_bit = GEN6_GRDOM_VECS;
++		break;
++
++	case RING_BUFFER_VCS2:
++		reset_bit = GEN8_GRDOM_MEDIA2;
++		break;
++
++	default:
++		vgt_err("Unexpected engine: %d\n", ring_id);
++		break;
++	}
++
++	return reset_bit;
++}
++
++bool vgt_do_engine_reset(struct pgt_device *pdev, int ring_id)
++{
++	bool ret = true;
++	int count = 0;
++
++	VGT_MMIO_WRITE(pdev, RING_RESET_CTL(vgt_ring_id_to_EL_base(ring_id)),
++					(1 << 16) | (1 << 0));
++
++	for (count = 1000; count > 0; count--)
++		if (VGT_MMIO_READ(pdev,
++			RING_RESET_CTL(vgt_ring_id_to_EL_base(ring_id)))
++				& (1 << 1))
++			break;
++
++	if (!count) {
++		vgt_err("wait ring_reset_ctl %d timeout.\n",
++			RING_RESET_CTL(vgt_ring_id_to_EL_base(ring_id)));
++		goto not_ready;
++	}
++
++	VGT_MMIO_WRITE(pdev, GEN6_GDRST, ring_id_to_gpu_reset_bit(ring_id));
++
++	for (count = 1000; count > 0; count--)
++		if (!(VGT_MMIO_READ(pdev, GEN6_GDRST) &
++			ring_id_to_gpu_reset_bit(ring_id)))
++			break;
++
++	if (!count) {
++		vgt_err("wait gdrst timeout.\n");
++		goto error;
++	}
++
++	return ret;
++
++not_ready:
++	VGT_MMIO_WRITE(pdev, RING_RESET_CTL(vgt_ring_id_to_EL_base(ring_id)),
++							(1 << 16) | (0 << 0));
++
++error:
++	ret = false;
++	return ret;
++
++}
++
+ static void vgt_param_check(void)
+ {
+ 	/* TODO: hvm_display/render_owner are broken */
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 62d6e50..c8c972e1 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -1738,6 +1738,8 @@ extern void i915_handle_error(struct drm_device *dev, bool wedged,
+ extern int i915_wait_error_work_complete(struct drm_device *dev);
+ 
+ int vgt_reset_device(struct pgt_device *pgt);
++bool vgt_do_engine_reset(struct pgt_device *pdev, int ring_id);
++
+ bool vgt_reset_stat(struct vgt_device *vgt);
+ int vgt_del_state_sysfs(vgt_params_t vp);
+ void reset_cached_interrupt_registers(struct pgt_device *pdev);
+-- 
+1.7.10.4
+

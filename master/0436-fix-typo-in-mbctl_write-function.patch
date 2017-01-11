@@ -1,0 +1,30 @@
+From aaece4991f9351395a035730d507d937fc6aa187 Mon Sep 17 00:00:00 2001
+From: Pei Zhang <pei.zhang@intel.com>
+Date: Thu, 10 Nov 2016 23:15:04 +0800
+Subject: [PATCH 436/446] fix typo in mbctl_write function
+
+Function's return type is bool, original return value 0 means failure.
+
+Signed-off-by: Pei Zhang <pei.zhang@intel.com>
+Reviewed-by: yulei Zhang <yulei.zhang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |    3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 5448d08..14ea4bd 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -2819,8 +2819,7 @@ static bool mbctl_write(struct vgt_device *vgt, unsigned int offset,
+ 			void *p_data, unsigned int bytes)
+ {
+ 	*(u32 *)p_data &= ~0x10;
+-	default_mmio_write(vgt, offset, p_data, bytes);
+-	return 0;
++	return default_mmio_write(vgt, offset, p_data, bytes);
+ }
+ 
+ static bool vgt_reg_write_misc_ctl_handler(struct vgt_device *vgt, unsigned int offset,
+-- 
+1.7.10.4
+

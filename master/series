@@ -437,6 +437,18 @@ build-system-integration.patch
 0432-vgt-qos-add-debugfs-for-QoS-statistics.patch
 0433-avoid-unnecessary-context-switch.patch
 0434-vgt-add-two-more-untracked-register-after-apply-the-.patch
+0435-Add-mmio-handler-for-GEN6_MBCTL.patch
+0436-fix-typo-in-mbctl_write-function.patch
+0437-vgt-TDR-Generalise-common-GPU-engine-reset-code.patch
+0438-vgt-TDR-disable-debug-dump-information-during-reset.patch
+0439-vgt-TDR-GTT-table-should-not-be-released-during-emul.patch
+0440-vgt-TDR-refine-idle-engine-hang-code.patch
+0441-vgt-TDR-disable-render-between-hw-reset-and-guest-td.patch
+0442-vgt-TDR-refine-ring-hang-logic.patch
+0443-vgt-TDR-refine-the-print-info-during-reset.patch
+0444-vgt-qos-keep-fairness-round-robin-after-longest-unsc.patch
+0445-vgt-inject-sanitized-pipe_control-user_interrupt-to-.patch
+0446-vgt-add-irq-lifecycle-and-vm-switch-trace-log.patch
 
 #
 # Patches analogous to those in the kernel patch queue required

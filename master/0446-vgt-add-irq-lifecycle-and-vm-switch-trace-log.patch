@@ -1,0 +1,210 @@
+From 9f48d25136c7649497de8429aa714add4dc0477c Mon Sep 17 00:00:00 2001
+From: fred gao <fred.gao@intel.com>
+Date: Fri, 23 Dec 2016 14:06:19 +0800
+Subject: [PATCH 446/446] vgt: add irq lifecycle and vm switch trace log
+
+dump ISR lifecycle and vm switch trace log for the convenience
+of debug.
+
+Signed-off-by: He, Min <min.he@intel.com>
+Signed-off-by: fred gao <fred.gao@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/interrupt.c |   27 +++++++++++++++++++++++++++
+ drivers/gpu/drm/i915/vgt/render.c    |   17 ++++++++++++++---
+ drivers/gpu/drm/i915/vgt/trace.h     |   34 ++++++++++++++++++++++++++++++++++
+ 3 files changed, 75 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/interrupt.c b/drivers/gpu/drm/i915/vgt/interrupt.c
+index df3d63c..caba341 100644
+--- a/drivers/gpu/drm/i915/vgt/interrupt.c
++++ b/drivers/gpu/drm/i915/vgt/interrupt.c
+@@ -31,6 +31,8 @@
+ #include <linux/list.h>
+ 
+ #include "vgt.h"
++#include "trace.h"
++
+ 
+ /*
+  * TODO:
+@@ -685,6 +687,7 @@ static bool process_irq(struct vgt_irq_host_state *hstate,
+ 	u32 val;
+ 	u32 reg;
+ 	int count = 0;
++	char str[64];
+ 
+ 	if (info->group == IRQ_INFO_MASTER)
+ 		reg = info->reg_base;
+@@ -695,6 +698,11 @@ static bool process_irq(struct vgt_irq_host_state *hstate,
+ 	if (!val)
+ 		return false;
+ 
++	snprintf(str, 64, "physical irq received:"
++			"reg 0x%x,val 0x%x, rdr owner:VM%d\n",
++			 reg, val, current_render_owner(pdev)->vm_id);
++	trace_irq_lifecycle(str);
++
+ 	vgt_handle_events(hstate, &val, info);
+ 
+ 	if (reg != SDEIIR) {
+@@ -1039,9 +1047,14 @@ static void vgt_propagate_event(struct vgt_irq_host_state *hstate,
+          * TODO: need check 2nd level IMR for render events
+          */
+ 	if (!test_bit(bit, (void*)vgt_vreg(vgt, regbase_to_imr(reg_base)))) {
++		char str[128];
+ 		vgt_dbg(VGT_DBG_IRQ, "IRQ: set bit (%d) for (%s) for VM (%d)\n",
+ 			bit, vgt_irq_name[event], vgt->vm_id);
+ 		set_bit(bit, (void*)vgt_vreg(vgt, regbase_to_iir(reg_base)));
++
++		snprintf(str, 128, "virtual set_bit 0x%x for (%s) to VM%d\n",
++				 bit, vgt_irq_name[event], vgt->vm_id);
++			trace_irq_lifecycle(str);
+ 	}
+ }
+ 
+@@ -1816,6 +1829,7 @@ void vgt_forward_events(struct pgt_device *pdev)
+ 	vgt_event_virt_handler_t handler;
+ 	struct vgt_irq_ops *ops = vgt_get_irq_ops(pdev);
+ 	enum vgt_event_type virtual_event;
++	char str[128];
+ 
+ 	/* WARING: this should be under lock protection */
+ 	//raise_ctx_sched(vgt_dom0);
+@@ -1857,6 +1871,13 @@ void vgt_forward_events(struct pgt_device *pdev)
+ 		default:
+ 			break;
+ 		}
++
++		snprintf(str, 128, "v_handler %s,policy %d :VM%d\n",
++			 vgt_irq_name[event],
++			 vgt_get_event_policy(hstate, event),
++			 current_render_owner(pdev)->vm_id);
++		trace_irq_lifecycle(str);
++
+ 	}
+ 
+ 	for (i = 0; i < VGT_MAX_VMS; i++) {
+@@ -1938,6 +1959,7 @@ static void vgt_handle_events(struct vgt_irq_host_state *hstate, void *iir,
+ 	enum vgt_event_type event;
+ 	vgt_event_phys_handler_t handler;
+ 	struct pgt_device *pdev = hstate->pdev;
++	char str[128];
+ 
+ 	ASSERT(spin_is_locked(&pdev->irq_lock));
+ 
+@@ -1962,6 +1984,11 @@ static void vgt_handle_events(struct vgt_irq_host_state *hstate, void *iir,
+ 
+ 		handler(hstate, event);
+ 		set_bit(event, hstate->pending_events);
++
++		snprintf(str, 128, "pending %s event, rdr owner:VM%d\n",
++			 vgt_irq_name[event],
++			 current_render_owner(pdev)->vm_id);
++		trace_irq_lifecycle(str);
+ 	}
+ }
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index 46cfa8f..9896868 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -27,6 +27,7 @@
+ #include <linux/kthread.h>
+ #include <linux/delay.h>
+ #include "vgt.h"
++#include "trace.h"
+ 
+ /*
+  * NOTE list:
+@@ -651,14 +652,21 @@ static bool subunits_stuck(struct pgt_device *pdev, int ring_id)
+ static void vgt_inject_sanitized_irq(struct vgt_device *vgt)
+ {
+ 	int id, v_event;
++	char str[128];
+ 
+ 	if (test_and_clear_bit(GT_RENDER_PIPECTL_NOTIFY_INTERRUPT,
+-				(void *)&vgt->rb[RING_BUFFER_RCS].request_irq))
++			(void *)&vgt->rb[RING_BUFFER_RCS].request_irq)) {
++
++		snprintf(str, 128, "inject RCS_PIPE_CTRL to VM%d\n",
++						 vgt->vm_id);
++		trace_irq_lifecycle(str);
+ 		vgt_trigger_virtual_event(vgt, RCS_PIPE_CONTROL);
++	}
+ 
+ 	for(id = 0; id < vgt->pdev->max_engines; id++) {
+ 		if (test_and_clear_bit(GT_RENDER_USER_INTERRUPT,
+ 					(void *)&vgt->rb[id].request_irq)) {
++			char str[128];
+ 			switch (id) {
+ 				case RING_BUFFER_RCS:
+ 					v_event = RCS_MI_USER_INTERRUPT;
+@@ -678,6 +686,10 @@ static void vgt_inject_sanitized_irq(struct vgt_device *vgt)
+ 				default:
+ 					return;
+ 			}
++
++			snprintf(str, 128, "inject event%s to VM%d\n",
++					 vgt_irq_name[v_event], vgt->vm_id);
++			trace_irq_lifecycle(str);
+ 			vgt_trigger_virtual_event(vgt, v_event);
+ 		}
+ 	}
+@@ -786,8 +798,7 @@ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ 		check_cnt = 0;
+ 	}
+ 
+-	vgt_dbg(VGT_DBG_RENDER, "vGT: next vgt (%d)\n", next->vgt_id);
+-	
++	trace_vm_switch(prev->vm_id, next->vm_id);
+ 	vgt_inject_sanitized_irq(prev);
+ 
+ 	/* variable exported by debugfs */
+diff --git a/drivers/gpu/drm/i915/vgt/trace.h b/drivers/gpu/drm/i915/vgt/trace.h
+index a10010f5..57bf490 100644
+--- a/drivers/gpu/drm/i915/vgt/trace.h
++++ b/drivers/gpu/drm/i915/vgt/trace.h
+@@ -453,6 +453,40 @@ TRACE_EVENT(qos_pick,
+ 		TP_printk("%s", __entry->buf)
+ );
+ 
++TRACE_EVENT(irq_lifecycle,
++		TP_PROTO(const char *action),
++
++		TP_ARGS(action),
++
++		TP_STRUCT__entry(
++			__array(char, buf, MAX_BUF_LEN)
++		),
++
++		TP_fast_assign(
++			snprintf(__entry->buf, MAX_BUF_LEN,
++				"%s\n", action);
++		),
++
++		TP_printk("%s", __entry->buf)
++);
++
++TRACE_EVENT(vm_switch,
++		TP_PROTO(int cur_vm_id, int next_vm_id),
++
++		TP_ARGS(cur_vm_id, next_vm_id),
++
++		TP_STRUCT__entry(
++			__array(char, buf, MAX_BUF_LEN)
++		),
++
++		TP_fast_assign(
++		snprintf(__entry->buf, MAX_BUF_LEN,
++			"------VM-%d ---> VM-%d------", cur_vm_id, next_vm_id);
++		),
++
++		TP_printk("%s", __entry->buf)
++);
++
+ #endif /* _VGT_TRACE_H_ */
+ 
+ /* This part must be out of protection */
+-- 
+1.7.10.4
+

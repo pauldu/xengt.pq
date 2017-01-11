@@ -1,0 +1,110 @@
+From 0320dd3c4f9a1ed85841cd03e3ab9cb68d04e32e Mon Sep 17 00:00:00 2001
+From: fred gao <fred.gao@intel.com>
+Date: Fri, 18 Nov 2016 12:21:21 +0800
+Subject: [PATCH 441/446] vgt/TDR: disable render between hw reset and guest
+ tdr
+
+if hw reset first, guest will not receive any notification on gpu
+hang and continue sending workloads, which may refer to previous
+TDRed cmd buffer and trigger another hw hang.
+
+v2: per Zheng,xiao's comment:
+add comments on who will enable render later.
+
+v3: per He,min's comment:
+replace test_and_clear_bit with clear_bit for optimization.
+
+Signed-off-by: fred gao <fred.gao@intel.com>
+Reviewed-by: Zheng, Xiao <xiao.zheng@intel.com>
+Reviewed-by: He, Min <min.he@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/handlers.c |    9 +++++++++
+ drivers/gpu/drm/i915/vgt/render.c   |   16 +++++++++++++---
+ drivers/gpu/drm/i915/vgt/vgt.h      |    2 ++
+ 3 files changed, 24 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index 4d27c85..ea1cf33 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -297,6 +297,13 @@ static bool handle_device_reset(struct vgt_device *vgt, unsigned int offset,
+ 	set_bit(RESET_INPROGRESS, &vgt->reset_flags);
+ 
+ 	clear_bit(WAIT_RESET, &vgt->reset_flags);
++	if (!test_bit(HW_RESET, &vgt->reset_flags)) {
++		test_and_set_bit(VM_RESET, &vgt->reset_flags);
++		vgt_info("guest trigger tdr first\n");
++	} else {
++		clear_bit(HW_RESET, &vgt->reset_flags);
++		vgt_info("hw tdr reset first\n");
++	}
+ 
+ 	vgt_reset_virtual_states(vgt, ring_bitmap);
+ 
+@@ -343,10 +350,12 @@ static bool handle_device_reset(struct vgt_device *vgt, unsigned int offset,
+ 		/*clean up during reset */
+ 		if (test_and_clear_bit(RESET_INPROGRESS, &vgt->reset_flags)) {
+ 			vgt_info("VM %d: vgt_clean_up begin.\n", vgt->vm_id);
++
+ 			spin_unlock(&vgt->pdev->lock);
+ 			vgt_clean_ppgtt(vgt);
+ 			execlist_ctx_table_destroy(vgt);
+ 			spin_lock(&vgt->pdev->lock);
++
+ 			vgt_info("VM %d: vgt_clean_up end.\n", vgt->vm_id);
+ 		}
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/render.c b/drivers/gpu/drm/i915/vgt/render.c
+index 64a3016..4ba5053 100644
+--- a/drivers/gpu/drm/i915/vgt/render.c
++++ b/drivers/gpu/drm/i915/vgt/render.c
+@@ -649,20 +649,30 @@ bool vgt_do_render_context_switch(struct pgt_device *pdev)
+ 					if (current_acthd != last_acthd)
+ 						check_cnt = 0;
+ 					last_acthd = current_acthd;
++				}
+ 
+-					if (check_cnt == hang_threshold) {
+-						vgt_err("vGT:(%lldth switch<%d>) ring(%d) is busy\n",
++				if (check_cnt == hang_threshold) {
++					vgt_err("vGT:(%lldth switch<%d>) ring(%d) is busy\n",
+ 						vgt_ctx_switch(pdev),
+ 						current_render_owner(pdev)->vgt_id,
+ 						i);
+ 
+-						goto err;
++					set_bit(HW_RESET, &prev->reset_flags);
++					if (!test_bit(VM_RESET, &prev->reset_flags)) {
++						vgt_info("guest not trigger tdr yet\n");
++						/*enable render after VM reset by Guest*/
++						vgt_disable_render(prev);
+ 					}
++
++					goto err;
+ 				}
+ 
+ 				vgt_force_wake_put();
+ 				goto out;
+ 			}
++
++			clear_bit(VM_RESET, &prev->reset_flags);
++			clear_bit(HW_RESET, &prev->reset_flags);
+ 			vgt_clear_submitted_el_record(pdev, ring_id);
+ 		}
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/vgt.h b/drivers/gpu/drm/i915/vgt/vgt.h
+index 8386ce3..9c30b3c 100644
+--- a/drivers/gpu/drm/i915/vgt/vgt.h
++++ b/drivers/gpu/drm/i915/vgt/vgt.h
+@@ -367,6 +367,8 @@ struct vgt_mmio_dev;
+ enum {
+ 	RESET_INPROGRESS = 0,
+ 	WAIT_RESET,
++	HW_RESET,
++	VM_RESET,
+ };
+ 
+ #define device_is_reseting(pdev) \
+-- 
+1.7.10.4
+

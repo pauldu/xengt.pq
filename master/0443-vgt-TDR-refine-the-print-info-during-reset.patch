@@ -1,0 +1,45 @@
+From 8b21ab7b28b9dca09f188b73753c83c8931edec4 Mon Sep 17 00:00:00 2001
+From: fred gao <fred.gao@intel.com>
+Date: Fri, 16 Dec 2016 12:26:55 +0800
+Subject: [PATCH 443/446] vgt/TDR: refine the print info during reset
+
+1. Change WARN_ONCE to vgt_info in function ring_pp_mode_write.
+2. Ignore the ctx_des dump during reset path.
+
+Signed-off-by: fred gao <fred.gao@intel.com>
+Reviewed-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |    3 ++-
+ drivers/gpu/drm/i915/vgt/handlers.c  |    2 +-
+ 2 files changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index e727439..7fbfcec 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -2468,7 +2468,8 @@ bool vgt_g2v_execlist_context_destroy(struct vgt_device *vgt)
+ 		vgt_warn("VM-%d: A context destroy request is received "
+ 			" but the context is not found!\n"
+ 			"The request will be ignored.\n", vgt->vm_id);
+-		dump_ctx_desc(vgt, &ctx_desc);
++		if (!enable_reset)
++			dump_ctx_desc(vgt, &ctx_desc);
+ 		return rc;
+ 	}
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/handlers.c b/drivers/gpu/drm/i915/vgt/handlers.c
+index ea1cf33..79178cf 100644
+--- a/drivers/gpu/drm/i915/vgt/handlers.c
++++ b/drivers/gpu/drm/i915/vgt/handlers.c
+@@ -777,7 +777,7 @@ static bool ring_pp_mode_write(struct vgt_device *vgt, unsigned int off,
+ 
+ 	/* check if guest is trying to enable GuC */
+ 	if (GFX_MODE_BIT_SET_IN_MASK(mode, GFX_INTERRUPT_STEERING)) {
+-		WARN_ONCE(1, "VM(%d): should send interrupt message to display engine instead of on-chip micro controller.\n",
++		vgt_info("VM(%d): should send interrupt message to display engine instead of on-chip micro controller.\n",
+ 				vgt->vm_id);
+ 		return true;
+ 	}
+-- 
+1.7.10.4
+
