@@ -17,7 +17,7 @@
 
 Summary: %{vendor_name} %{driver_name}
 Name: %{driver_name}
-Version: 2.0.0
+Version: 2.0.1
 Release: 1
 Vendor: %{vendor_name}
 License: GPLv2
