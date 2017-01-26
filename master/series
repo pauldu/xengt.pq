@@ -449,6 +449,10 @@ build-system-integration.patch
 0444-vgt-qos-keep-fairness-round-robin-after-longest-unsc.patch
 0445-vgt-inject-sanitized-pipe_control-user_interrupt-to-.patch
 0446-vgt-add-irq-lifecycle-and-vm-switch-trace-log.patch
+0448-vgt-implementation-support-for-lazy-context.patch
+0449-Revert-vgt-implementation-support-for-lazy-context.patch
+0450-vgt-defer-shadow-ppgtt-destroy-after-queued-ctx-comp.patch
+0451-vgt-Refined-for-lazy-context-corner-case.patch
 
 #
 # Patches analogous to those in the kernel patch queue required

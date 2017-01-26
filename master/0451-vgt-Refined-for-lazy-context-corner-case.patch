@@ -1,0 +1,104 @@
+From 67eb6844c0e5015bb97d5347879ced4d8da4cd29 Mon Sep 17 00:00:00 2001
+From: "Zheng, Xiao" <xiao.zheng@intel.com>
+Date: Sat, 21 Jan 2017 05:56:29 +0800
+Subject: [PATCH 451/451] vgt: Refined for lazy context corner case
+
+The previous lazy ctx handling logic treats 'EL_SUBMITTED' ctx as lazy too,
+however this will cause a regression in corner case for guest.
+Now this patch will only search EL_PENDING ctx as lazy and let
+'EL_SUBMITTED' go as normal.
+
+Signed-off-by: Zheng, Xiao <xiao.zheng@intel.com>
+Signed-off-by: Fred Gao <fred.gao@intel.com>
+Signed-off-by: Yulei Zhang <yulei.zhang@intel.com>
+Signed-off-by: Min He <min.he@intel.com>
+Signed-off-by: Li, weinan z<weinan.z.li@intel.com>
+Signed-off-by: Han, Xu <xu.han@intel.com>
+Signed-off-by: Zhao, yan y <yan.y.zhao@intel.com>
+Reviewed-by: Yulei Zhang <yulei.zhang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |  4 ++--
+ drivers/gpu/drm/i915/vgt/execlists.h |  2 ++
+ drivers/gpu/drm/i915/vgt/gtt.c       | 10 +++++++---
+ drivers/gpu/drm/i915/vgt/gtt.h       |  1 -
+ 4 files changed, 11 insertions(+), 6 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 1572a71..f2c17e2 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -1464,8 +1464,8 @@ static void vgt_emulate_context_status_change(struct vgt_device *vgt,
+ 		* 0, we will destroy this ppgtt mm.
+ 		*/
+ 		mm = el_ctx->ppgtt_mm;
+-		if (atomic_read(&mm->refcount) == 0 &&
+-				atomic_dec_return(&mm->ctx_ref_cnt) <= 0) {
++		if ((atomic_read(&mm->refcount) == 0) && el_ctx->lazy) {
++			el_ctx->lazy = false;
+ 			vgt_destroy_mm(mm);
+ 			vgt_info("VM(%d):lrca 0x%x lazyctx in delete\n",
+ 					vgt->vm_id,
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.h b/drivers/gpu/drm/i915/vgt/execlists.h
+index ff1f1a0..e13ae1b 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.h
++++ b/drivers/gpu/drm/i915/vgt/execlists.h
+@@ -259,6 +259,8 @@ struct execlist_context {
+ 
+ 	struct hlist_node node;
+ 
++	bool lazy; /* flag to indicate this CTX is lazy CTX*/
++
+ 	cycles_t submit_tsc;
+ 	cycles_t complete_tsc;
+ };
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index 6847f09..caf7016 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -2379,7 +2379,7 @@ static int ppgtt_find_queued_ctx(struct vgt_device *vgt, struct vgt_mm *mm)
+ 			if (head == tail)
+ 				break;
+ 
+-			if (el_slots[head].status == EL_EMPTY)
++			if (el_slots[head].status != EL_PENDING)
+ 				continue;
+ 
+ 			for (j = 0; j < 2; j++) {
+@@ -2387,8 +2387,13 @@ static int ppgtt_find_queued_ctx(struct vgt_device *vgt, struct vgt_mm *mm)
+ 				if (!el_ctx)
+ 					continue;
+ 
+-				if (is_same_ppgtt(vgt, el_ctx, mm))
++				if (is_same_ppgtt(vgt, el_ctx, mm)) {
++					el_ctx->lazy = true;
++					vgt_info("VM(%d): LRCA: 0x%x \n",
++						vgt->vm_id,
++						el_ctx->guest_context.lrca);
+ 					cnt++;
++				}
+ 			}
+ 		}
+ 
+@@ -2446,7 +2451,6 @@ bool vgt_g2v_destroy_ppgtt_mm(struct vgt_device *vgt, int page_table_level)
+ 					vgt->vm_id, cnt, pdp[0]);
+ 			/*still desrease the refcount here to ensure it's 0*/
+ 			atomic_dec(&mm->refcount);
+-			atomic_set(&mm->ctx_ref_cnt, cnt);
+ 			return true;
+ 		}
+ 	}
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.h b/drivers/gpu/drm/i915/vgt/gtt.h
+index 8a4bcf5..7e8a510 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.h
++++ b/drivers/gpu/drm/i915/vgt/gtt.h
+@@ -162,7 +162,6 @@ struct vgt_mm {
+ 
+ 	struct list_head list;
+ 	atomic_t refcount;
+-	atomic_t ctx_ref_cnt;
+ 	struct vgt_device *vgt;
+ };
+ 
+-- 
+2.7.4
+

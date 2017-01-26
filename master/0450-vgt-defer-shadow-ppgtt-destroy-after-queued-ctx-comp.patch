@@ -1,0 +1,244 @@
+From 39d74b1dfee1c77a36cd43ef81a2d03c8d9f4888 Mon Sep 17 00:00:00 2001
+From: Min He <min.he@intel.com>
+Date: Wed, 18 Jan 2017 13:52:43 +0800
+Subject: [PATCH 450/451] vgt: defer shadow ppgtt destroy after queued ctx
+ completes
+
+In the case of multiple contexts sharing same ppgtt, once the ppgtt
+is destroyed after notification is received, there still are some
+workload with the same ppgtt root queued but not submitted to HW, which
+will result in internal ppgtt is recreated and never freed, later issues
+such as panic,wrong mfn happen.
+
+This patch implements below logic to fix this issue:
+When guest notifies to destroy a ppgtt table, vgt will enumerate all
+the queued contexts to see if there's any context has the same ppgtt. If
+not found, we will destroy this shadow ppgtt; if found, this shadow ppgtt
+will not be destroyed, and we will wait for all the contexts using this
+ppgtt to complete, then destroy this shadow ppgtt.
+
+Signed-off-by: Fred Gao <fred.gao@intel.com>
+Signed-off-by: Yulei Zhang <yulei.zhang@intel.com>
+Signed-off-by: Min He <min.he@intel.com>
+Reviewed-by: Yulei Zhang <yulei.zhang@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |  14 ++++
+ drivers/gpu/drm/i915/vgt/gtt.c       | 121 +++++++++++++++++++++++++++++------
+ drivers/gpu/drm/i915/vgt/gtt.h       |   1 +
+ 3 files changed, 115 insertions(+), 21 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 7fbfcec..1572a71 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -1418,6 +1418,7 @@ static void vgt_emulate_context_status_change(struct vgt_device *vgt,
+ 	struct execlist_context *el_ctx = NULL;
+ 	uint32_t ctx_id = ctx_status->context_id;
+ 	bool lite_restore;
++	struct vgt_mm *mm;
+ 
+ 	ring_state = &vgt->rb[ring_id];
+ 	vgt_el_slots_find_submitted_ctx(ring_state, ctx_id,
+@@ -1458,6 +1459,19 @@ static void vgt_emulate_context_status_change(struct vgt_device *vgt,
+ 			el_ctx->guest_context.lrca,
+ 			str);
+ 
++		/*
++		* if the ppgtt table is pending release and the ctx_ref_cnt is
++		* 0, we will destroy this ppgtt mm.
++		*/
++		mm = el_ctx->ppgtt_mm;
++		if (atomic_read(&mm->refcount) == 0 &&
++				atomic_dec_return(&mm->ctx_ref_cnt) <= 0) {
++			vgt_destroy_mm(mm);
++			vgt_info("VM(%d):lrca 0x%x lazyctx in delete\n",
++					vgt->vm_id,
++					el_ctx->guest_context.lrca);
++		}
++
+ 		if (!lite_restore) {
+ 			el_ctx->scan_head_valid = false;
+ 
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index 16a7f12..6847f09 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -2348,6 +2348,55 @@ struct vgt_mm *gen8_find_ppgtt_mm(struct vgt_device *vgt,
+ 	return NULL;
+ }
+ 
++static bool is_same_ppgtt(struct vgt_device *vgt,
++			struct execlist_context *el_ctx, struct vgt_mm *mm);
++
++static int ppgtt_find_queued_ctx(struct vgt_device *vgt, struct vgt_mm *mm)
++{
++	int id;
++	int cnt = 0;
++
++	if (!vgt->pdev->enable_execlist)
++		return cnt;
++
++	for (id = 0 ; id < vgt->pdev->max_engines; id++) {
++		int tail;
++		int head;
++		struct vgt_exec_list *el_slots;
++		struct execlist_context *el_ctx;
++
++		if (!test_bit(id, vgt->enabled_rings))
++			continue;
++
++		el_slots = vgt->rb[id].execlist_slots;
++		tail = vgt_el_queue_tail(vgt, id);
++		head = vgt_el_queue_head(vgt, id);
++
++		for ( ; head != tail; head++) {
++			int j;
++
++			head %= EL_QUEUE_SLOT_NUM;
++			if (head == tail)
++				break;
++
++			if (el_slots[head].status == EL_EMPTY)
++				continue;
++
++			for (j = 0; j < 2; j++) {
++				el_ctx = el_slots[head].el_ctxs[j];
++				if (!el_ctx)
++					continue;
++
++				if (is_same_ppgtt(vgt, el_ctx, mm))
++					cnt++;
++			}
++		}
++
++	}
++	return cnt;
++}
++
++
+ bool vgt_g2v_create_ppgtt_mm(struct vgt_device *vgt, int page_table_level)
+ {
+ 	u64 *pdp = (u64 *)&__vreg64(vgt, vgt_info_off(pdp0_lo));
+@@ -2375,6 +2424,7 @@ bool vgt_g2v_destroy_ppgtt_mm(struct vgt_device *vgt, int page_table_level)
+ {
+ 	u64 *pdp = (u64 *)&__vreg64(vgt, vgt_info_off(pdp0_lo));
+ 	struct vgt_mm *mm;
++	int cnt = 0;
+ 
+ 	ASSERT(page_table_level == 4 || page_table_level == 3);
+ 
+@@ -2384,6 +2434,22 @@ bool vgt_g2v_destroy_ppgtt_mm(struct vgt_device *vgt, int page_table_level)
+ 		return true;
+ 	}
+ 
++	if (atomic_read(&mm->refcount) <= 1) {
++		/*
++		 * Here we'll check if mm is still used by the pending ctx.
++		 * If find any one, we will mark this mm as pending release and
++		 * destroy this mm after not one uses it.
++		 */
++		cnt = ppgtt_find_queued_ctx(vgt, mm);
++		if (cnt) {
++			vgt_info("VM(%d):cnt (%d), pdp 0x%llx\n",
++					vgt->vm_id, cnt, pdp[0]);
++			/*still desrease the refcount here to ensure it's 0*/
++			atomic_dec(&mm->refcount);
++			atomic_set(&mm->ctx_ref_cnt, cnt);
++			return true;
++		}
++	}
+ 	vgt_destroy_mm(mm);
+ 
+ 	return true;
+@@ -2488,42 +2554,55 @@ bool vgt_handle_guest_write_rootp_in_context(struct execlist_context *el_ctx, in
+ 	return rc;
+ }
+ 
++/* compare the page table root pointer stored in guest context and
++*  in vgt_mm , return true if find
++*/
++static bool is_same_ppgtt(struct vgt_device *vgt,
++			struct execlist_context *el_ctx, struct vgt_mm *mm)
++{
++	bool rc = true;
++	struct reg_state_ctx_header *g_state;
++	gtt_entry_t ctx_rootp;
++	gtt_entry_t pt_ctx_rootp;
++	int i;
++
++	if (!mm)
++		return false;
++
++	g_state = (struct reg_state_ctx_header *)
++		el_ctx->ctx_pages[1].guest_page.vaddr;
++
++	for (i = 0; i < mm->page_table_entry_cnt; ++i) {
++		ppgtt_get_rootp_from_ctx(g_state, &ctx_rootp, i);
++		ppgtt_get_guest_root_entry(mm, &pt_ctx_rootp, i);
++
++		if (ctx_rootp.val64 != pt_ctx_rootp.val64)
++			break;
++	}
++
++	if (i != mm->page_table_entry_cnt)
++		rc = false;
++
++	return rc;
++}
++
+ /* ppgtt : ppgtt sync-up between guest/shadow */
+ 
+ bool ppgtt_update_shadow_ppgtt_for_ctx(struct vgt_device *vgt,
+ 				struct execlist_context *el_ctx)
+ {
+ 	bool rc = true;
+-	struct reg_state_ctx_header *g_state;
+ 	struct vgt_mm *mm = el_ctx->ppgtt_mm;
+-	gtt_entry_t ctx_rootp;
+-	gtt_entry_t pt_ctx_rootp;
+-	int i;
+ 
+ 	if (!vgt_require_shadow_context(vgt))
+ 		return rc;
+ 
+-	g_state = (struct reg_state_ctx_header *)
+-					el_ctx->ctx_pages[1].guest_page.vaddr;
+ 	/* compare the page table root pointer stored in guest context and
+ 	 * in shadow page table, update the mapping if it is not aligned
+ 	 */
+-	if (mm) {
+-		for (i = 0; i < el_ctx->ppgtt_mm->page_table_entry_cnt; ++ i) {
+-			ppgtt_get_rootp_from_ctx(g_state, &ctx_rootp, i);
+-			ppgtt_get_guest_root_entry(mm, &pt_ctx_rootp, i);
+-
+-			if (ctx_rootp.val64 != pt_ctx_rootp.val64)
+-				break;
+-		}
+-
+-		if (i != el_ctx->ppgtt_mm->page_table_entry_cnt) {
+-			if (vgt_el_create_shadow_ppgtt(vgt, el_ctx->ring_id, el_ctx))
+-				rc = false;
+-		}
+-	} else {
++	if (!mm || !is_same_ppgtt(vgt, el_ctx, mm))
+ 		if (vgt_el_create_shadow_ppgtt(vgt, el_ctx->ring_id, el_ctx))
+ 			rc = false;
+-	}
++
+ 	return rc;
+ }
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.h b/drivers/gpu/drm/i915/vgt/gtt.h
+index 7e8a510..8a4bcf5 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.h
++++ b/drivers/gpu/drm/i915/vgt/gtt.h
+@@ -162,6 +162,7 @@ struct vgt_mm {
+ 
+ 	struct list_head list;
+ 	atomic_t refcount;
++	atomic_t ctx_ref_cnt;
+ 	struct vgt_device *vgt;
+ };
+ 
+-- 
+2.7.4
+

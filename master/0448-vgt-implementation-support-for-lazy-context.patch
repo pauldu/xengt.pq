@@ -1,0 +1,280 @@
+From 4d439ea78c67519892b203d7c0204b3582dbbe55 Mon Sep 17 00:00:00 2001
+From: fred gao <fred.gao@intel.com>
+Date: Wed, 11 Jan 2017 17:16:50 +0800
+Subject: [PATCH 448/451] vgt:implementation support for lazy context
+
+In the case of multiple contexts sharing same ppgtt, once the ppgtt
+is destroyed after notification is received, there still are some
+workload with the same ppgtt root queued but not submitted to HW,
+which will result in internal ppgtt is recreated and never freed,
+later issues such as panic,wrong mfn happen.
+
+v2: per Zheng,xiao's comment:
+change title and func name find_matched_ppgtt to find_lazy_ctx for
+better understanding.
+
+Signed-off-by: He, Min <min.he@intel.com>
+Signed-off-by: Yulei Zhang <yulei.zhang@intel.com>
+Signed-off-by: fred gao <fred.gao@intel.com>
+Reviewed-by: Zheng, Xiao <xiao.zheng@intel.com>
+---
+ drivers/gpu/drm/i915/vgt/execlists.c |  32 ++++++++-
+ drivers/gpu/drm/i915/vgt/execlists.h |   1 +
+ drivers/gpu/drm/i915/vgt/gtt.c       | 124 ++++++++++++++++++++++++++++++-----
+ 3 files changed, 137 insertions(+), 20 deletions(-)
+
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.c b/drivers/gpu/drm/i915/vgt/execlists.c
+index 7fbfcec..62b374a 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.c
++++ b/drivers/gpu/drm/i915/vgt/execlists.c
+@@ -1202,6 +1202,7 @@ static struct execlist_context *vgt_create_execlist_context(
+ 		return NULL;
+ 
+ 	el_ctx->ring_id = ring_id;
++	el_ctx->lazy_ctx = false;
+ 	INIT_LIST_HEAD(&el_ctx->shadow_priv_bb.pages);
+ 
+ 	if (vgt_require_shadow_context(vgt)) {
+@@ -1471,6 +1472,13 @@ static void vgt_emulate_context_status_change(struct vgt_device *vgt,
+ 			((el_slot_ctx_idx == 1) || (el_slot->el_ctxs[1] == NULL))) ||
+ 			(ctx_status->preempted)) {
+ 			vgt_el_slots_delete(vgt, ring_id, el_slot_idx);
++
++			if (el_ctx->lazy_ctx) {
++				vgt_destroy_mm(el_ctx->ppgtt_mm);
++				vgt_info("VM(%d):lrca 0x%x lazyctx in delete\n",
++					vgt->vm_id, el_ctx->guest_context.lrca);
++				el_ctx->lazy_ctx = false;
++			}
+ 		}
+ 		el_slot->el_ctxs[el_slot_ctx_idx] = NULL;
+ 		if (ctx_status->preempted && !ctx_status->lite_restore) {
+@@ -1491,6 +1499,14 @@ static void vgt_emulate_context_status_change(struct vgt_device *vgt,
+ 			}
+ 		} else if (ctx_status->element_switch) {
+ 			struct execlist_context *next_ctx = NULL;
++
++			if (el_ctx->lazy_ctx) {
++				vgt_destroy_mm(el_ctx->ppgtt_mm);
++				vgt_info("VM(%d):lrca 0x%x lazyctx in element_switch\n",
++					vgt->vm_id, el_ctx->guest_context.lrca);
++				el_ctx->lazy_ctx = false;
++			}
++
+ 			if (el_slot_ctx_idx != 0) {
+ 				vgt_warn("something wrong of element switch CSB status!\n");
+ 			}
+@@ -2397,10 +2413,22 @@ void vgt_clear_submitted_el_record(struct pgt_device *pdev, enum vgt_ring_id rin
+ 			continue;
+ 
+ 		for (idx = 0; idx < EL_QUEUE_SLOT_NUM; ++ idx) {
++			int j;
++			struct execlist_context *el_ctx;
+ 			struct vgt_exec_list *execlist;
++
+ 			execlist = &vgt_el_queue_slot(vgt, ring_id, idx);
+-			if (execlist->status == EL_SUBMITTED)
+-				vgt_el_slots_delete(vgt, ring_id, idx);
++
++			if (execlist->status != EL_SUBMITTED)
++				continue;
++			for (j = 0 ; j < 2; j++) {
++				el_ctx = execlist->el_ctxs[j];
++				if (el_ctx && el_ctx->lazy_ctx) {
++					el_ctx->lazy_ctx = false;
++					vgt_info("VM(%d) lazy\n", vgt->vm_id);
++				}
++			}
++			vgt_el_slots_delete(vgt, ring_id, idx);
+ 		}
+ 	}
+ }
+diff --git a/drivers/gpu/drm/i915/vgt/execlists.h b/drivers/gpu/drm/i915/vgt/execlists.h
+index ff1f1a0..415aeb4 100644
+--- a/drivers/gpu/drm/i915/vgt/execlists.h
++++ b/drivers/gpu/drm/i915/vgt/execlists.h
+@@ -251,6 +251,7 @@ struct execlist_context {
+ 	bool initialized;
+ 	bool ctx_running;
+ 	bool sync_needed;
++	bool lazy_ctx;
+ 
+ 	struct shadow_ring_buffer shadow_rb;
+ 	struct shadow_batch_buffer shadow_priv_bb;
+diff --git a/drivers/gpu/drm/i915/vgt/gtt.c b/drivers/gpu/drm/i915/vgt/gtt.c
+index 16a7f12..75dd7c2 100644
+--- a/drivers/gpu/drm/i915/vgt/gtt.c
++++ b/drivers/gpu/drm/i915/vgt/gtt.c
+@@ -2348,6 +2348,73 @@ struct vgt_mm *gen8_find_ppgtt_mm(struct vgt_device *vgt,
+ 	return NULL;
+ }
+ 
++static bool find_lazy_ctx(struct vgt_device *vgt,
++			struct execlist_context *el_ctx, struct vgt_mm *mm);
++
++static int set_lazy_ctx(struct vgt_device *vgt,
++		struct vgt_mm *mm)
++{
++	int id;
++	int cnt = 0;
++
++	if (!vgt->pdev->enable_execlist)
++		return cnt;
++
++	for (id = 0 ; id < vgt->pdev->max_engines; id++) {
++		int tail;
++		int head;
++		struct vgt_exec_list *el_slots;
++		struct execlist_context *el_ctx;
++
++		if (!test_bit(id, vgt->enabled_rings))
++			continue;
++
++		el_slots = vgt->rb[id].execlist_slots;
++		tail = vgt_el_queue_tail(vgt, id);
++		head = vgt_el_queue_head(vgt, id);
++
++		for ( ; head != tail; head++) {
++			int j;
++			int lazy_ctxs_in_slot = 0;
++
++			head %= EL_QUEUE_SLOT_NUM;
++			if (head == tail)
++				break;
++
++			if (el_slots[head].status != EL_PENDING)
++				continue;
++
++			for (j = 0; j < 2; j++) {
++				el_ctx = el_slots[head].el_ctxs[j];
++				if (!el_ctx)
++					continue;
++				if (!find_lazy_ctx(vgt, el_ctx, mm))
++					continue;
++
++				el_ctx->lazy_ctx = true;
++				cnt++;
++				lazy_ctxs_in_slot++;
++				/* recreate ppgtt */
++				el_ctx->ppgtt_mm = NULL;
++				vgt_info("VM(%d),cnt (%d),ctx 0x%x\n",
++					vgt->vm_id, cnt,
++					el_ctx->guest_context.context_id);
++			}
++
++			/* in case of 2 ctxs in same slot, it will do the
++			* elment_switch first,then the second ctx will be
++			* finished. only destroyed during the second ctx
++			* is finished.
++			*/
++			if (lazy_ctxs_in_slot == 2)
++				el_slots[head].el_ctxs[0]->lazy_ctx = false;
++		}
++
++	}
++
++	return cnt;
++}
++
+ bool vgt_g2v_create_ppgtt_mm(struct vgt_device *vgt, int page_table_level)
+ {
+ 	u64 *pdp = (u64 *)&__vreg64(vgt, vgt_info_off(pdp0_lo));
+@@ -2375,6 +2442,7 @@ bool vgt_g2v_destroy_ppgtt_mm(struct vgt_device *vgt, int page_table_level)
+ {
+ 	u64 *pdp = (u64 *)&__vreg64(vgt, vgt_info_off(pdp0_lo));
+ 	struct vgt_mm *mm;
++	int cnt;
+ 
+ 	ASSERT(page_table_level == 4 || page_table_level == 3);
+ 
+@@ -2384,6 +2452,13 @@ bool vgt_g2v_destroy_ppgtt_mm(struct vgt_device *vgt, int page_table_level)
+ 		return true;
+ 	}
+ 
++	if (atomic_read(&mm->refcount) <= 1) {
++		cnt = set_lazy_ctx(vgt, mm);
++		if (cnt)
++			vgt_info("VM(%d):cnt (%d), pdp 0x%llx\n",
++					vgt->vm_id, cnt, pdp[0]);
++	}
++	/*destroy anyway*/
+ 	vgt_destroy_mm(mm);
+ 
+ 	return true;
+@@ -2488,28 +2563,23 @@ bool vgt_handle_guest_write_rootp_in_context(struct execlist_context *el_ctx, in
+ 	return rc;
+ }
+ 
+-/* ppgtt : ppgtt sync-up between guest/shadow */
+-
+-bool ppgtt_update_shadow_ppgtt_for_ctx(struct vgt_device *vgt,
+-				struct execlist_context *el_ctx)
++/* compare the page table root pointer stored in guest context and
++*  in vgt_mm , return true if find
++*/
++static bool find_lazy_ctx(struct vgt_device *vgt,
++			struct execlist_context *el_ctx, struct vgt_mm *mm)
+ {
+ 	bool rc = true;
+ 	struct reg_state_ctx_header *g_state;
+-	struct vgt_mm *mm = el_ctx->ppgtt_mm;
+ 	gtt_entry_t ctx_rootp;
+ 	gtt_entry_t pt_ctx_rootp;
+ 	int i;
+ 
+-	if (!vgt_require_shadow_context(vgt))
+-		return rc;
+-
+ 	g_state = (struct reg_state_ctx_header *)
+ 					el_ctx->ctx_pages[1].guest_page.vaddr;
+-	/* compare the page table root pointer stored in guest context and
+-	 * in shadow page table, update the mapping if it is not aligned
+-	 */
++
+ 	if (mm) {
+-		for (i = 0; i < el_ctx->ppgtt_mm->page_table_entry_cnt; ++ i) {
++		for (i = 0; i < mm->page_table_entry_cnt; ++i) {
+ 			ppgtt_get_rootp_from_ctx(g_state, &ctx_rootp, i);
+ 			ppgtt_get_guest_root_entry(mm, &pt_ctx_rootp, i);
+ 
+@@ -2517,13 +2587,31 @@ bool ppgtt_update_shadow_ppgtt_for_ctx(struct vgt_device *vgt,
+ 				break;
+ 		}
+ 
+-		if (i != el_ctx->ppgtt_mm->page_table_entry_cnt) {
+-			if (vgt_el_create_shadow_ppgtt(vgt, el_ctx->ring_id, el_ctx))
+-				rc = false;
+-		}
+-	} else {
+-		if (vgt_el_create_shadow_ppgtt(vgt, el_ctx->ring_id, el_ctx))
++		if (i != mm->page_table_entry_cnt)
+ 			rc = false;
+ 	}
++
++	return rc;
++}
++
++
++/* ppgtt : ppgtt sync-up between guest/shadow */
++
++bool ppgtt_update_shadow_ppgtt_for_ctx(struct vgt_device *vgt,
++				struct execlist_context *el_ctx)
++{
++	bool rc = true;
++	struct vgt_mm *mm = el_ctx->ppgtt_mm;
++
++	if (!vgt_require_shadow_context(vgt))
++		return rc;
++
++	/* compare the page table root pointer stored in guest context and
++	 * in shadow page table, update the mapping if it is not aligned
++	 */
++	if (!mm || (!find_lazy_ctx(vgt, el_ctx, mm)))
++		if (vgt_el_create_shadow_ppgtt(vgt, el_ctx->ring_id, el_ctx))
++			rc = false;
++
+ 	return rc;
+ }
+-- 
+2.7.4
+
