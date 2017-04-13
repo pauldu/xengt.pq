@@ -22,7 +22,7 @@ Release: 1
 Vendor: %{vendor_name}
 License: GPLv2
 Group: System Environment/Kernel
-Source0: https://code.citrite.net/rest/archive/latest/projects/XS/repos/xengt-4.x/archive?at=6d9230cddb6&format=tar.gz#/%{name}.tar.gz
+Source0: https://code.citrite.net/rest/archive/latest/projects/XS/repos/xengt-4.x/archive?at=6d9230cddb6&format=tar.gz&prefix=%{name}-%{version}#/%{name}-%{version}.tar.gz
 BuildRoot: %{_tmppath}/%{name}-%{version}-root
 BuildRequires: kernel-devel
 
