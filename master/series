@@ -503,3 +503,7 @@ blacklist_i915.patch
 xen-4.7-compat.patch
 get_domctl_interface_version.patch
 use-printk-for-ctx-check-logging.patch
+
+# hvm_op --> dm_op for Xen 4.9
+0001-xengt-add-dm_ops-definitions-from-Xen.patch
+0002-xengt-convert-hvm_ops-to-dm_ops.patch
